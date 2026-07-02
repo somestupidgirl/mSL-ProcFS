@@ -76,6 +76,9 @@
 #include <sys/errno.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <sys/signal.h>
+#include <sys/proc.h>
+#include <string.h>
 
 #include <fs/procfs/procfs.h>
 
@@ -109,17 +112,64 @@ procfs_getuserstr(uio_t uio, char *buf, int *buflenp)
 }
 
 /*
+ * Map a Plan 9-style note string to a signal number, or -1 if unrecognised.
+ * A plain decimal number is taken as the signal number directly; otherwise the
+ * common note names are matched (case-sensitive, lower case). This is how notes
+ * are "delivered" on macOS, which has no native note primitive: the closest
+ * equivalent - and the historical meaning of procfs notes - is a signal.
+ */
+static int
+procfs_note_to_signal(const char *note)
+{
+	static const struct { const char *name; int sig; } tbl[] = {
+		{ "hup",       SIGHUP },
+		{ "hangup",    SIGHUP },
+		{ "int",       SIGINT },
+		{ "interrupt", SIGINT },
+		{ "quit",      SIGQUIT },
+		{ "kill",      SIGKILL },
+		{ "term",      SIGTERM },
+		{ "terminate", SIGTERM },
+		{ "stop",      SIGSTOP },
+		{ "cont",      SIGCONT },
+		{ "usr1",      SIGUSR1 },
+		{ "usr2",      SIGUSR2 },
+	};
+
+	if (note[0] >= '0' && note[0] <= '9') {
+		int sig = 0;
+		for (const char *p = note; *p != '\0'; p++) {
+			if (*p < '0' || *p > '9') {
+				return -1;
+			}
+			sig = sig * 10 + (*p - '0');
+			if (sig >= NSIG) {
+				return -1;
+			}
+		}
+		return (sig >= 1) ? sig : -1;
+	}
+
+	for (size_t i = 0; i < sizeof(tbl) / sizeof(tbl[0]); i++) {
+		if (strcmp(note, tbl[i].name) == 0) {
+			return tbl[i].sig;
+		}
+	}
+	return -1;
+}
+
+/*
  * /proc/<pid>/note
  *
- * Modeled on NetBSD's procfs_donote(). The node is write-only: a process
- * writes a note that is delivered to the target process. The procfs kext's
- * node model is currently read-only (there is no vnop_write), so the write
- * branch below is not yet reachable and reads return EINVAL, as they do on
- * NetBSD. Delivering the note to the process is not implemented, so the write
- * path reports EOPNOTSUPP.
+ * Modeled on NetBSD's procfs_donote(). The node is write-only (reads return
+ * EINVAL, as on NetBSD). Writing a note delivers it to the target process as a
+ * signal (Plan 9 note semantics): a recognised note name or a numeric signal
+ * posts that signal via proc_signal(); an unrecognised note returns EINVAL.
+ * Permission is enforced by the node's write mode (owner/group, or root under
+ * the noprocperms mount option), matching the rest of the filesystem.
  */
 int
-procfs_donote(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+procfs_donote(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
 	char note[PROCFS_NOTELEN + 1];
 	int xlen;
@@ -135,6 +185,11 @@ procfs_donote(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 		return error;
 	}
 
-	/* send to process's notify function */
-	return EOPNOTSUPP;
+	int sig = procfs_note_to_signal(note);
+	if (sig < 0) {
+		return EINVAL;
+	}
+
+	proc_signal(pnp->node_id.nodeid_pid, sig);
+	return 0;
 }

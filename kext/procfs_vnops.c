@@ -41,6 +41,9 @@
 // Read, write and execute permissions for everone.
 #define ALL_ACCESS_ALL (S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH)
 
+// Read/write for owner and group - the writable "note" node.
+#define RW_OWNER_GROUP (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP)
+
 // Vnode Operations Function Descriptor
 #define VOPFUNC int (*)(void *)
 
@@ -67,6 +70,8 @@ STATIC int procfs_vnop_readdir(struct vnop_readdir_args *ap);
 STATIC int procfs_vnop_getattrlistbulk(struct vnop_getattrlistbulk_args *ap);
 STATIC int procfs_vnop_readlink(struct vnop_readlink_args *ap);
 STATIC int procfs_vnop_read(struct vnop_read_args *ap);
+STATIC int procfs_vnop_write(struct vnop_write_args *ap);
+STATIC int procfs_vnop_setattr(struct vnop_setattr_args *ap);
 STATIC int procfs_vnop_open(struct vnop_open_args *ap);
 STATIC int procfs_vnop_close(struct vnop_close_args *ap);
 STATIC int procfs_vnop_access(struct vnop_access_args *ap);
@@ -97,7 +102,9 @@ struct vnodeopv_entry_desc procfs_vnodeop_entries[] = {
     { .opve_op = &vnop_close_desc,     .opve_impl = (VOPFUNC) procfs_vnop_close },       /* close */
     { .opve_op = &vnop_access_desc,    .opve_impl = (VOPFUNC) procfs_vnop_access },      /* access */
     { .opve_op = &vnop_getattr_desc,   .opve_impl = (VOPFUNC) procfs_vnop_getattr },     /* getattr */
+    { .opve_op = &vnop_setattr_desc,   .opve_impl = (VOPFUNC) procfs_vnop_setattr },     /* setattr (note O_TRUNC) */
     { .opve_op = &vnop_read_desc,      .opve_impl = (VOPFUNC) procfs_vnop_read },        /* read */
+    { .opve_op = &vnop_write_desc,     .opve_impl = (VOPFUNC) procfs_vnop_write },       /* write (note node) */
     { .opve_op = &vnop_readdir_desc,      .opve_impl = (VOPFUNC) procfs_vnop_readdir },     /* readdir */
     { .opve_op = &vnop_readdirattr_desc,  .opve_impl = (VOPFUNC) err_readdirattr },          /* readdirattr -> ENOTSUP, forces fallback to getdirentries64 */
     { .opve_op = &vnop_getattrlistbulk_desc, .opve_impl = (VOPFUNC) procfs_vnop_getattrlistbulk }, /* getattrlistbulk -> ENOTSUP, forces fallback to readdir+getattr */
@@ -1021,6 +1028,13 @@ procfs_vnop_getattr(struct vnop_getattr_args *ap)
         break;
     }
 
+    // The "note" node is an ordinary PFSfile structurally but is writable
+    // (Plan9-style signal notes); grant it a read/write mode, identified by its
+    // data function. open(O_WRONLY) would otherwise be rejected before write.
+    if (snode->psn_read_data_fn == procfs_donote) {
+        VATTR_RETURN(vap, va_mode, RW_OWNER_GROUP & modemask);
+    }
+
     // ----- Generic attributes.
     // /proc/sys nodes are dir or file per the specific sysctl oid (objectid).
     VATTR_RETURN(vap, va_type,
@@ -1139,6 +1153,48 @@ procfs_vnop_read(struct vnop_read_args *ap)
         error = read_data_fn(pnp, ap->a_uio, ap->a_context);
     }
     return error;
+}
+
+/*
+ * Writes to a node. Only the per-process "note" node is writable; its write
+ * posts the note to the target process as a signal (see procfs_donote). Every
+ * other node rejects writes. The note node is identified by its data function,
+ * since it is an ordinary PFSfile structurally.
+ */
+STATIC int
+procfs_vnop_write(struct vnop_write_args *ap)
+{
+    pfsnode_t *pnp = VTOPFS(ap->a_vp);
+    pfssnode_t *snode = pnp->node_structure_node;
+
+    if (procfs_is_directory_type(snode->psn_node_type)) {
+        return EISDIR;
+    }
+    if (snode->psn_read_data_fn == procfs_donote) {
+        return procfs_donote(pnp, ap->a_uio, ap->a_context);
+    }
+    return EROFS;
+}
+
+/*
+ * Setattr. procfs data is synthetic, so there is nothing to change. The one case
+ * that matters is O_TRUNC on the writable "note" node (e.g. shell `>`): the open
+ * path issues a va_data_size=0 setattr, which must succeed or the open fails.
+ * Accept that as a no-op for the note node; reject everything else.
+ */
+STATIC int
+procfs_vnop_setattr(struct vnop_setattr_args *ap)
+{
+    pfsnode_t *pnp = VTOPFS(ap->a_vp);
+    pfssnode_t *snode = pnp->node_structure_node;
+
+    if (snode->psn_read_data_fn == procfs_donote) {
+        if (VATTR_IS_ACTIVE(ap->a_vap, va_data_size)) {
+            VATTR_SET_SUPPORTED(ap->a_vap, va_data_size);
+        }
+        return 0;
+    }
+    return ENOTSUP;
 }
 
 /*

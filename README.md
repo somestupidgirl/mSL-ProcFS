@@ -69,7 +69,7 @@ Each directory named for a process id represents one process on the system. By d
 |`cwd`      | Symlink to the current working directory | symlink |
 |`root`     | Symlink to the root directory | symlink |
 |`tty`      | Controlling terminal device path (e.g. `/dev/ttys001`) | text |
-|`note`     | Write a note to the process (NetBSD-style) | write-only; read returns `EINVAL`. **Delivery not yet implemented** |
+|`note`     | Write a note to the process (NetBSD/Plan 9-style) | write-only (read returns `EINVAL`); a note delivers a signal to the process — see below |
 |`limit`    | Process resource limits, one `<name> <cur> <max>` line per limit (`-1` = unlimited) | text |
 |`regs`     | Representative thread's general registers, native Mach `arm_thread_state64_t` (x86_64: `x86_thread_state64_t`) — served by the `procfsd` daemon | binary |
 |`fpregs`   | Representative thread's FP/SIMD registers, native `arm_neon_state64_t` (x86_64: `x86_float_state64_t`) — served by the daemon | binary |
@@ -288,11 +288,17 @@ The daemon is also the *only* source for the `regs`/`fpregs` register nodes:
 kernelcache symtab), so those nodes require a connected daemon and return
 `ENOTSUP` without one, or `EPERM` for a `task_for_pid`-denied (SIP/AMFI) target.
 
-**Present but not yet functional:**
-
-  - `note` — NetBSD-style node; reads return `EINVAL` as on NetBSD, but the node
-    model is currently read-only (no `vnop_write`) and note delivery is
-    unimplemented, so writing one is not yet possible.
+`note` is a writable per-process node (NetBSD `procfs_donote()` lineage). macOS
+has no native "note" primitive, so — following the Plan 9 origin of procfs notes,
+where a note is the signal mechanism — writing a note delivers a signal to the
+target: a recognised name (`hup`, `int`/`interrupt`, `quit`, `kill`, `term`,
+`stop`, `cont`, `usr1`, `usr2`) or a numeric signal is posted via `proc_signal()`,
+and anything else returns `EINVAL`. Reads return `EINVAL` (the node is
+write-only), as on NetBSD. Permission is the filesystem's own model: the node's
+write mode is owner/group (or root under `noprocperms`), so only a user who owns
+the target process — or root — can open it for writing. Writing is via the newly
+added `vnop_write`; a companion `vnop_setattr` accepts the `O_TRUNC` that shells
+issue on `>` so `echo kill > /proc/<pid>/note` works.
 
 **Presentation mode (native vs Linux):** the `procfs.linux` sysctl selects how
 nodes that have both renderings present themselves — `0` (default) = native
@@ -399,7 +405,6 @@ through `hexdump` to read the raw contents:
 ## TODO:
  - Extend the `procfs.linux` presentation-mode switch to more nodes as native
    and Linux renderings diverge (only `regs`/`fpregs`/`auxv` differ today).
- - Implement `note` delivery (and a `vnop_write` path so the node is writable).
  - Implement more linux-compatible features (`/proc/modules`, `/proc/diskstats`, etc.)
 
 ## Issues
@@ -407,7 +412,7 @@ Currently known issues:
 
 - On Apple Silicon, `cmdline`, `fd/`, `threads/` and `tty` previously required private kernel symbols unavailable under PAC; they now work (the first three forward-ported, `tty` via libklookup-resolved `proc_gettty`). `tty` depends on the `procfs_ksyms` staging helper having run (it does during `make install`); if the staged symbol file is missing or stale for the running kernel, `tty` falls back to `ENOTSUP`.
 - `taskinfo` and per-thread `info` are populated by the `procfsd` daemon (`proc_pidinfo`); they read the kext fallback / zero only when no daemon is connected, since the private `fill_taskprocinfo` / `fill_taskthreadinfo` are stripped from the arm64 kernel.
-- `note` is a NetBSD-style scaffold: reads return `EINVAL` and writing a note is not yet possible (no write path / no delivery).
+- `note` is writable: a note is delivered to the process as a signal (Plan 9 semantics — recognised name or numeric signal via `proc_signal()`, else `EINVAL`); reads return `EINVAL`. Gated by the node's owner/group write mode.
 - `regs`/`fpregs` require the `procfsd` daemon (`thread_get_state` is unreachable from the kext — neither a bindable KPI nor in the arm64 kernelcache symtab) and return `EPERM` for Apple platform/hardened binaries, whose task ports `task_for_pid` denies even to root under SIP/AMFI — analogous to `ptrace` permissions on Linux.
 - `partitions` now enumerates all block devices (whole disks and partitions, mounted or not) via IOKit's `IOMedia` class (`kext/procfs_iokit.cpp`, the kext's one C++ file). It falls back to the mounted-filesystem list (`vfs_iterate`) only if IOKit matching fails.
 - The x86 `/proc/cpuinfo` `bugs` and `power management` fields are now populated (`kext/lib/cpu.c`): `bugs` from `IA32_ARCH_CAPABILITIES` plus CPU vendor/family (the common speculative-execution/errata classes; Linux's full per-model whitelist tables are not reproduced), and `power management` from CPUID `0x80000007`. The x86 flag getters (`get_cpu_flags` etc.) were also rewritten to use proper static buffers, fixing the earlier dangling-stack-pointer bug where flags did not "stick."
