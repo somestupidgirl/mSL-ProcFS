@@ -298,7 +298,10 @@ write-only), as on NetBSD. Permission is the filesystem's own model: the node's
 write mode is owner/group (or root under `noprocperms`), so only a user who owns
 the target process — or root — can open it for writing. Writing is via the newly
 added `vnop_write`; a companion `vnop_setattr` accepts the `O_TRUNC` that shells
-issue on `>` so `echo kill > /proc/<pid>/note` works.
+issue on `>` so `echo kill > /proc/<pid>/note` works. Because a read-only mount
+makes the VFS reject every write before it reaches the filesystem, the mount is
+no longer `MNT_RDONLY` (as with Linux `/proc`); non-writable nodes still reject
+writes themselves.
 
 **Presentation mode (native vs Linux):** the `procfs.linux` sysctl selects how
 nodes that have both renderings present themselves — `0` (default) = native

@@ -142,8 +142,11 @@ procfs_mount(struct mount *mp, __unused vnode_t devvp, user_addr_t data, __unuse
         vfs_setfsprivate(mp, procfs_mp);
 
         // Install procfs-specific flags and augment the generic mount flags.
-        procfs_mp->pmnt_flags = mount_args.mnt_options;
-        vfs_setflags(mp, MNT_RDONLY|MNT_NOSUID|MNT_NOEXEC|MNT_NODEV|MNT_NOATIME|MNT_LOCAL);
+        // NOT MNT_RDONLY: procfs has writable nodes (the per-process "note"), and
+        // the VFS layer rejects every write on a read-only mount before it can
+        // reach vnop_write. Non-writable nodes still reject writes themselves
+        // (procfs_vnop_write returns EROFS/EISDIR; their modes carry no write bit).
+        vfs_setflags(mp, MNT_NOSUID|MNT_NOEXEC|MNT_NODEV|MNT_NOATIME|MNT_LOCAL);
 
         // Increment the mounted instance count so that each mount of the file system
         // has a unique name as seen by the mount(1) command.
