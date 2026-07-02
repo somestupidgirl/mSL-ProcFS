@@ -42,6 +42,7 @@ Linux-compatible files and helpers:
 |`uptime`      | Linux-style uptime (seconds since boot; idle field `0.00`)          |
 |`swaps`       | Linux-style swap-area table (aggregate `vm.swapusage`; macOS swaps dynamically under `/private/var/vm`) |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
+|`sys/`        | Dynamic mirror of the kernel sysctl MIB tree (Linux `/proc/sys`); directories are sysctl nodes, leaves read their value as text |
 |`version`     | Kernel version string (text)                                        |
 |`self`        | Symbolic link to the calling process's directory (Linux name)       |
 |`curproc`     | Symbolic link to the calling process's directory (BSD name)         |
@@ -125,6 +126,11 @@ Verified with `test/test_features.sh`.
   - `swaps`, `filesystems` (root) — Linux `/proc/swaps` (aggregate
     `vm.swapusage`) and `/proc/filesystems` (mounted types, deduped, with the
     `nodev` prefix)
+  - `sys/` (root) — a live mirror of the kernel's sysctl MIB tree (Linux
+    `/proc/sys`): every sysctl node is a directory and every leaf a text file
+    holding its formatted value (`kern/ostype`, `kern/hostname`, `hw/ncpu`, …).
+    Values come from the `procfsd` daemon for full coverage, with an in-kernel
+    fallback that reaches the `CTLFLAG_KERN` subset (see below)
   - `fd/` — enumerates the process's open file descriptors; per-fd `details`
     (`vnode_fdinfowithpath`) and `socket` (`socket_fdinfo`, common fields plus
     UNIX/IPv4 addresses)
@@ -238,6 +244,26 @@ libkern KPIs (no dependency on `IOStorageFamily`'s `IOMedia` class). Each row is
 IOKit matching fails, the node falls back to the mounted-filesystem list
 (`vfs_iterate()` + `vfs_statfs()`), which shows mounted volumes only.
 
+`sys/` is a dynamic mirror of the kernel's sysctl MIB — the macOS counterpart
+to Linux's `/proc/sys`. Rather than static structure nodes, every `/proc/sys`
+vnode is one shared marker node distinguished by the kernel address of its
+`struct sysctl_oid` (carried in the node id; the tree root is `sysctl__children`);
+a `CTLTYPE_NODE` oid is a directory and any other oid is a leaf. Directory
+listing and lookup walk the live `oid_link` sibling lists, so the tree always
+reflects the kernel's current MIB (internal `__anchor__(…)` and `CTLFLAG_MASKED`
+oids are hidden). A leaf read builds the dotted MIB name and formats the value by
+the oid's declared type (`int`/`quad`/`string`; opaque/struct oids read empty).
+The value itself is fetched from the `procfsd` daemon (userspace `sysctlbyname`,
+which serves *every* oid) and falls back to in-kernel `sysctlbyname()` when no
+daemon is connected. The kernel path only serves oids marked `CTLFLAG_KERN`, so
+without the daemon the non-`KERN` leaves (e.g. `kern.hostname`, `kern.maxproc`)
+read empty; invoking the oid handler in-kernel to bypass that gate is unsafe —
+the custom handlers assume the sysctl lock is held and panic — so the daemon is
+the path to full coverage. One known limitation: `..` from a nested `/proc/sys`
+directory resolves toward `/proc` (all sysctl vnodes share one structure node, so
+the parent-id computation can't yet distinguish depth); absolute-path reads and
+directory listings are unaffected.
+
 ### The `procfsd` daemon
 
 Several fields are unreachable from a kext on Apple Silicon: the kernel
@@ -248,9 +274,10 @@ data lives in per-CPU/`recount` structures with no linkable accessor. The
 `host_statistics64()` — the same interfaces `top`/Activity Monitor use — over a
 privileged `PF_SYSTEM` kernel control (`procfs_ctl.c`): a node read sends a
 request and the daemon replies. So `taskinfo` (all 18 fields exact),
-`task/<tid>/{info,comm,stat,status,sched}` and `vmstat` are fully populated when
-the daemon runs, and fall back to the kext's best-effort values (or zero) when
-it does not. The daemon also stages the libklookup symbol file at boot and,
+`task/<tid>/{info,comm,stat,status,sched}`, `vmstat` and the `sys/` sysctl
+values are fully populated when the daemon runs, and fall back to the kext's
+best-effort values (or zero, or the `CTLFLAG_KERN` sysctl subset) when it does
+not. The daemon also stages the libklookup symbol file at boot and,
 when armed, loads the kext; see *Installing*. `taskinfo`'s `pti_resident_size`
 is then the exact `phys_footprint` from the daemon (the kext's own estimate is
 only the fallback). Without the daemon the per-thread `info` reads zero
@@ -282,7 +309,7 @@ from `procfs_linux.c`. Other nodes keep their single format for now.
 
 **Not yet present (planned — see TODO):**
 
-  - Further Linux-style `/proc` files (`/proc/sys/`, …).
+  - Further Linux-style `/proc` files (`/proc/modules`, `/proc/diskstats`, …).
 
 ## How to build procfs
 `make` builds the kext, the `procfs.fs` mount bundle, the userspace tools
@@ -359,6 +386,8 @@ Note: Finder support has not yet been implemented so the contents of the proc fo
 Likewise you can use the `cat` command to get the contents of a file:
 
     cat /proc/version
+    cat /proc/sys/kern/ostype        # like Linux's /proc/sys/kern/ostype
+    ls  /proc/sys/kern
 
 Most per-process files contain binary structures rather than text, so pipe them
 through `hexdump` to read the raw contents:
@@ -372,7 +401,7 @@ through `hexdump` to read the raw contents:
    and Linux renderings diverge (only `regs`/`fpregs`/`auxv` differ today).
  - Implement `note` delivery (and a `vnop_write` path so the node is writable).
  - Fix per-node timestamps reported by `getattr` (currently show placeholder values in `ls -l`).
- - Implement more linux-compatible features (`/proc/sys/`, etc.)
+ - Implement more linux-compatible features (`/proc/modules`, `/proc/diskstats`, etc.)
 
 ## Issues
 Currently known issues:
