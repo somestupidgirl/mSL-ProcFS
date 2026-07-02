@@ -58,6 +58,13 @@
 #define quad(hi, lo)    (((uint64_t)(hi)) << 32 | (lo))
 
 /*
+ * The "bugs" line reads IA32_ARCH_CAPABILITIES (MSR_IA32_ARCH_CAPABILITIES* are
+ * defined by <i386/proc_reg.h>); each *_NO bit means the CPU declares itself NOT
+ * vulnerable to that class. The MSR is enumerated by CPUID.(EAX=7,ECX=0).EDX[29].
+ */
+#define CPUID7_EDX_ARCH_CAPABILITIES (1U << 29)
+
+/*
  * Returns TRUE if AMD CPU.
  */
 boolean_t
@@ -350,43 +357,24 @@ feature_flags[] = {
 char *
 get_cpu_flags(void)
 {
+    /* Static buffer (mirrors the arm64 getters): a real char array so sizeof()
+     * is the byte capacity, initialised before use, and valid after return -
+     * unlike the former VLA-of-pointers which was uninitialised and dangling. */
+    static char flags[512];
     int i = 0;
-    int size = 0;
 
-    /*
-     * Main loop.
-     */
+    flags[0] = '\0';
     if (cpuid_info()->cpuid_features) {
-        size = (sizeof(feature_flags) * 2);
-
-        char *flags[size];
-
         while (i < (int)ARRAY_COUNT(feature_flags)) {
-            /*
-             * If the CPU supports a feature in the feature_list[]...
-             */
+            /* If the CPU supports a feature in feature_list[], append its flag. */
             if (cpuid_info()->cpuid_features & feature_list[i]) {
-                /*
-                 * ...amend its flag to 'flags'.
-                 */
-                strlcat((char *)flags, feature_flags[i], sizeof(flags));
-                strlcat((char *)flags, " ", sizeof(flags));
+                strlcat(flags, feature_flags[i], sizeof(flags));
+                strlcat(flags, " ", sizeof(flags));
             }
-            /*
-             * Add 1 to the counter for each iteration.
-             */
             i++;
         }
-        return (char *)flags;
-
-    } else {
-        size = 8;
-        char *flags[size];
-
-        strlcat((char *)flags,"", sizeof(flags));
-
-        return (char *)flags;
     }
+    return flags;
 }
 
 /*
@@ -421,43 +409,20 @@ feature_ext_flags[] = {
 char *
 get_cpu_ext_flags(void)
 {
+    static char flags[512];
     int i = 0;
-    int size = 0;
 
+    flags[0] = '\0';
     if (cpuid_info()->cpuid_extfeatures) {
-        size = (sizeof(feature_ext_flags) * 2);
-
-        char *flags[size];
-
-        /*
-         * Main loop.
-         */
         while (i < (int)ARRAY_COUNT(feature_ext_flags)) {
-            /*
-             * If the CPU supports a feature in the feature_ext_list[]...
-             */
             if (cpuid_info()->cpuid_extfeatures & feature_ext_list[i]) {
-                /*
-                 * ...amend its flag to 'flags'.
-                 */
-                strlcat((char *)flags, feature_ext_flags[i], sizeof(flags));
-                strlcat((char *)flags, " ", sizeof(flags));
+                strlcat(flags, feature_ext_flags[i], sizeof(flags));
+                strlcat(flags, " ", sizeof(flags));
             }
-            /*
-             * Add 1 to the counter for each iteration.
-             */
             i++;
         }
-        return (char *)flags;
-
-    } else {
-        size = 8;
-        char *flags[size];
-
-        strlcat((char *)flags,"", sizeof(flags));
-
-        return (char *)flags;
     }
+    return flags;
 }
 
 uint64_t leaf7_feature_list[] = {
@@ -563,7 +528,6 @@ char*
 get_leaf7_flags(void)
 {
     int i = 0;
-    int size = 0;
 
     /*
      * Enable reading the cpuid_leaf7_features on AMD chipsets.
@@ -577,36 +541,19 @@ get_leaf7_flags(void)
     /*
      * Main loop.
      */
+    static char flags[1024];
+    flags[0] = '\0';
     if (cpuid_info()->cpuid_leaf7_features) {
-        size = (sizeof(leaf7_feature_flags) * 2);
-        char *flags[size];
-
         while (i < (int)ARRAY_COUNT(leaf7_feature_flags)) {
-            /*
-             * If the CPU supports a feature in the leaf7_feature_list[]...
-             */
+            /* If the CPU supports a feature in leaf7_feature_list[], append it. */
             if (cpuid_info()->cpuid_leaf7_features & leaf7_feature_list[i]) {
-                /*
-                 * ...amend its flag to 'flags'.
-                 */
-                strlcat((char *)flags, leaf7_feature_flags[i], sizeof(flags));
-                strlcat((char *)flags, " ", sizeof(flags));
+                strlcat(flags, leaf7_feature_flags[i], sizeof(flags));
+                strlcat(flags, " ", sizeof(flags));
             }
-            /*
-             * Add 1 to the counter for each iteration.
-             */
             i++;
         }
-        return (char *)flags;
-
-    } else {
-        size = 8;
-        char *flags[size];
-
-        strlcat((char *)flags,"", sizeof(flags));
-
-        return (char *)flags;
     }
+    return flags;
 }
 
 uint64_t leaf7_feature_ext_list[] = {
@@ -644,7 +591,6 @@ char *
 get_leaf7_ext_flags(void)
 {
     int i = 0;
-    int size = 0;
 
     /*
      * FIXME: Enable reading the cpuid_leaf7_extfeatures on AMD chipsets.
@@ -660,36 +606,119 @@ get_leaf7_ext_flags(void)
     /*
      * Main loop.
      */
+    static char flags[512];
+    flags[0] = '\0';
     if (cpuid_info()->cpuid_leaf7_extfeatures) {
-        size = (sizeof(leaf7_feature_ext_flags) * 2);
-        char *flags[size];
-
         while (i < (int)ARRAY_COUNT(leaf7_feature_ext_flags)) {
-            /*
-             * If the CPU supports a feature in the leaf7_feature_ext_list[]...
-             */
+            /* If the CPU supports a feature in leaf7_feature_ext_list[], append. */
             if (cpuid_info()->cpuid_leaf7_extfeatures & leaf7_feature_ext_list[i]) {
-                /*
-                 * ...amend its flag to 'flags'.
-                 */
-                strlcat((char *)flags, leaf7_feature_ext_flags[i], sizeof(flags));
-                strlcat((char *)flags, " ", sizeof(flags));
+                strlcat(flags, leaf7_feature_ext_flags[i], sizeof(flags));
+                strlcat(flags, " ", sizeof(flags));
             }
-            /*
-             * Add 1 to the counter for each iteration.
-             */
             i++;
         }
-        return (char *)flags;
-
-    } else {
-        size = 8;
-        char *flags[size];
-
-        strlcat((char *)flags,"", sizeof(flags));
-
-        return (char *)flags;
     }
+    return flags;
+}
+
+/*
+ * Power-management flags (the trailing "power management:" line of a Linux
+ * /proc/cpuinfo block), decoded from CPUID.(EAX=0x80000007).EDX. The bit->name
+ * mapping matches Linux's x86_power_flags[] (arch/x86/kernel/cpu/powerflags.c);
+ * bit 8 (invariant TSC) is surfaced as a normal flag ("constant_tsc") rather
+ * than left blank as Linux does, since we do not fold it into the flags line.
+ */
+static const char *pm_flags_tbl[] = {
+    /*  0 */ "ts",           /* temperature sensor */
+    /*  1 */ "fid",          /* frequency id control */
+    /*  2 */ "vid",          /* voltage id control */
+    /*  3 */ "ttp",          /* thermal trip */
+    /*  4 */ "tm",           /* hardware thermal control */
+    /*  5 */ "stc",          /* software thermal control */
+    /*  6 */ "100mhzsteps",
+    /*  7 */ "hwpstate",
+    /*  8 */ "constant_tsc", /* invariant TSC */
+    /*  9 */ "cpb",          /* core performance boost */
+    /* 10 */ "eff_freq_ro",  /* readonly aperf/mperf */
+    /* 11 */ "proc_feedback",
+    /* 12 */ "acc_power",    /* accumulated power mechanism */
+};
+
+char *
+get_pm_flags(void)
+{
+    static char flags[256];
+    uint32_t reg[4];
+
+    flags[0] = '\0';
+
+    /* Guard: the power-management leaf must be within the max extended leaf. */
+    do_cpuid(0x80000000, reg);
+    if (reg[eax] < 0x80000007) {
+        return flags;
+    }
+    do_cpuid(0x80000007, reg);
+
+    for (int b = 0; b < (int)ARRAY_COUNT(pm_flags_tbl); b++) {
+        if ((reg[edx] & (1U << b)) && pm_flags_tbl[b][0] != '\0') {
+            strlcat(flags, pm_flags_tbl[b], sizeof(flags));
+            strlcat(flags, " ", sizeof(flags));
+        }
+    }
+    return flags;
+}
+
+/*
+ * The "bugs" line: known speculative-execution and errata classes affecting the
+ * CPU. This mirrors the core of Linux's cpu_set_bug_bits() - using the
+ * IA32_ARCH_CAPABILITIES *_NO bits and CPU vendor/family to decide - but does
+ * not reproduce Linux's full per-model whitelist tables, so it reports the
+ * common classes rather than every model-specific exemption.
+ */
+char *
+get_cpu_bugs(void)
+{
+    static char bugs[512];
+    uint32_t reg[4];
+    uint64_t arch_cap = 0;
+
+    bugs[0] = '\0';
+
+    /* IA32_ARCH_CAPABILITIES is enumerated by CPUID.(7,0).EDX[29]. */
+    do_cpuid(0x7, reg);
+    if (reg[edx] & CPUID7_EDX_ARCH_CAPABILITIES) {
+        arch_cap = rdmsr64(MSR_IA32_ARCH_CAPABILITIES);
+    }
+
+    if (is_intel_cpu()) {
+        if (!(arch_cap & MSR_IA32_ARCH_CAPABILITIES_RDCL_NO)) {
+            strlcat(bugs, "cpu_meltdown ", sizeof(bugs));
+            strlcat(bugs, "l1tf ", sizeof(bugs));
+        }
+        strlcat(bugs, "spectre_v1 spectre_v2 swapgs ", sizeof(bugs));
+        if (!(arch_cap & MSR_IA32_ARCH_CAPABILITIES_SSB_NO)) {
+            strlcat(bugs, "spec_store_bypass ", sizeof(bugs));
+        }
+        if (!(arch_cap & MSR_IA32_ARCH_CAPABILITIES_MDS_NO)) {
+            strlcat(bugs, "mds ", sizeof(bugs));
+        }
+        /* SRBDS: only when the SRBDS mitigation control is enumerated. */
+        if (cpuid_info()->cpuid_leaf7_extfeatures & CPUID_LEAF7_EXTFEATURE_SRBDS_CTRL) {
+            strlcat(bugs, "srbds ", sizeof(bugs));
+        }
+    } else if (is_amd_cpu()) {
+        strlcat(bugs, "spectre_v1 spectre_v2 ", sizeof(bugs));
+        if (!(arch_cap & MSR_IA32_ARCH_CAPABILITIES_SSB_NO)) {
+            strlcat(bugs, "spec_store_bypass ", sizeof(bugs));
+        }
+        /* Pre-Zen SYSRET SS-attributes errata; Zen1/Zen2 retbleed. */
+        if (cpuid_info()->cpuid_family < 0x17) {
+            strlcat(bugs, "sysret_ss_attrs ", sizeof(bugs));
+        } else if (cpuid_info()->cpuid_family == 0x17) {
+            strlcat(bugs, "retbleed ", sizeof(bugs));
+        }
+    }
+    return bugs;
 }
 
 /*

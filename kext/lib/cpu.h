@@ -38,6 +38,13 @@ extern char        *get_cpu_ext_flags(void);
 extern char        *get_leaf7_flags(void);
 extern char        *get_leaf7_ext_flags(void);
 
+#if defined(__x86_64__)
+/* x86-only: power-management line (CPUID 0x80000007) and CPU bug classes
+ * (IA32_ARCH_CAPABILITIES + vendor/family). */
+extern char        *get_pm_flags(void);
+extern char        *get_cpu_bugs(void);
+#endif
+
 #pragma mark -
 #pragma mark ARM64 API
 

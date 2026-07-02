@@ -273,9 +273,11 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
      */
     char *cpuflags, *cpuextflags, *leaf7flags, *leaf7extflags;
 
-    /* TODO */
-    char *pm = "";
-    char *x86_bugs = "";
+    /* Power-management line and CPU bug classes (CPUID/MSR-derived, cpu.c).
+     * All bugs are reported through x86_bugs; x86_64_bugs is kept as a second
+     * (currently empty) slot so the "bugs" format string stays unchanged. */
+    char *pm = get_pm_flags();
+    char *x86_bugs = get_cpu_bugs();
     char *x86_64_bugs = "";
 
     /*
