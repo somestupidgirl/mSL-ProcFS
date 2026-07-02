@@ -202,7 +202,7 @@ get_microcode_version(void)
 uint32_t
 set_microcode_version(void)
 {
-    i386_cpu_info_t *info_p = NULL;
+    i386_cpu_info_t *info_p = cpuid_info();      /* never NULL; was unset, causing a panic */
     uint32_t reg[4];
 
     /*
@@ -321,7 +321,7 @@ feature_flags[] = {
     /* 26 */ "htt",
     /* 27 */ "tm",
     /* 28 */ "pbe",
-    /* 39 */ "sse3",
+    /* 29 */ "sse3",
     /* 30 */ "pclmulqdq",
     /* 31 */ "dtes64",
     /* 32 */ "mon",
@@ -593,15 +593,14 @@ get_leaf7_ext_flags(void)
     int i = 0;
 
     /*
-     * FIXME: Enable reading the cpuid_leaf7_extfeatures on AMD chipsets.
+     * Populate cpuid_leaf7_extfeatures from leaf 7 EDX on AMD (Zen, family >= 23),
+     * matching what get_leaf7_flags() does for the EBX/ECX features.
      */
-#if 0
     uint32_t reg[4];
-    if (is_amd_cpu() && cpuid_info()->cpuid_family >= 23){
+    if (is_amd_cpu() && cpuid_info()->cpuid_family >= 23) {
         do_cpuid(0x7, reg);
-        cpuid_info()->cpuid_leaf7_extfeatures = reg[ebx];
+        cpuid_info()->cpuid_leaf7_extfeatures = reg[edx];
     }
-#endif
 
     /*
      * Main loop.
@@ -616,53 +615,6 @@ get_leaf7_ext_flags(void)
                 strlcat(flags, " ", sizeof(flags));
             }
             i++;
-        }
-    }
-    return flags;
-}
-
-/*
- * Power-management flags (the trailing "power management:" line of a Linux
- * /proc/cpuinfo block), decoded from CPUID.(EAX=0x80000007).EDX. The bit->name
- * mapping matches Linux's x86_power_flags[] (arch/x86/kernel/cpu/powerflags.c);
- * bit 8 (invariant TSC) is surfaced as a normal flag ("constant_tsc") rather
- * than left blank as Linux does, since we do not fold it into the flags line.
- */
-static const char *pm_flags_tbl[] = {
-    /*  0 */ "ts",           /* temperature sensor */
-    /*  1 */ "fid",          /* frequency id control */
-    /*  2 */ "vid",          /* voltage id control */
-    /*  3 */ "ttp",          /* thermal trip */
-    /*  4 */ "tm",           /* hardware thermal control */
-    /*  5 */ "stc",          /* software thermal control */
-    /*  6 */ "100mhzsteps",
-    /*  7 */ "hwpstate",
-    /*  8 */ "constant_tsc", /* invariant TSC */
-    /*  9 */ "cpb",          /* core performance boost */
-    /* 10 */ "eff_freq_ro",  /* readonly aperf/mperf */
-    /* 11 */ "proc_feedback",
-    /* 12 */ "acc_power",    /* accumulated power mechanism */
-};
-
-char *
-get_pm_flags(void)
-{
-    static char flags[256];
-    uint32_t reg[4];
-
-    flags[0] = '\0';
-
-    /* Guard: the power-management leaf must be within the max extended leaf. */
-    do_cpuid(0x80000000, reg);
-    if (reg[eax] < 0x80000007) {
-        return flags;
-    }
-    do_cpuid(0x80000007, reg);
-
-    for (int b = 0; b < (int)ARRAY_COUNT(pm_flags_tbl); b++) {
-        if ((reg[edx] & (1U << b)) && pm_flags_tbl[b][0] != '\0') {
-            strlcat(flags, pm_flags_tbl[b], sizeof(flags));
-            strlcat(flags, " ", sizeof(flags));
         }
     }
     return flags;
@@ -722,8 +674,15 @@ get_cpu_bugs(void)
 }
 
 /*
- * TODO
+ * AMD extended CPUID (0x80000001) feature decoding. The string tables below are
+ * compacted (reserved bits omitted), so each has a parallel *_list[] giving the
+ * real bit position of every entry in the corresponding register.
  */
+
+/* 0x80000001 EDX bit positions, paired with amd_feature_flags[]. */
+uint32_t amd_feature_list[] = {
+    11, 19, 20, 22, 25, 26, 27, 29, 30, 31
+};
 
 const char *
 amd_feature_flags[] = {
@@ -737,6 +696,13 @@ amd_feature_flags[] = {
     /* 7 */ "lm",
     /* 8 */ "3dnowext",
     /* 9 */ "3dnow",
+};
+
+/* 0x80000001 ECX bit positions, paired with amd_feature2_flags[] (bits 14/18/
+ * 20/28 are reserved and skipped). */
+uint32_t amd_feature2_list[] = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 19, 21, 22,
+    23, 24, 25, 26, 27, 29
 };
 
 static char *
@@ -818,6 +784,98 @@ x86_64_bug_flags[] = {
     /* 13 */ "itlb_multihit",       /* CPU may incur MCE during certain page attribute changes */
     /* 14 */ "srbds"                /* CPU may leak RNG bits if not mitigated */
 };
+
+/*
+ * Power-management flags (the trailing "power management:" line of a Linux
+ * /proc/cpuinfo block), decoded from CPUID.(EAX=0x80000007).EDX using the shared
+ * amd_power_flags[] table (bit->name mapping matches Linux's x86_power_flags[]).
+ * Bit 8 (invariant TSC) is blank there, since Linux folds it into the flags line
+ * as "constant_tsc" rather than the power-management line.
+ */
+char *
+get_pm_flags(void)
+{
+    static char flags[256];
+    uint32_t reg[4];
+
+    flags[0] = '\0';
+
+    /* Guard: the power-management leaf must be within the max extended leaf. */
+    do_cpuid(0x80000000, reg);
+    if (reg[eax] < 0x80000007) {
+        return flags;
+    }
+    do_cpuid(0x80000007, reg);
+
+    for (int b = 0; b < (int)ARRAY_COUNT(amd_power_flags); b++) {
+        if ((reg[edx] & (1U << b)) && amd_power_flags[b][0] != '\0') {
+            strlcat(flags, amd_power_flags[b], sizeof(flags));
+            strlcat(flags, " ", sizeof(flags));
+        }
+    }
+    return flags;
+}
+
+/*
+ * AMD-specific flags from CPUID 0x80000001 EDX (amd_feature_flags[]). These are
+ * the Linux-named AMD entries (nx, mmxext, 3dnow, ...); on AMD they replace the
+ * generic get_cpu_ext_flags() output so the names match Linux and nothing is
+ * emitted twice.
+ */
+char *
+get_amd_feature_flags(void)
+{
+    static char flags[256];
+    uint32_t reg[4];
+
+    flags[0] = '\0';
+    if (!is_amd_cpu()) {
+        return flags;
+    }
+    do_cpuid(0x80000000, reg);
+    if (reg[eax] < 0x80000001) {
+        return flags;
+    }
+    do_cpuid(0x80000001, reg);
+
+    for (int i = 0; i < (int)ARRAY_COUNT(amd_feature_list); i++) {
+        if (reg[edx] & (1U << amd_feature_list[i])) {
+            strlcat(flags, amd_feature_flags[i], sizeof(flags));
+            strlcat(flags, " ", sizeof(flags));
+        }
+    }
+    return flags;
+}
+
+/*
+ * AMD-specific flags from CPUID 0x80000001 ECX (amd_feature2_flags[]): svm,
+ * sse4a, 3dnowprefetch, xop, fma4, tbm, topoext, perfctr_core, mwaitx and the
+ * rest of the AMD ECX set that the generic getter does not surface.
+ */
+char *
+get_amd_feature2_flags(void)
+{
+    static char flags[512];
+    uint32_t reg[4];
+
+    flags[0] = '\0';
+    if (!is_amd_cpu()) {
+        return flags;
+    }
+    do_cpuid(0x80000000, reg);
+    if (reg[eax] < 0x80000001) {
+        return flags;
+    }
+    do_cpuid(0x80000001, reg);
+
+    for (int i = 0; i < (int)ARRAY_COUNT(amd_feature2_list); i++) {
+        if (reg[ecx] & (1U << amd_feature2_list[i])) {
+            strlcat(flags, amd_feature2_flags[i], sizeof(flags));
+            strlcat(flags, " ", sizeof(flags));
+        }
+    }
+    return flags;
+}
 
 
 

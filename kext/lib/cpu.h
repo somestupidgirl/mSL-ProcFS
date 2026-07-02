@@ -43,6 +43,10 @@ extern char        *get_leaf7_ext_flags(void);
  * (IA32_ARCH_CAPABILITIES + vendor/family). */
 extern char        *get_pm_flags(void);
 extern char        *get_cpu_bugs(void);
+
+/* AMD-only extended feature flags (CPUID 0x80000001 EDX/ECX); empty on Intel. */
+extern char        *get_amd_feature_flags(void);
+extern char        *get_amd_feature2_flags(void);
 #endif
 
 #pragma mark -

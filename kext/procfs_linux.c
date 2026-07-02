@@ -271,7 +271,7 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
      * For now, we'll declare the pointer variables here
      * and fetch the flags inside the loop.
      */
-    char *cpuflags, *cpuextflags, *leaf7flags, *leaf7extflags;
+    char *cpuflags, *cpuextflags, *leaf7flags, *leaf7extflags, *amdflags2;
 
     /* Power-management line and CPU bug classes (CPUID/MSR-derived, cpu.c).
      * All bugs are reported through x86_bugs; x86_64_bugs is kept as a second
@@ -296,7 +296,11 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
          * Fetch the CPU flags.
          */
         cpuflags     = get_cpu_flags();
-        cpuextflags  = get_cpu_ext_flags();
+        /* On AMD, the 0x80000001 flags come from the AMD getters (correct Linux
+         * names, EDX + ECX) instead of the generic ext getter, avoiding both the
+         * Intel-style names (xd/em64t/...) and duplicate entries. */
+        cpuextflags  = is_amd_cpu() ? get_amd_feature_flags() : get_cpu_ext_flags();
+        amdflags2    = get_amd_feature2_flags();   /* empty on Intel */
         leaf7flags   = get_leaf7_flags();
         leaf7extflags = get_leaf7_ext_flags();
 
@@ -324,7 +328,7 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
                 "fpu_exception\t\t: %s\n"
                 "cpuid level\t\t: %u\n"
                 "wp\t\t\t: %s\n"
-                "flags\t\t\t: %s%s%s%s\n"
+                "flags\t\t\t: %s%s%s%s%s\n"
                 "bugs\t\t\t: %s%s\n"
                 "bogomips\t\t: %d.%02d\n"
                 "TLB size\t\t: %u 4K pages\n"
@@ -351,7 +355,7 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
                 fpu_exception,
                 cpuid_level,
                 wp,
-                cpuflags, cpuextflags, leaf7flags, leaf7extflags,
+                cpuflags, cpuextflags, amdflags2, leaf7flags, leaf7extflags,
                 x86_bugs, x86_64_bugs,
                 fqmhz * 2, fqkhz,
                 tlb_size,
