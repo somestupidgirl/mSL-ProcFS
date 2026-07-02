@@ -1383,17 +1383,17 @@ procfs_doregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         sbuf_printf(&sb, "rax 0x%016llx\nrbx 0x%016llx\nrcx 0x%016llx\n"
                          "rdx 0x%016llx\nrsi 0x%016llx\nrdi 0x%016llx\n"
                          "rbp 0x%016llx\nrsp 0x%016llx\n",
-            (uint64_t)st.__rax, (uint64_t)st.__rbx, (uint64_t)st.__rcx,
-            (uint64_t)st.__rdx, (uint64_t)st.__rsi, (uint64_t)st.__rdi,
-            (uint64_t)st.__rbp, (uint64_t)st.__rsp);
+            (uint64_t)st.rax, (uint64_t)st.rbx, (uint64_t)st.rcx,
+            (uint64_t)st.rdx, (uint64_t)st.rsi, (uint64_t)st.rdi,
+            (uint64_t)st.rbp, (uint64_t)st.rsp);
         sbuf_printf(&sb, "r8  0x%016llx\nr9  0x%016llx\nr10 0x%016llx\n"
                          "r11 0x%016llx\nr12 0x%016llx\nr13 0x%016llx\n"
                          "r14 0x%016llx\nr15 0x%016llx\n",
-            (uint64_t)st.__r8,  (uint64_t)st.__r9,  (uint64_t)st.__r10,
-            (uint64_t)st.__r11, (uint64_t)st.__r12, (uint64_t)st.__r13,
-            (uint64_t)st.__r14, (uint64_t)st.__r15);
+            (uint64_t)st.r8,  (uint64_t)st.r9,  (uint64_t)st.r10,
+            (uint64_t)st.r11, (uint64_t)st.r12, (uint64_t)st.r13,
+            (uint64_t)st.r14, (uint64_t)st.r15);
         sbuf_printf(&sb, "rip 0x%016llx\nrflags 0x%016llx\n",
-            (uint64_t)st.__rip, (uint64_t)st.__rflags);
+            (uint64_t)st.rip, (uint64_t)st.rflags);
     }
 #endif
 
