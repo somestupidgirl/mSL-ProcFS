@@ -400,7 +400,6 @@ through `hexdump` to read the raw contents:
  - Extend the `procfs.linux` presentation-mode switch to more nodes as native
    and Linux renderings diverge (only `regs`/`fpregs`/`auxv` differ today).
  - Implement `note` delivery (and a `vnop_write` path so the node is writable).
- - Fix per-node timestamps reported by `getattr` (currently show placeholder values in `ls -l`).
  - Implement more linux-compatible features (`/proc/modules`, `/proc/diskstats`, etc.)
 
 ## Issues

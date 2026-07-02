@@ -1031,16 +1031,17 @@ procfs_vnop_getattr(struct vnop_getattr_args *ap)
     VATTR_RETURN(vap, va_fileid, procfs_get_node_fileid(procfs_node));                                          // Unique file id.
     VATTR_RETURN(vap, va_data_size, procfs_get_node_size_attr(procfs_node, vfs_context_ucred(ap->a_context)));  // File size.
 
-    // Use the process start time as the create time if we have a process.
-    // otherwise use the file system mount time. Set the other times to the
-    // same value, since there is really no way to track them.
+    // For a process node, use the process's real start time (stable and
+    // informative). For synthetic system nodes (root files, /proc/sys, ...)
+    // there is no process, so report the current time as Linux's /proc does -
+    // these files are generated on read, so a live timestamp is more meaningful
+    // than the frozen mount time we used before.
     struct timespec create_time;
     if (p != NULL) {
         create_time.tv_sec = p->p_start.tv_sec;
         create_time.tv_nsec = p->p_start.tv_usec * 1000;
     } else {
-        create_time.tv_sec = pmp->pmnt_mount_time.tv_sec;
-        create_time.tv_nsec = pmp->pmnt_mount_time.tv_nsec;
+        nanotime(&create_time);
     }
     VATTR_RETURN(vap, va_access_time, create_time);
     VATTR_RETURN(vap, va_change_time, create_time);
