@@ -24,6 +24,7 @@
 #include <libkern/libkern.h>
 
 #include <fs/procfs/procfs.h>
+#include <fs/procfs/procfs_ctl.h>
 
 /* In-kernel sysctl-by-name (not prototyped in the kext's sysctl.h view). */
 extern int sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
@@ -148,10 +149,17 @@ procfs_sysctl_build_name(struct sysctl_oid_list *list, const char *prefix,
 }
 
 /*
- * Read a leaf's value as Linux-style text. Builds the MIB name, fetches the
- * raw value via sysctlbyname(), and formats it by the oid's declared type
- * (int / quad / string). Opaque/struct sysctls have no text rendering and read
- * empty. A directory objectid returns EISDIR.
+ * Read a leaf's value as Linux-style text. Builds the MIB name, fetches the raw
+ * value, and formats it by the oid's declared type (int / quad / string).
+ * Opaque/struct sysctls have no text rendering and read empty. A directory
+ * objectid returns EISDIR.
+ *
+ * The raw value comes from the procfsd bridge (userspace sysctlbyname, which
+ * serves every oid), falling back to in-kernel sysctlbyname() when no daemon is
+ * connected. The kernel path only serves oids marked CTLFLAG_KERN; others (e.g.
+ * kern.hostname, kern.maxproc) read empty without the daemon. Invoking the oid
+ * handler in-kernel to bypass that gate is unsafe — the custom handlers assume
+ * the sysctl lock is held and panic — so the daemon is the path to full coverage.
  */
 int
 procfs_sysctl_read(uint64_t objectid, uio_t uio)
@@ -161,16 +169,28 @@ procfs_sysctl_read(uint64_t objectid, uio_t uio)
     }
     struct sysctl_oid *oid = (struct sysctl_oid *)objectid;
 
-    char name[256];
+    char name[PROCFS_CTL_NAMEMAX];
     name[0] = '\0';
     if (!procfs_sysctl_build_name(&sysctl__children, "", objectid, name, sizeof(name))) {
         return ENOENT;
     }
 
     uint8_t raw[1024];
-    size_t  rawlen = sizeof(raw);
-    if (sysctlbyname(name, raw, &rawlen, NULL, 0) != 0 || rawlen == 0) {
-        return procfs_copy_data("", 0, uio);       /* unreadable/empty */
+    size_t  rawlen = 0;
+
+    /* Prefer the daemon (covers all oids); fall back to the in-kernel path. */
+    uint32_t dlen = 0;
+    if (procfs_ctl_request_named(PROCFS_REQ_SYSCTL, 0, 0, name,
+            raw, sizeof(raw), &dlen) == 0) {
+        rawlen = dlen;
+    } else {
+        rawlen = sizeof(raw);
+        if (sysctlbyname(name, raw, &rawlen, NULL, 0) != 0) {
+            rawlen = 0;
+        }
+    }
+    if (rawlen == 0) {
+        return procfs_copy_data("", 0, uio);       /* unreadable/non-KERN/empty */
     }
 
     char out[1100];

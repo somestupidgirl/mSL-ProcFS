@@ -18,6 +18,7 @@
 #define PROCFS_CTL_NAME        "com.beako.filesystems.procfs"
 #define PROCFS_CTL_MAGIC       0x50524F43u   /* 'PROC' */
 #define PROCFS_CTL_MAXPAYLOAD  2048u
+#define PROCFS_CTL_NAMEMAX     256u          /* max MIB name in a request */
 
 /* Request types (procfs_ctl_req.type). */
 enum {
@@ -27,6 +28,7 @@ enum {
     PROCFS_REQ_LOADAVG    = 4,  /* payload: uint32_t[3] (getloadavg, scaled x100) */
     PROCFS_REQ_REGS       = 5,  /* payload: arm_thread_state64_t / x86_thread_state64_t */
     PROCFS_REQ_FPREGS     = 6,  /* payload: arm_neon_state64_t / x86_float_state64_t   */
+    PROCFS_REQ_SYSCTL     = 7,  /* name = dotted MIB name; payload: raw value bytes */
 };
 
 /* kext -> daemon */
@@ -36,6 +38,7 @@ struct procfs_ctl_req {
     uint32_t type;
     int32_t  pid;
     uint64_t arg;       /* tid for thread requests, else 0 */
+    char     name[PROCFS_CTL_NAMEMAX];  /* MIB name for PROCFS_REQ_SYSCTL, else "" */
 };
 
 /* daemon -> kext, followed by `len` payload bytes */

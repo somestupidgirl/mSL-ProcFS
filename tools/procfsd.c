@@ -28,6 +28,7 @@
 #include <sys/mount.h>
 #include <libproc.h>
 #include <sys/proc_info.h>
+#include <sys/sysctl.h>
 #include <mach/mach.h>
 #include <mach/task.h>
 #include <mach/thread_act.h>
@@ -287,7 +288,7 @@ main(int argc, char **argv)
     fprintf(stderr, "procfsd: connected to %s\n", PROCFS_CTL_NAME);
 
     for (;;) {
-        uint8_t rbuf[256];
+        uint8_t rbuf[sizeof(struct procfs_ctl_req)];
         ssize_t n = recv(fd, rbuf, sizeof(rbuf), 0);
         if (n < 0) {
             if (errno == EINTR) {
@@ -365,6 +366,18 @@ main(int argc, char **argv)
             }
             memcpy(payload, out, sizeof(out));
             resp->len = sizeof(out);
+            break;
+        }
+        case PROCFS_REQ_SYSCTL: {
+            /* Userspace sysctlbyname serves every oid (no CTLFLAG_KERN gate),
+             * returning the raw value bytes; the kext formats by the oid type. */
+            req->name[sizeof(req->name) - 1] = '\0';
+            size_t len = PROCFS_CTL_MAXPAYLOAD;
+            if (sysctlbyname(req->name, payload, &len, NULL, 0) == 0) {
+                resp->len = (uint32_t)len;
+            } else {
+                resp->error = errno;
+            }
             break;
         }
         case PROCFS_REQ_REGS:

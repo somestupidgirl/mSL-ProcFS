@@ -115,14 +115,14 @@ procfs_ctl_send(__unused kern_ctl_ref kctlref, __unused u_int32_t unit,
 }
 
 /*
- * Request `type` for `pid` (and `arg`, e.g. a tid) from the daemon. On success
- * copies up to `outcap` payload bytes into `out` and sets *outlen. Returns 0, or
- * an errno (ENOTCONN if no daemon, ETIMEDOUT if it didn't answer in time) so the
- * caller can fall back.
+ * Request `type` for `pid` (and `arg`, e.g. a tid; `name`, e.g. a sysctl MIB
+ * name, or NULL) from the daemon. On success copies up to `outcap` payload bytes
+ * into `out` and sets *outlen. Returns 0, or an errno (ENOTCONN if no daemon,
+ * ETIMEDOUT if it didn't answer in time) so the caller can fall back.
  */
-int
-procfs_ctl_request(uint32_t type, int pid, uint64_t arg, void *out,
-    uint32_t outcap, uint32_t *outlen)
+static int
+procfs_ctl_request_impl(uint32_t type, int pid, uint64_t arg, const char *name,
+    void *out, uint32_t outcap, uint32_t *outlen)
 {
     if (!g_ctl_connected || g_ctl_ref == NULL) {
         return ENOTCONN;
@@ -160,6 +160,9 @@ procfs_ctl_request(uint32_t type, int pid, uint64_t arg, void *out,
         .pid   = pid,
         .arg   = arg,
     };
+    if (name != NULL) {
+        strlcpy(req.name, name, sizeof(req.name));
+    }
 
     int error;
     errno_t e = ctl_enqueuedata(ref, unit, &req, sizeof(req), 0);
@@ -196,6 +199,20 @@ procfs_ctl_request(uint32_t type, int pid, uint64_t arg, void *out,
     g_ctl_slots[slot].in_use = FALSE;
     lck_mtx_unlock(g_ctl_lock);
     return error;
+}
+
+int
+procfs_ctl_request(uint32_t type, int pid, uint64_t arg, void *out,
+    uint32_t outcap, uint32_t *outlen)
+{
+    return procfs_ctl_request_impl(type, pid, arg, NULL, out, outcap, outlen);
+}
+
+int
+procfs_ctl_request_named(uint32_t type, int pid, uint64_t arg, const char *name,
+    void *out, uint32_t outcap, uint32_t *outlen)
+{
+    return procfs_ctl_request_impl(type, pid, arg, name, out, outcap, outlen);
 }
 
 kern_return_t

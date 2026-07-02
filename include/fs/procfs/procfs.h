@@ -458,6 +458,9 @@ extern kern_return_t procfs_ctl_register(void);
 extern void          procfs_ctl_deregister(void);
 extern int           procfs_ctl_request(uint32_t type, int pid, uint64_t arg,
                                          void *out, uint32_t outcap, uint32_t *outlen);
+extern int           procfs_ctl_request_named(uint32_t type, int pid, uint64_t arg,
+                                         const char *name, void *out, uint32_t outcap,
+                                         uint32_t *outlen);
 extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 
