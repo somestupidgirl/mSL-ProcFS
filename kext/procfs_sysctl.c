@@ -148,6 +148,44 @@ procfs_sysctl_build_name(struct sysctl_oid_list *list, const char *prefix,
     return FALSE;
 }
 
+/* DFS helper: find `target`'s parent oid, carrying the current parent id down
+ * the recursion (0 for the tree root == /proc/sys). */
+static boolean_t
+procfs_sysctl_find_parent(struct sysctl_oid_list *list, uint64_t parent_id,
+    uint64_t target, uint64_t *out_parent)
+{
+    struct sysctl_oid *oid;
+    SLIST_FOREACH(oid, list, oid_link) {
+        if ((uint64_t)oid == target) {
+            *out_parent = parent_id;
+            return TRUE;
+        }
+        if ((oid->oid_kind & CTLTYPE) == CTLTYPE_NODE && oid->oid_arg1 != NULL) {
+            if (procfs_sysctl_find_parent((struct sysctl_oid_list *)oid->oid_arg1,
+                    (uint64_t)oid, target, out_parent)) {
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+
+/*
+ * Resolve the parent directory objectid of `objectid` for ".." traversal. Sets
+ * *parent_objectid to the enclosing oid, or 0 when the parent is the /proc/sys
+ * root (a top-level oid). Returns FALSE for the root itself (no sysctl parent),
+ * leaving ".." to fall through to the /proc root.
+ */
+boolean_t
+procfs_sysctl_parent(uint64_t objectid, uint64_t *parent_objectid)
+{
+    if (objectid == 0) {
+        *parent_objectid = 0;
+        return FALSE;
+    }
+    return procfs_sysctl_find_parent(&sysctl__children, 0, objectid, parent_objectid);
+}
+
 /*
  * Read a leaf's value as Linux-style text. Builds the MIB name, fetches the raw
  * value, and formats it by the oid's declared type (int / quad / string).

@@ -259,10 +259,10 @@ daemon is connected. The kernel path only serves oids marked `CTLFLAG_KERN`, so
 without the daemon the non-`KERN` leaves (e.g. `kern.hostname`, `kern.maxproc`)
 read empty; invoking the oid handler in-kernel to bypass that gate is unsafe —
 the custom handlers assume the sysctl lock is held and panic — so the daemon is
-the path to full coverage. One known limitation: `..` from a nested `/proc/sys`
-directory resolves toward `/proc` (all sysctl vnodes share one structure node, so
-the parent-id computation can't yet distinguish depth); absolute-path reads and
-directory listings are unaffected.
+the path to full coverage. Because every sysctl vnode shares one structure node,
+`..` traversal is resolved specially: from a nested `/proc/sys` directory it walks
+back to the enclosing sysctl oid (and from `/proc/sys` itself to the `/proc`
+root), so relative paths through the tree behave normally.
 
 ### The `procfsd` daemon
 

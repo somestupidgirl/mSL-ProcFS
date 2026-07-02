@@ -540,6 +540,7 @@ extern boolean_t procfs_sysctl_find(uint64_t dir_objectid, const char *name, uin
 extern int       procfs_sysctl_child_at(uint64_t dir_objectid, int index,
                      const char **name, boolean_t *is_node, uint64_t *objectid);
 extern int       procfs_sysctl_read(uint64_t objectid, uio_t uio);
+extern boolean_t procfs_sysctl_parent(uint64_t objectid, uint64_t *parent_objectid);
 extern void procfs_release_fd_list(struct proc_fdinfo *fdlist);
 extern int procfs_check_can_access_process(kauth_cred_t creds, proc_t p);
 extern int procfs_check_can_access_proc_pid(kauth_cred_t creds, pid_t pid);

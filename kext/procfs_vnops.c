@@ -232,13 +232,29 @@ procfs_vnop_lookup(struct vnop_lookup_args *ap)
         // We need the parent of the directory in "dvp". Get that by figuring out what its
         // node id would be.
         pfsid_t parent_node_id;
-        procfs_get_parent_node_id(dir_pnp, &parent_node_id);
+        pfssnode_t *parent_snode = dir_pnp->node_structure_node->psn_parent;
+
+        if (dir_pnp->node_structure_node->psn_node_type == PFSsysctl &&
+            dir_pnp->node_id.nodeid_objectid != 0) {
+            // A nested /proc/sys directory: its parent is the enclosing sysctl
+            // oid (or the /proc/sys root, objectid 0), backed by the same shared
+            // PFSsysctl structure node - not that node's static parent (root).
+            uint64_t parent_oid = 0;
+            (void)procfs_sysctl_parent(dir_pnp->node_id.nodeid_objectid, &parent_oid);
+            parent_node_id.nodeid_base_id  = dir_pnp->node_structure_node->psn_base_node_id;
+            parent_node_id.nodeid_pid      = PRNODE_NO_PID;
+            parent_node_id.nodeid_objectid = parent_oid;
+            parent_snode = dir_pnp->node_structure_node;
+        } else {
+            procfs_get_parent_node_id(dir_pnp, &parent_node_id);
+        }
+
         pfsnode_t *target_pfsnode;
         vnode_t target_vnode;
         procfs_vnode_create_args create_args;
         create_args.vca_parentvp = NULLVP;
         error = procfsnode_find(mp, parent_node_id,
-                                dir_pnp->node_structure_node->psn_parent,
+                                parent_snode,
                                 &target_pfsnode,
                                 &target_vnode,
                                 (create_vnode_func)&procfs_create_vnode,
