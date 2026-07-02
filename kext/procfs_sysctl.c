@@ -45,6 +45,16 @@ procfs_sysctl_children(uint64_t objectid)
     return (struct sysctl_oid_list *)oid->oid_arg1;
 }
 
+/* Internal oids not shown in the listing: nameless entries, deprecated/masked
+ * variables, and the mutable-anchor markers (__anchor__(...)). */
+static boolean_t
+procfs_sysctl_hidden(struct sysctl_oid *oid)
+{
+    return oid->oid_name == NULL
+        || (oid->oid_kind & CTLFLAG_MASKED) != 0
+        || oid->oid_number == OID_MUTABLE_ANCHOR;
+}
+
 /* True if the node is a directory (the tree root, or a CTLTYPE_NODE oid). */
 boolean_t
 procfs_sysctl_is_node(uint64_t objectid)
@@ -66,7 +76,7 @@ procfs_sysctl_find(uint64_t dir_objectid, const char *name, uint64_t *out_object
     }
     struct sysctl_oid *oid;
     SLIST_FOREACH(oid, list, oid_link) {
-        if (oid->oid_name != NULL && strcmp(oid->oid_name, name) == 0) {
+        if (!procfs_sysctl_hidden(oid) && strcmp(oid->oid_name, name) == 0) {
             *out_objectid = (uint64_t)oid;
             return TRUE;
         }
@@ -91,7 +101,7 @@ procfs_sysctl_child_at(uint64_t dir_objectid, int index,
     int i = 0;
     struct sysctl_oid *oid;
     SLIST_FOREACH(oid, list, oid_link) {
-        if (oid->oid_name == NULL) {
+        if (procfs_sysctl_hidden(oid)) {
             continue;
         }
         if (i == index) {
