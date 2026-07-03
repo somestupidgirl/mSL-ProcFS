@@ -226,18 +226,15 @@ procfs_task_vm_sizes(proc_t p, uint64_t *vsize, uint64_t *rsize)
 }
 
 /*
- * "smaps" node - Linux /proc/<pid>/smaps. For each VM region, the maps header
- * line followed by per-region memory detail. Uses VM_REGION_EXTENDED_INFO for
- * resident / dirtied / swapped page counts and the region's share mode.
- *
- * Fields with no macOS source are approximated: Pss and Referenced track Rss
- * (true proportional-set-size and reference-bit data are unavailable), the
- * region's share_mode classifies its whole Rss as shared or private, and the
- * file offset is 0 (VM_REGION_EXTENDED_INFO does not carry it). This is a
- * best-effort smaps, consistent with the rest of the VM nodes on Apple Silicon.
+ * Shared VM-region walk using VM_REGION_EXTENDED_INFO. Resolves the process's
+ * map (like procfs_map_render, but exposing the extended per-region page counts
+ * and share mode) and invokes cb(&region, arg) for each region. The Linux
+ * smaps-family nodes (smaps / smaps_rollup / numa_maps) in procfs_linux.c build
+ * their text from this; it produces no output of its own. Returns 0 or an errno.
  */
 int
-procfs_dosmaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+procfs_map_foreach_ext(pfsnode_t *pnp, vfs_context_t ctx,
+    procfs_ext_region_fn cb, void *arg)
 {
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
     if (p == PROC_NULL) {
@@ -265,142 +262,6 @@ procfs_dosmaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
         proc_rele(p);
         return EIO;
     }
-
-    struct sbuf sb;
-    if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
-        proc_rele(p);
-        return ENOMEM;
-    }
-
-    const uint64_t pgkb = (uint64_t)PAGE_SIZE / 1024;   /* page size in kB */
-
-    mach_vm_offset_t addr = 0;
-    for (int n = 0; n < PROCFS_MAP_MAX_REGIONS; n++) {
-        mach_vm_size_t                 size  = 0;
-        vm_region_extended_info_data_t info;
-        mach_msg_type_number_t         count = VM_REGION_EXTENDED_INFO_COUNT;
-        void                          *object_name = NULL;
-
-        kern_return_t kr = mach_vm_region(map, &addr, &size, VM_REGION_EXTENDED_INFO,
-            (int *)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) {
-            break;
-        }
-
-        boolean_t shared = (info.share_mode == SM_SHARED ||
-                            info.share_mode == SM_TRUESHARED ||
-                            info.share_mode == SM_SHARED_ALIASED);
-
-        uint64_t size_kb  = (uint64_t)size / 1024;
-        uint64_t rss_kb   = (uint64_t)info.pages_resident    * pgkb;
-        uint64_t dirty_kb = (uint64_t)info.pages_dirtied     * pgkb;
-        uint64_t swap_kb  = (uint64_t)info.pages_swapped_out * pgkb;
-        if (dirty_kb > rss_kb) {
-            dirty_kb = rss_kb;
-        }
-        uint64_t clean_kb = rss_kb - dirty_kb;
-        /* No external pager => anonymous memory. */
-        uint64_t anon_kb  = (info.external_pager == 0) ? rss_kb : 0;
-
-        /* maps-format header line (offset unavailable from extended info). */
-        sbuf_printf(&sb, "%016llx-%016llx %c%c%c%c %016llx 00:00 0 \n",
-            (unsigned long long)(uint64_t)addr,
-            (unsigned long long)(uint64_t)(addr + size),
-            (info.protection & VM_PROT_READ)    ? 'r' : '-',
-            (info.protection & VM_PROT_WRITE)   ? 'w' : '-',
-            (info.protection & VM_PROT_EXECUTE) ? 'x' : '-',
-            shared ? 's' : 'p',
-            0ULL);
-
-        sbuf_printf(&sb,
-            "Size:           %8llu kB\n"
-            "KernelPageSize: %8llu kB\n"
-            "MMUPageSize:    %8llu kB\n"
-            "Rss:            %8llu kB\n"
-            "Pss:            %8llu kB\n"
-            "Shared_Clean:   %8llu kB\n"
-            "Shared_Dirty:   %8llu kB\n"
-            "Private_Clean:  %8llu kB\n"
-            "Private_Dirty:  %8llu kB\n"
-            "Referenced:     %8llu kB\n"
-            "Anonymous:      %8llu kB\n"
-            "Swap:           %8llu kB\n",
-            (unsigned long long)size_kb,
-            (unsigned long long)pgkb, (unsigned long long)pgkb,
-            (unsigned long long)rss_kb, (unsigned long long)rss_kb,
-            (unsigned long long)(shared ? clean_kb : 0),
-            (unsigned long long)(shared ? dirty_kb : 0),
-            (unsigned long long)(shared ? 0 : clean_kb),
-            (unsigned long long)(shared ? 0 : dirty_kb),
-            (unsigned long long)rss_kb,
-            (unsigned long long)anon_kb,
-            (unsigned long long)swap_kb);
-
-        sbuf_printf(&sb, "VmFlags:%s%s%s%s\n",
-            (info.protection & VM_PROT_READ)    ? " rd" : "",
-            (info.protection & VM_PROT_WRITE)   ? " wr" : "",
-            (info.protection & VM_PROT_EXECUTE) ? " ex" : "",
-            shared ? " sh" : "");
-
-        mach_vm_offset_t next = addr + size;
-        if (next <= addr) {
-            break;
-        }
-        addr = next;
-    }
-
-    proc_rele(p);
-
-    sbuf_finish(&sb);
-    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
-    sbuf_delete(&sb);
-
-    return error;
-}
-
-/*
- * "smaps_rollup" node - Linux /proc/<pid>/smaps_rollup. A single [rollup] header
- * line spanning the whole address space, followed by the smaps fields summed
- * across every mapping. Same VM_REGION_EXTENDED_INFO walk as smaps, accumulated
- * instead of emitted per region (the kernel's own faster-than-parsing-smaps path).
- * Same approximations as smaps (Pss/Referenced track Rss; share_mode classifies
- * each region's whole Rss as shared or private).
- */
-int
-procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
-{
-    proc_t p = proc_find(pnp->node_id.nodeid_pid);
-    if (p == PROC_NULL) {
-        return ESRCH;
-    }
-
-    int error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
-    if (error != 0) {
-        proc_rele(p);
-        return error;
-    }
-
-    if (procfs_kl_get_task_map == NULL || procfs_kl_mach_vm_region == NULL) {
-        proc_rele(p);
-        return ENOTSUP;
-    }
-    procfs_get_task_map_fn   get_task_map   =
-        ptrauth_sign_unauthenticated(procfs_kl_get_task_map, ptrauth_key_function_pointer, 0);
-    procfs_mach_vm_region_fn mach_vm_region =
-        ptrauth_sign_unauthenticated(procfs_kl_mach_vm_region, ptrauth_key_function_pointer, 0);
-
-    task_t   task = proc_task(p);
-    vm_map_t map  = (task != TASK_NULL) ? get_task_map(task) : NULL;
-    if (map == NULL) {
-        proc_rele(p);
-        return EIO;
-    }
-
-    const uint64_t pgkb = (uint64_t)PAGE_SIZE / 1024;
-    uint64_t first = 0, last = 0;
-    uint64_t rss = 0, shared_clean = 0, shared_dirty = 0;
-    uint64_t private_clean = 0, private_dirty = 0, anon = 0, swap = 0;
-    boolean_t seen = FALSE;
 
     mach_vm_offset_t addr = 0;
     for (int n = 0; n < PROCFS_MAP_MAX_REGIONS; n++) {
@@ -415,27 +276,19 @@ procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
             break;
         }
 
-        if (!seen) {
-            first = (uint64_t)addr;
-            seen  = TRUE;
-        }
-        last = (uint64_t)(addr + size);
-
-        boolean_t shared = (info.share_mode == SM_SHARED ||
-                            info.share_mode == SM_TRUESHARED ||
-                            info.share_mode == SM_SHARED_ALIASED);
-        uint64_t r_kb = (uint64_t)info.pages_resident * pgkb;
-        uint64_t d_kb = (uint64_t)info.pages_dirtied  * pgkb;
-        if (d_kb > r_kb) {
-            d_kb = r_kb;
-        }
-        uint64_t c_kb = r_kb - d_kb;
-
-        rss  += r_kb;
-        swap += (uint64_t)info.pages_swapped_out * pgkb;
-        if (shared) { shared_clean += c_kb; shared_dirty += d_kb; }
-        else        { private_clean += c_kb; private_dirty += d_kb; }
-        if (info.external_pager == 0) { anon += r_kb; }
+        struct procfs_ext_region r = {
+            .start          = (uint64_t)addr,
+            .end            = (uint64_t)(addr + size),
+            .prot           = info.protection,
+            .resident_pages = info.pages_resident,
+            .dirty_pages    = info.pages_dirtied,
+            .swapped_pages  = info.pages_swapped_out,
+            .shared         = (info.share_mode == SM_SHARED ||
+                               info.share_mode == SM_TRUESHARED ||
+                               info.share_mode == SM_SHARED_ALIASED),
+            .anonymous      = (info.external_pager == 0),
+        };
+        cb(&r, arg);
 
         mach_vm_offset_t next = addr + size;
         if (next <= addr) {
@@ -445,123 +298,7 @@ procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     }
 
     proc_rele(p);
-
-    struct sbuf sb;
-    if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
-        return ENOMEM;
-    }
-    sbuf_printf(&sb, "%016llx-%016llx ---p 00000000 00:00 0 [rollup]\n",
-        (unsigned long long)first, (unsigned long long)last);
-    sbuf_printf(&sb,
-        "Rss:            %8llu kB\n"
-        "Pss:            %8llu kB\n"
-        "Shared_Clean:   %8llu kB\n"
-        "Shared_Dirty:   %8llu kB\n"
-        "Private_Clean:  %8llu kB\n"
-        "Private_Dirty:  %8llu kB\n"
-        "Referenced:     %8llu kB\n"
-        "Anonymous:      %8llu kB\n"
-        "Swap:           %8llu kB\n",
-        (unsigned long long)rss, (unsigned long long)rss,
-        (unsigned long long)shared_clean, (unsigned long long)shared_dirty,
-        (unsigned long long)private_clean, (unsigned long long)private_dirty,
-        (unsigned long long)rss, (unsigned long long)anon,
-        (unsigned long long)swap);
-
-    sbuf_finish(&sb);
-    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
-    sbuf_delete(&sb);
-    return error;
-}
-
-/*
- * "numa_maps" node - Linux /proc/<pid>/numa_maps. One line per VM region:
- *   <start> <policy> [anon=N] [dirty=N] [swapcache=N] [N<node>=N] kernelpagesize_kB=N
- * macOS is single-node UMA, so the policy is always "default" and all resident
- * pages report against node 0. Uses the same VM_REGION_EXTENDED_INFO walk as
- * smaps for resident / dirtied / swapped page counts and the external pager
- * (anonymous) flag. Same best-effort caveats as the rest of the VM nodes.
- */
-int
-procfs_donuma_maps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
-{
-    proc_t p = proc_find(pnp->node_id.nodeid_pid);
-    if (p == PROC_NULL) {
-        return ESRCH;
-    }
-
-    int error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
-    if (error != 0) {
-        proc_rele(p);
-        return error;
-    }
-
-    if (procfs_kl_get_task_map == NULL || procfs_kl_mach_vm_region == NULL) {
-        proc_rele(p);
-        return ENOTSUP;
-    }
-    procfs_get_task_map_fn   get_task_map   =
-        ptrauth_sign_unauthenticated(procfs_kl_get_task_map, ptrauth_key_function_pointer, 0);
-    procfs_mach_vm_region_fn mach_vm_region =
-        ptrauth_sign_unauthenticated(procfs_kl_mach_vm_region, ptrauth_key_function_pointer, 0);
-
-    task_t   task = proc_task(p);
-    vm_map_t map  = (task != TASK_NULL) ? get_task_map(task) : NULL;
-    if (map == NULL) {
-        proc_rele(p);
-        return EIO;
-    }
-
-    struct sbuf sb;
-    if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
-        proc_rele(p);
-        return ENOMEM;
-    }
-
-    const uint64_t pgkb = (uint64_t)PAGE_SIZE / 1024;
-
-    mach_vm_offset_t addr = 0;
-    for (int n = 0; n < PROCFS_MAP_MAX_REGIONS; n++) {
-        mach_vm_size_t                 size = 0;
-        vm_region_extended_info_data_t info;
-        mach_msg_type_number_t         count = VM_REGION_EXTENDED_INFO_COUNT;
-        void                          *object_name = NULL;
-
-        kern_return_t kr = mach_vm_region(map, &addr, &size, VM_REGION_EXTENDED_INFO,
-            (int *)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) {
-            break;
-        }
-
-        sbuf_printf(&sb, "%llx default", (unsigned long long)(uint64_t)addr);
-        if (info.external_pager == 0 && info.pages_resident > 0) {
-            sbuf_printf(&sb, " anon=%u", info.pages_resident);
-        }
-        if (info.pages_dirtied > 0) {
-            sbuf_printf(&sb, " dirty=%u", info.pages_dirtied);
-        }
-        if (info.pages_swapped_out > 0) {
-            sbuf_printf(&sb, " swapcache=%u", info.pages_swapped_out);
-        }
-        if (info.pages_resident > 0) {
-            sbuf_printf(&sb, " N0=%u", info.pages_resident);   /* single NUMA node */
-        }
-        sbuf_printf(&sb, " kernelpagesize_kB=%llu\n", (unsigned long long)pgkb);
-
-        mach_vm_offset_t next = addr + size;
-        if (next <= addr) {
-            break;
-        }
-        addr = next;
-    }
-
-    proc_rele(p);
-
-    sbuf_finish(&sb);
-    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
-    sbuf_delete(&sb);
-
-    return error;
+    return 0;
 }
 
 /*

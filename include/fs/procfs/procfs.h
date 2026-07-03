@@ -455,6 +455,27 @@ typedef void (*procfs_region_fmt_fn)(struct sbuf *sb, const struct procfs_region
  * (Linux-style) lives in procfs_linux.c and reuses this. */
 extern int procfs_map_render(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx,
                              procfs_region_fmt_fn fmt);
+
+/* A VM region with the VM_REGION_EXTENDED_INFO detail the smaps-family Linux
+ * nodes need. `shared`/`anonymous` are precomputed from the region's share mode
+ * and pager so the Linux formatters (procfs_linux.c) need no Mach VM headers. */
+struct procfs_ext_region {
+    uint64_t start;
+    uint64_t end;
+    int      prot;                 /* current protection (VM_PROT_* bits) */
+    uint32_t resident_pages;
+    uint32_t dirty_pages;
+    uint32_t swapped_pages;
+    int      shared;               /* region shared with other tasks */
+    int      anonymous;            /* no external pager (anonymous memory) */
+};
+typedef void (*procfs_ext_region_fn)(const struct procfs_ext_region *r, void *arg);
+
+/* Shared VM-region walk using VM_REGION_EXTENDED_INFO (procfs_map.c): invokes
+ * `cb(&region, arg)` per region (no output of its own). The Linux smaps /
+ * smaps_rollup / numa_maps nodes in procfs_linux.c build their text from this. */
+extern int procfs_map_foreach_ext(pfsnode_t *pnp, vfs_context_t ctx,
+                                  procfs_ext_region_fn cb, void *arg);
 /* Sum a task's virtual and resident sizes via the VM-region walk (procfs_map.c);
  * the offset-free source for proc_taskinfo's size fields on arm64. */
 extern int procfs_task_vm_sizes(proc_t p, uint64_t *vsize, uint64_t *rsize);

@@ -1135,6 +1135,198 @@ procfs_domaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 }
 
 /*
+ * The smaps family - /proc/<pid>/smaps, smaps_rollup and numa_maps - reuse the
+ * shared VM_REGION_EXTENDED_INFO walk (procfs_map_foreach_ext in procfs_map.c)
+ * with a per-region callback here. macOS provides resident/dirtied/swapped page
+ * counts and the share mode; fields without a source are approximated: Pss and
+ * Referenced track Rss, the share mode classifies a region's whole Rss as shared
+ * or private, the maps offset is 0, and NUMA is single-node (policy "default").
+ */
+#define PROCFS_PAGE_KB  ((uint64_t)PAGE_SIZE / 1024)
+
+/* Per-region smaps block: the maps header line plus the memory detail. */
+static void
+procfs_smaps_cb(const struct procfs_ext_region *r, void *arg)
+{
+    struct sbuf *sb = (struct sbuf *)arg;
+
+    uint64_t size_kb  = (r->end - r->start) / 1024;
+    uint64_t rss_kb   = (uint64_t)r->resident_pages * PROCFS_PAGE_KB;
+    uint64_t dirty_kb = (uint64_t)r->dirty_pages    * PROCFS_PAGE_KB;
+    if (dirty_kb > rss_kb) {
+        dirty_kb = rss_kb;
+    }
+    uint64_t clean_kb = rss_kb - dirty_kb;
+    uint64_t swap_kb  = (uint64_t)r->swapped_pages  * PROCFS_PAGE_KB;
+    uint64_t anon_kb  = r->anonymous ? rss_kb : 0;
+
+    sbuf_printf(sb, "%016llx-%016llx %c%c%c%c %016llx 00:00 0 \n",
+        (unsigned long long)r->start, (unsigned long long)r->end,
+        (r->prot & VM_PROT_READ)    ? 'r' : '-',
+        (r->prot & VM_PROT_WRITE)   ? 'w' : '-',
+        (r->prot & VM_PROT_EXECUTE) ? 'x' : '-',
+        r->shared ? 's' : 'p', 0ULL);
+    sbuf_printf(sb,
+        "Size:           %8llu kB\n"
+        "KernelPageSize: %8llu kB\n"
+        "MMUPageSize:    %8llu kB\n"
+        "Rss:            %8llu kB\n"
+        "Pss:            %8llu kB\n"
+        "Shared_Clean:   %8llu kB\n"
+        "Shared_Dirty:   %8llu kB\n"
+        "Private_Clean:  %8llu kB\n"
+        "Private_Dirty:  %8llu kB\n"
+        "Referenced:     %8llu kB\n"
+        "Anonymous:      %8llu kB\n"
+        "Swap:           %8llu kB\n",
+        (unsigned long long)size_kb,
+        (unsigned long long)PROCFS_PAGE_KB, (unsigned long long)PROCFS_PAGE_KB,
+        (unsigned long long)rss_kb, (unsigned long long)rss_kb,
+        (unsigned long long)(r->shared ? clean_kb : 0),
+        (unsigned long long)(r->shared ? dirty_kb : 0),
+        (unsigned long long)(r->shared ? 0 : clean_kb),
+        (unsigned long long)(r->shared ? 0 : dirty_kb),
+        (unsigned long long)rss_kb, (unsigned long long)anon_kb,
+        (unsigned long long)swap_kb);
+    sbuf_printf(sb, "VmFlags:%s%s%s%s\n",
+        (r->prot & VM_PROT_READ)    ? " rd" : "",
+        (r->prot & VM_PROT_WRITE)   ? " wr" : "",
+        (r->prot & VM_PROT_EXECUTE) ? " ex" : "",
+        r->shared ? " sh" : "");
+}
+
+int
+procfs_dosmaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+    int error = procfs_map_foreach_ext(pnp, ctx, procfs_smaps_cb, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return error;
+    }
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/* Accumulator for smaps_rollup: sums across every mapping. */
+struct procfs_rollup {
+    uint64_t first, last;
+    uint64_t rss, shared_clean, shared_dirty, private_clean, private_dirty;
+    uint64_t anon, swap;
+    int      seen;
+};
+
+static void
+procfs_rollup_cb(const struct procfs_ext_region *r, void *arg)
+{
+    struct procfs_rollup *t = (struct procfs_rollup *)arg;
+
+    if (!t->seen) {
+        t->first = r->start;
+        t->seen  = 1;
+    }
+    t->last = r->end;
+
+    uint64_t rss_kb   = (uint64_t)r->resident_pages * PROCFS_PAGE_KB;
+    uint64_t dirty_kb = (uint64_t)r->dirty_pages    * PROCFS_PAGE_KB;
+    if (dirty_kb > rss_kb) {
+        dirty_kb = rss_kb;
+    }
+    uint64_t clean_kb = rss_kb - dirty_kb;
+
+    t->rss  += rss_kb;
+    t->swap += (uint64_t)r->swapped_pages * PROCFS_PAGE_KB;
+    if (r->shared) { t->shared_clean  += clean_kb; t->shared_dirty  += dirty_kb; }
+    else           { t->private_clean += clean_kb; t->private_dirty += dirty_kb; }
+    if (r->anonymous) {
+        t->anon += rss_kb;
+    }
+}
+
+int
+procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+{
+    struct procfs_rollup t;
+    bzero(&t, sizeof(t));
+    int error = procfs_map_foreach_ext(pnp, ctx, procfs_rollup_cb, &t);
+    if (error != 0) {
+        return error;
+    }
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+    sbuf_printf(&sb, "%016llx-%016llx ---p 00000000 00:00 0 [rollup]\n",
+        (unsigned long long)t.first, (unsigned long long)t.last);
+    sbuf_printf(&sb,
+        "Rss:            %8llu kB\n"
+        "Pss:            %8llu kB\n"
+        "Shared_Clean:   %8llu kB\n"
+        "Shared_Dirty:   %8llu kB\n"
+        "Private_Clean:  %8llu kB\n"
+        "Private_Dirty:  %8llu kB\n"
+        "Referenced:     %8llu kB\n"
+        "Anonymous:      %8llu kB\n"
+        "Swap:           %8llu kB\n",
+        (unsigned long long)t.rss, (unsigned long long)t.rss,
+        (unsigned long long)t.shared_clean, (unsigned long long)t.shared_dirty,
+        (unsigned long long)t.private_clean, (unsigned long long)t.private_dirty,
+        (unsigned long long)t.rss, (unsigned long long)t.anon,
+        (unsigned long long)t.swap);
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/* Per-region numa_maps line: address, policy, and single-node page counts. */
+static void
+procfs_numa_cb(const struct procfs_ext_region *r, void *arg)
+{
+    struct sbuf *sb = (struct sbuf *)arg;
+
+    sbuf_printf(sb, "%llx default", (unsigned long long)r->start);
+    if (r->anonymous && r->resident_pages > 0) {
+        sbuf_printf(sb, " anon=%u", r->resident_pages);
+    }
+    if (r->dirty_pages > 0) {
+        sbuf_printf(sb, " dirty=%u", r->dirty_pages);
+    }
+    if (r->swapped_pages > 0) {
+        sbuf_printf(sb, " swapcache=%u", r->swapped_pages);
+    }
+    if (r->resident_pages > 0) {
+        sbuf_printf(sb, " N0=%u", r->resident_pages);   /* single NUMA node */
+    }
+    sbuf_printf(sb, " kernelpagesize_kB=%llu\n", (unsigned long long)PROCFS_PAGE_KB);
+}
+
+int
+procfs_donuma_maps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+    int error = procfs_map_foreach_ext(pnp, ctx, procfs_numa_cb, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return error;
+    }
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * Linux-compatible per-thread files: /proc/<pid>/task/<tid>/{comm,stat,status,
  * sched}. The per-thread data (run state, user/system time, name, priority,
  * policy) comes from the procfsd daemon via proc_pidinfo(PROC_PIDTHREADID64INFO)
