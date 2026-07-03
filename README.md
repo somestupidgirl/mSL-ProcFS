@@ -100,7 +100,7 @@ The `task` directory mirrors the `threads` directory except that its TID sub-dir
 
 ## Feature status
 
-Verified with `test/test_features.sh`.
+Verified with `tests/test_features.sh`.
 
 **Working (real data):**
 
