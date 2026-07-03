@@ -1,10 +1,12 @@
 # ProcFS
-A kernel-extension implementation of the `/proc` file system for macOS, exposing
+ProcFS is a kernel-extension implementation of the `/proc` file system for macOS, exposing
 running processes and threads as a filesystem with BSD- and Linux-compatible
-per-process information. It began as a port of Kim Topley's proof-of-concept XNU
-patch (see [Credits](#credits)) but has since diverged substantially.
+per-process information.
 
-Certain features and improvements are still planned and/or in development, but directory listing and the core per-process files work.
+## What is procfs?
+*procfs* lets you view the processes running on a UNIX system as nodes in the file system, where each process is represented by a single directory named from its process id. Typically, the file system is mounted at `/proc`, so the directory for process 1 would be called `/proc/1`. Beneath a process’ directory are further directories and files that give more information about the process, such as its process id, its active threads, the files that it has open, and so on. *procfs* first appeared in an early version of AT&T’s UNIX and was later implemented in various forms in System V, BSD, Solaris and Linux. You can find a history of the implementation of *procfs* at https://en.wikipedia.org/wiki/Procfs.
+
+In addition to letting you visualize running processes, *procfs* also allows some measure of control over them, at least to suitably privileged users. By writing specific data structures to certain files, you could do such things as set breakpoints and read and write process memory and registers. In fact, on some systems, this was how debugging facilities were provided. However, more modern operating systems do this differently, so some UNIX variants no longer include an implementation of *procfs*. In particular, macOS doesn’t provide *procfs* so, although it’s not strictly needed, I thought that implementing it would be an interesting side project. The code in this repository provides an implementation of *procfs* for macOS. You can use it to see what processes and threads are running on the system and what files they have open. Later, I plan to add more features, beginning with the ability to inspect a thread’s address space to see which executable it is running and what shared libraries it has loaded.
 
 Tested on:
 
@@ -19,11 +21,6 @@ Tested on:
 > out of reach degrades gracefully (returns `ENOTSUP`/empty) rather than failing
 > the mount. See [Feature status](#feature-status) below.
 
-## What is procfs?
-*procfs* lets you view the processes running on a UNIX system as nodes in the file system, where each process is represented by a single directory named from its process id. Typically, the file system is mounted at `/proc`, so the directory for process 1 would be called `/proc/1`. Beneath a process’ directory are further directories and files that give more information about the process, such as its process id, its active threads, the files that it has open, and so on. *procfs* first appeared in an early version of AT&T’s UNIX and was later implemented in various forms in System V, BSD, Solaris and Linux. You can find a history of the implementation of *procfs* at https://en.wikipedia.org/wiki/Procfs.
-
-In addition to letting you visualize running processes, *procfs* also allows some measure of control over them, at least to suitably privileged users. By writing specific data structures to certain files, you could do such things as set breakpoints and read and write process memory and registers. In fact, on some systems, this was how debugging facilities were provided. However, more modern operating systems do this differently, so some UNIX variants no longer include an implementation of *procfs*. In particular, macOS doesn’t provide *procfs* so, although it’s not strictly needed, I thought that implementing it would be an interesting side project. The code in this repository provides an implementation of *procfs* for macOS. You can use it to see what processes and threads are running on the system and what files they have open. Later, I plan to add more features, beginning with the ability to inspect a thread’s address space to see which executable it is running and what shared libraries it has loaded.
-
 ### Root directory
 
 At the root of the file system, alongside the per-process directories, are a few
@@ -31,22 +28,22 @@ Linux-compatible files and helpers:
 
 | Entry        | Summary                                                              |
 |--------------|---------------------------------------------------------------------|
+|`byname/`     | Directory of symbolic links, one per process, named by command name |
 |`cpuinfo`     | Linux-style CPU information (text)                                   |
+|`curproc/`     | Symbolic link to the calling process's directory (BSD name)         |
+|`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
-|`partitions`  | Linux-style partition table (text; all block devices via IOKit — see below) |
-|`mtab`        | Linux-style mounted-filesystem table (`/etc/mtab` format: `device mountpoint fstype options 0 0`) |
 |`mounts`      | The Linux name for the same mounted-filesystem table as `mtab`       |
+|`mtab`        | Linux-style mounted-filesystem table (`/etc/mtab` format: `device mountpoint fstype options 0 0`) |
+|`partitions`  | Linux-style partition table (text; all block devices via IOKit — see below) |
+|`self/`        | Symbolic link to the calling process's directory (Linux name)       |
 |`stat`        | Linux-style kernel/system statistics (`cpu`/`cpuN` ticks, `btime`, `processes`; see below) |
-|`vmstat`      | Linux-style virtual-memory statistics (daemon-backed `host_statistics64`; see below) |
-|`uptime`      | Linux-style uptime (seconds since boot; idle field `0.00`)          |
 |`swaps`       | Linux-style swap-area table (aggregate `vm.swapusage`; macOS swaps dynamically under `/private/var/vm`) |
-|`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`sys/`        | Dynamic mirror of the kernel sysctl MIB tree (Linux `/proc/sys`); directories are sysctl nodes, leaves read their value as text |
+|`uptime`      | Linux-style uptime (seconds since boot; idle field `0.00`)          |
 |`version`     | Kernel version string (text)                                        |
-|`self`        | Symbolic link to the calling process's directory (Linux name)       |
-|`curproc`     | Symbolic link to the calling process's directory (BSD name)         |
-|`byname/`     | Directory of symbolic links, one per process, named by command name |
+|`vmstat`      | Linux-style virtual-memory statistics (daemon-backed `host_statistics64`; see below) |
 
 ### Per-process files
 
@@ -54,30 +51,44 @@ Each directory named for a process id represents one process on the system. By d
 
 | File    | Summary                          | Structure                       |
 |---------|----------------------------------|---------------------------------|
-|`pid`      | Process id                       | `pid_t` (binary `int32`)         |
-|`ppid`     | Parent process id                | `pid_t` (binary `int32`)         |
-|`pgid`     | Process group id                 | `pid_t` (binary `int32`)         |
-|`sid`      | Session id                       | `pid_t` (binary `int32`)         |
-|`status`   | Basic process info (mode-switched) | native: `struct proc_bsdshortinfo`; linux: `Name:/State:/Pid:/Uid:/VmRSS:…` text |
-|`stat`     | Linux single-line process stat (52 space-separated fields) | text |
-|`statm`    | Linux memory usage in pages (`size resident shared text lib data dt`) | text |
-|`comm`     | Process (command) name | text |
-|`taskinfo` | Info for the process’s Mach task | `struct proc_taskinfo` — exact via the `procfsd` daemon; falls back to the kext’s partial fill without it (see Feature status) |
+|`auxv`     | XNU's auxiliary-vector equivalent — dyld's `apple[]` array (`key=value` strings) | text (NUL-separated) |
 |`cmdline`  | Process argument vector (NUL-separated, Linux format) | text |
+|`comm`     | Process (command) name | text |
+|`cwd/`      | Symlink to the current working directory | symlink |
 |`environ`  | Process environment (NUL-separated, Linux format) | text |
 |`exe`      | Symlink to the executable | symlink |
-|`cwd`      | Symlink to the current working directory | symlink |
-|`root`     | Symlink to the root directory | symlink |
-|`tty`      | Controlling terminal device path (e.g. `/dev/ttys001`) | text |
-|`note`     | Write a note to the process (NetBSD/Plan 9-style) | write-only (read returns `EINVAL`); a note delivers a signal to the process — see below |
-|`limit`    | Process resource limits, one `<name> <cur> <max>` line per limit (`-1` = unlimited) | text |
-|`regs`     | Representative thread's general registers, native Mach `arm_thread_state64_t` (x86_64: `x86_thread_state64_t`) — served by the `procfsd` daemon | binary |
+|`fd/`       | File descriptor| directory |
 |`fpregs`   | Representative thread's FP/SIMD registers, native `arm_neon_state64_t` (x86_64: `x86_float_state64_t`) — served by the daemon | binary |
-|`auxv`     | XNU's auxiliary-vector equivalent — dyld's `apple[]` array (`key=value` strings) | text (NUL-separated) |
+|`limit`    | Process resource limits, one `<name> <cur> <max>` line per limit (`-1` = unlimited) | text |
+|`note`     | Write a note to the process (NetBSD/Plan 9-style) | write-only (read returns `EINVAL`); a note delivers a signal to the process — see below |
+|`pid`      | Process id                       | `pid_t` (binary `int32`)         |
+|`pgid`     | Process group id                 | `pid_t` (binary `int32`)         |
+|`ppid`     | Parent process id                | `pid_t` (binary `int32`)         |
+|`regs`     | Representative thread's general registers, native Mach `arm_thread_state64_t` (x86_64: `x86_thread_state64_t`) — served by the `procfsd` daemon | binary |
+|`root/`     | Symlink to the root directory | symlink |
+|`sid`      | Session id                       | `pid_t` (binary `int32`)         |
+|`stat`     | Linux single-line process stat (52 space-separated fields) | text |
+|`statm`    | Linux memory usage in pages (`size resident shared text lib data dt`) | text |
+|`status`   | Basic process info (mode-switched) | native: `struct proc_bsdshortinfo`; linux: `Name:/State:/Pid:/Uid:/VmRSS:…` text |
+|`task/`       | Linux-style task directory | directory |
+|`taskinfo` | Info for the process’s Mach task | `struct proc_taskinfo` — exact via the `procfsd` daemon; falls back to the kext’s partial fill without it (see Feature status) |
+|`thread/`       | Thread directory | directory |
+|`tty`      | Controlling terminal device path (e.g. `/dev/ttys001`) | text |
 
 The `fd` directory contains one entry for each file that the process has open. Each entry is a directory that’s numbered for the corresponding file descriptor. Within each subdirectory you’ll find two files called `details` and `socket`. The `details` file contains a `vnode_fdinfowithpath` structure, which contains information about the file including its path name if it is a file system file. If the file is a socket endpoint, you can read a `socket_fdinfo` structure from the `socket` file.
 
-The `threads` directory contains a subdirectory for each of the process’ threads, named by thread id. Each thread directory contains a single file called `info` that holds a `proc_threadinfo` structure. Thread *enumeration* works on Apple Silicon (the directory lists the real thread ids), and the per-thread `info` *contents* are now supplied exactly by the `procfsd` daemon (`proc_pidinfo(PROC_PIDTHREADID64INFO)`); they read zero only when no daemon is connected (the private `fill_taskthreadinfo` is stripped from the arm64 kernel).
+The `threads` directory contains a subdirectory for each of the process’ threads, named by thread id (TID). Each thread directory contains a file called `info` that holds a `proc_threadinfo` structure. Thread *enumeration* works on Apple Silicon (the directory lists the real thread ids), and the per-thread `info` *contents* are now supplied exactly by the `procfsd` daemon (`proc_pidinfo(PROC_PIDTHREADID64INFO)`); they read zero only when no daemon is connected (the private `fill_taskthreadinfo` is stripped from the arm64 kernel).
+
+The `task` directory mirrors the `threads` directory except that its TID sub-directories also contain Linux-like files. 
+
+| File    | Summary                          | Structure                       |
+|---------|----------------------------------|---------------------------------|
+|`comm`   | Exposes and allows modification of a specific thread's command name (comm value) | text |
+|`info`   | The `proc_threadinfo` structure| `pid_t` (binary `int32`)   |
+|`maps`   | Displays the memory layout and mapped memory regions for a specific thread within a process | text |
+|`sched`   | Provides real-time scheduler statistics and execution data for a specific thread | text |
+|`stat`   | Provides detailed status and performance statistics for a specific thread | text |
+|`status`   | Provides human-readable status information for a specific thread | text |
 
 ## Feature status
 
@@ -316,10 +327,6 @@ the binary Mach state / raw `apple[]` array; in Linux mode they emit the
 human-readable text forms (`Name:/State:/…`, `x0 0x…`, `q0 0x…`, `AT_PAGESZ …`)
 from `procfs_linux.c`. Other nodes keep their single format for now.
 
-**Not yet present (planned — see TODO):**
-
-  - Further Linux-style `/proc` files (`/proc/modules`, `/proc/diskstats`, …).
-
 ## How to build procfs
 `make` builds the kext, the `procfs.fs` mount bundle, the userspace tools
 (`procfsd`, `procfs_ksyms`) and the LaunchDaemon plist into `bin/`:
@@ -390,15 +397,13 @@ Or recursively:
 
     ls /proc/*/*/*/*
 
-Note: Finder support has not yet been implemented so the contents of the proc folder will not be visible there. Currently only terminal is supported.
-
 Likewise you can use the `cat` command to get the contents of a file:
 
     cat /proc/version
     cat /proc/sys/kern/ostype        # like Linux's /proc/sys/kern/ostype
     ls  /proc/sys/kern
 
-Most per-process files contain binary structures rather than text, so pipe them
+For per-process files that contain binary structures rather than text, you must pipe them
 through `hexdump` to read the raw contents:
 
     cat /proc/curproc/taskinfo | hexdump -C
@@ -409,6 +414,7 @@ through `hexdump` to read the raw contents:
  - Extend the `procfs.linux` presentation-mode switch to more nodes as native
    and Linux renderings diverge (only `regs`/`fpregs`/`auxv` differ today).
  - Implement more linux-compatible features (`/proc/modules`, `/proc/diskstats`, etc.)
+ - Implement a GUI menu bar utility.
 
 ## Issues
 Currently known issues:
@@ -424,10 +430,7 @@ Currently known issues:
 ## Contributing and Bug Reporting
 If you wish to contribute to this project then feel free to make a pull request. If you encounter any undocumented bugs then you may also file an issue under the "Issues" tab.
 
-Contact me: sunnevanattsol@gmail.com
-
 ## Credits
-
 This project builds on the work of others, with thanks to:
 
 - **Kim Topley** — the original proof-of-concept `procfs` for XNU that this project started from.
