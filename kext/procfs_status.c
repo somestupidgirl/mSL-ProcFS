@@ -26,8 +26,8 @@
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_ctl.h>
 
-#include "lib/symbols.h"
-#include "lib/kern.h"
+#include <libkprocfs/symbols.h>
+#include <libkprocfs/kern.h>
 
 /*
  * Reads the data for the "pid" node. The data is the

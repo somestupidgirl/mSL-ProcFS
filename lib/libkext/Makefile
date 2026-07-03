@@ -51,5 +51,5 @@ $(LIB): $(LIB_OBJS)
 	@echo "AR $@"
 
 %.o: %.c
-	@$(CC) -o $@ $(CFLAGS) -fPIC -fPIE -c $< $(INC)
+	@$(CC) -o $@ $(CFLAGS) -c $< $(INC)
 	@echo "$@" | xargs -n1 | ts "CC"

@@ -21,7 +21,7 @@
 
 #include <fs/procfs/procfs.h>
 
-#include "lib/symbols.h"
+#include <libkprocfs/symbols.h>
 
 #pragma mark -
 #pragma mark Local Definitions

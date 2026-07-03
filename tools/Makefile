@@ -1,5 +1,5 @@
 CC=     cc
-CFLAGS= -O2 -Wall -Wextra -std=c99 -g
+CFLAGS= -O2 -Wall -Wextra -std=c99 -g -fPIE
 PROGS=  procfs_ksyms procfsd
 
 all: $(PROGS)

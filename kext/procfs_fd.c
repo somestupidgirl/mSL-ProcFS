@@ -24,8 +24,8 @@
 
 #include <fs/procfs/procfs.h>
 
-#include "lib/symbols.h"
-#include "lib/kern.h"
+#include <libkprocfs/symbols.h>
+#include <libkprocfs/kern.h>
 
 /*
  * Reads the data associated with a file descriptor node. The data is 

@@ -31,7 +31,8 @@ CFLAGS?=    -target $(TARGET_TRIPLE)            \
 ifeq ($(findstring arm64,$(TARGET_TRIPLE)),arm64)
 CFLAGS+=    -I../../xnu/bsd                     \
             -I../../xnu/libkern                 \
-            -I../../xnu/osfmk -I../../xnu/pexpert                   \
+            -I../../xnu/osfmk                   \
+            -I../../xnu/pexpert                 \
             -isystem $(KERNEL_HEADERS)/arm64    \
             -isystem $(KERNEL_HEADERS)/arm
 else
@@ -70,5 +71,5 @@ $(LIB): $(LIB_OBJS)
 	@echo "AR $@"
 
 %.o: %.c
-	@$(CC) -o $@ $(CFLAGS) -fPIC -fPIE -c $< $(INC)
+	@$(CC) -o $@ $(CFLAGS) -c $< $(INC)
 	@echo "$@" | xargs -n1 | ts "CC"

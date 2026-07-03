@@ -20,7 +20,7 @@
 #
 
 MAKE=make
-OUT=bin
+OUT=out
 
 # Install locations.
 EXT_DIR        := /Library/Extensions
@@ -61,11 +61,11 @@ endif
 # Per-arch settings
 ifeq ($(ARCH),arm64e)
     KEXT_ARCHFLAGS    := -arch arm64e
-    KEXT_TRIPLE       := arm64e-apple-macos12.0
+    KEXT_TRIPLE       := arm64e-apple-macos26.5
     FS_ARCHFLAGS      := -arch arm64
-    FS_TRIPLE         := arm64-apple-macos12.0
+    FS_TRIPLE         := arm64-apple-macos26.5
     LIB_ARCHFLAGS     := -arch arm64e
-    LIB_TRIPLE        := arm64e-apple-macos12.0
+    LIB_TRIPLE        := arm64e-apple-macos26.5
 else ifeq ($(ARCH),x86_64)
     KEXT_ARCHFLAGS    := -arch x86_64
     KEXT_TRIPLE       := x86_64-apple-macos10.15
@@ -96,7 +96,7 @@ LIB_FLAGS  := ARCHFLAGS="$(LIB_ARCHFLAGS)"  TARGET_TRIPLE="$(LIB_TRIPLE)"
 # ---------------------------------------------------------------------------
 
 # Default: everything needed to install (kext, fs, tools, plists, GUI). Not tests.
-all: kextfs tools plists gui
+all: kextfs tools plists gui pkg dmg
 
 ifeq ($(ARCH),universal)
 
@@ -214,7 +214,7 @@ dmg: pkg
 
 # Test programs (not part of the default build).
 tests:
-	$(MAKE) -C test
+	$(MAKE) -C tests
 
 # Back-compat aliases.
 debug: kextfs
@@ -337,7 +337,7 @@ clean:
 	$(MAKE) -C kext clean
 	$(MAKE) -C fs clean
 	$(MAKE) -C lib clean
-	$(MAKE) -C test clean
+	$(MAKE) -C tests clean
 	$(MAKE) -C tools clean
 	$(MAKE) -C gui clean
 

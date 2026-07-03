@@ -14,7 +14,7 @@
 #include <sys/vnode.h>
 #include <sys/vnode_if.h>
 
-#include "fs.h"
+#include "readfile.h"
 
 int read_file(char *file, uint8_t *buffer, off_t offset, user_size_t size) {
     int res = EIO;

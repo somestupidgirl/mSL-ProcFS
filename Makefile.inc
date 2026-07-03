@@ -13,5 +13,5 @@ FSNAME?=				$(KEXTNAME)
 FSVERSION?=				$(KEXTVERSION)
 FSBUILD?=				$(KEXTBUILD)
 BUNDLEDOMAIN?=			com.beako.filesystems
-COPYRIGHT?= 			"Copyright © 2022 Sunneva Jonsdottir, All rights reserved."
+COPYRIGHT?= 			"Copyright © 2022 - 2026 Sunneva N. Mariu, All rights reserved."
 SIGNCERT?= -

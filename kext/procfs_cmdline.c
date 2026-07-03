@@ -45,7 +45,7 @@
 
 #include <fs/procfs/procfs.h>
 
-#include "lib/symbols.h"
+#include <libkprocfs/symbols.h>
 
 /*
  * The process arguments live at the top of the target process's user stack, in

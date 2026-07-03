@@ -25,12 +25,13 @@ CFLAGS?=    -target $(TARGET_TRIPLE)            \
             -fno-builtin                        \
             -fno-common                         \
             -mkernel                            \
+            -fno-stack-check                    \
+            -fno-stack-protector                \
             $(ARCHFLAGS)                        \
             -Wall -Wextra -Wno-unused-function
 
 ifeq ($(findstring arm64,$(TARGET_TRIPLE)),arm64)
-CFLAGS+=    -I../libklookup                     \
-            -I../../xnu/bsd                     \
+CFLAGS+=    -I../../xnu/bsd                     \
             -I../../xnu/libkern                 \
             -I../../xnu/osfmk                   \
             -I../../xnu/pexpert                 \
@@ -43,21 +44,20 @@ CFLAGS+=    -I../../xnu/bsd                     \
             -I../../xnu/pexpert
 endif
 
-CFLAGS+=    -I../../lib                         \
+CFLAGS+=    -I../../include                     \
+            -I../../lib                         \
             -isystem $(KERNEL_HEADERS)          \
             -isystem $(USR_HEADERS)             \
-            -isystem $(USR_HEADERS)             \
-            -DDEBUG
+            -isystem $(USR_HEADERS)
 
 # Compile the vendored XNU headers in their kernel-private configuration,
 # matching the kext build (see kext/Makefile).
 CFLAGS+=    -DKERNEL -DPRIVATE -DKERNEL_PRIVATE -DXNU_KERNEL_PRIVATE \
             -DBSD_KERNEL_PRIVATE -DMACH_KERNEL_PRIVATE -D__APPLE_API_PRIVATE \
-            -D_DARWIN_C_SOURCE -DMACH_BSD -DXNU_TARGET_OS_OSX -DXNU_PLATFORM_MacOSX \
-            -lklookup
+            -D_DARWIN_C_SOURCE -DMACH_BSD -DXNU_TARGET_OS_OSX -DXNU_PLATFORM_MacOSX
 
 EXT =       a
-LIB =       libklookup.$(EXT)
+LIB =       libkprocfs.$(EXT)
 SRCS =      $(wildcard *.c)
 LIB_OBJS =  $(patsubst %.c,%.o,$(sort $(SRCS)))
 INC =       -I.

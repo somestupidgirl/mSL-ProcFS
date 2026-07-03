@@ -1,5 +1,5 @@
 CC=     cc
-CFLAGS= -Wall -Wextra -std=c99 -g
+CFLAGS= -Wall -Wextra -std=c99 -fPIE -g
 
 PROGS=  test_mount test_readdir test_getdents
 

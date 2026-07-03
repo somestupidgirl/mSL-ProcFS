@@ -26,7 +26,7 @@
 
 #include <fs/procfs/procfs.h>
 
-#include "lib/symbols.h"
+#include <libkprocfs/symbols.h>
 
 /* 
  * Allocate a pfsnode/vnode pair. Gets the vnode type that is appropriate

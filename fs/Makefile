@@ -19,6 +19,7 @@ CFLAGS+= -target $(TARGET_TRIPLE) \
          $(ARCHFLAGS) \
          -x c \
          -std=c99 \
+         -bundle \
          -I../lib \
          -I../include \
          -idirafter ../xnu/bsd

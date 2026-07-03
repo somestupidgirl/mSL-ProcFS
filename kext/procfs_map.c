@@ -48,7 +48,7 @@
 
 #include <fs/procfs/procfs.h>
 
-#include "lib/symbols.h"
+#include <libkprocfs/symbols.h>
 
 /*
  * Resolved-symbol function-pointer types. The mach_vm_region() prototype uses

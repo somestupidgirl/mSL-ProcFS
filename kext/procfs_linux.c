@@ -66,10 +66,10 @@
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_iokit.h>
 #include <fs/procfs/procfs_ctl.h>
-#include "lib/symbols.h"
 
-#include "lib/cpu.h"
-#include "lib/symbols.h"
+#include <libkprocfs/symbols.h>
+#include <libkprocfs/kern.h>
+#include <libkprocfs/cpu.h>
 
 #pragma mark -
 #pragma mark Common Definitions and Macros

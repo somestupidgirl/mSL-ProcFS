@@ -95,7 +95,6 @@ CFLAGS+= -target $(TARGET_TRIPLE) \
          -mkernel \
          -fno-stack-check \
          -fno-stack-protector \
-         -I../kext/lib \
          -I../lib \
          -I../include \
          $(XNU_INCLUDES) \
@@ -126,10 +125,6 @@ LDFLAGS+= -target $(TARGET_TRIPLE) \
           $(ARCHFLAGS) \
           -nostdlib \
           -Xlinker -kext \
-          -Xlinker -object_path_lto lib/cpu.o \
-          -Xlinker -object_path_lto lib/kern.o \
-          -Xlinker -object_path_lto lib/sbuf.o \
-          -Xlinker -object_path_lto lib/symbols.o \
           -Xlinker -object_path_lto procfs.o \
           -Xlinker -object_path_lto procfs_cmdline.o \
           -Xlinker -object_path_lto procfs_fd.o \
@@ -146,9 +141,10 @@ LDFLAGS+= -target $(TARGET_TRIPLE) \
 LIBS+= -L$(KERNEL_LIBDIR) \
        -L../lib/libkext \
        -L../lib/libklookup \
+       -L../lib/libkprocfs \
        -L../lib/libreadfile
 
-LIBS+= -lkmod -lkext -lklookup
+LIBS+= -lkmod -lkext -lklookup -lkprocfs
 
 KLFLAGS+= -xml -c -undef-symbols
 

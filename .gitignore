@@ -1,4 +1,6 @@
 bin/
+out/
+rnd/
 wip/
 test/test_mount
 test/test_readdir
