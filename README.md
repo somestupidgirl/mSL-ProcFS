@@ -75,6 +75,7 @@ Each directory named for a process id represents one process on the system. By d
 |`root/`     | Symlink to the root directory | symlink |
 |`sid`      | Session id                       | `pid_t` (binary `int32`)         |
 |`smaps`    | Linux `/proc/<pid>/smaps`: per-region memory detail (`Rss`/`Pss`/dirty/`Swap`/`VmFlags`) | text |
+|`smaps_rollup` | Linux `/proc/<pid>/smaps_rollup`: the `smaps` fields summed across all mappings (one `[rollup]` block) | text |
 |`stat`     | Linux single-line process stat (52 space-separated fields) | text |
 |`statm`    | Linux memory usage in pages (`size resident shared text lib data dt`) | text |
 |`status`   | Basic process info (mode-switched) | native: `struct proc_bsdshortinfo`; linux: `Name:/State:/Pid:/Uid:/VmRSS:…` text |
@@ -176,6 +177,8 @@ Verified with `tests/test_features.sh`.
     `Anonymous`, `Swap`, `VmFlags`) from `VM_REGION_EXTENDED_INFO`; `Pss` and
     `Referenced` approximate `Rss`, and the region's share mode classifies its
     whole `Rss` as shared or private (see Apple Silicon note)
+  - `smaps_rollup` — the same `smaps` fields summed across every mapping into a
+    single `[rollup]` block (Linux's faster-than-parsing-`smaps` accumulation)
   - `regs` / `fpregs` — the representative thread's general and FP/SIMD register
     state as the native Mach `arm_thread_state64_t` / `arm_neon_state64_t`
     (x86_64: `x86_thread_state64_t` / `x86_float_state64_t`), supplied by the

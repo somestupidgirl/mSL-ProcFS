@@ -359,6 +359,122 @@ procfs_dosmaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 }
 
 /*
+ * "smaps_rollup" node - Linux /proc/<pid>/smaps_rollup. A single [rollup] header
+ * line spanning the whole address space, followed by the smaps fields summed
+ * across every mapping. Same VM_REGION_EXTENDED_INFO walk as smaps, accumulated
+ * instead of emitted per region (the kernel's own faster-than-parsing-smaps path).
+ * Same approximations as smaps (Pss/Referenced track Rss; share_mode classifies
+ * each region's whole Rss as shared or private).
+ */
+int
+procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+{
+    proc_t p = proc_find(pnp->node_id.nodeid_pid);
+    if (p == PROC_NULL) {
+        return ESRCH;
+    }
+
+    int error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
+    if (error != 0) {
+        proc_rele(p);
+        return error;
+    }
+
+    if (procfs_kl_get_task_map == NULL || procfs_kl_mach_vm_region == NULL) {
+        proc_rele(p);
+        return ENOTSUP;
+    }
+    procfs_get_task_map_fn   get_task_map   =
+        ptrauth_sign_unauthenticated(procfs_kl_get_task_map, ptrauth_key_function_pointer, 0);
+    procfs_mach_vm_region_fn mach_vm_region =
+        ptrauth_sign_unauthenticated(procfs_kl_mach_vm_region, ptrauth_key_function_pointer, 0);
+
+    task_t   task = proc_task(p);
+    vm_map_t map  = (task != TASK_NULL) ? get_task_map(task) : NULL;
+    if (map == NULL) {
+        proc_rele(p);
+        return EIO;
+    }
+
+    const uint64_t pgkb = (uint64_t)PAGE_SIZE / 1024;
+    uint64_t first = 0, last = 0;
+    uint64_t rss = 0, shared_clean = 0, shared_dirty = 0;
+    uint64_t private_clean = 0, private_dirty = 0, anon = 0, swap = 0;
+    boolean_t seen = FALSE;
+
+    mach_vm_offset_t addr = 0;
+    for (int n = 0; n < PROCFS_MAP_MAX_REGIONS; n++) {
+        mach_vm_size_t                 size = 0;
+        vm_region_extended_info_data_t info;
+        mach_msg_type_number_t         count = VM_REGION_EXTENDED_INFO_COUNT;
+        void                          *object_name = NULL;
+
+        kern_return_t kr = mach_vm_region(map, &addr, &size, VM_REGION_EXTENDED_INFO,
+            (int *)&info, &count, &object_name);
+        if (kr != KERN_SUCCESS) {
+            break;
+        }
+
+        if (!seen) {
+            first = (uint64_t)addr;
+            seen  = TRUE;
+        }
+        last = (uint64_t)(addr + size);
+
+        boolean_t shared = (info.share_mode == SM_SHARED ||
+                            info.share_mode == SM_TRUESHARED ||
+                            info.share_mode == SM_SHARED_ALIASED);
+        uint64_t r_kb = (uint64_t)info.pages_resident * pgkb;
+        uint64_t d_kb = (uint64_t)info.pages_dirtied  * pgkb;
+        if (d_kb > r_kb) {
+            d_kb = r_kb;
+        }
+        uint64_t c_kb = r_kb - d_kb;
+
+        rss  += r_kb;
+        swap += (uint64_t)info.pages_swapped_out * pgkb;
+        if (shared) { shared_clean += c_kb; shared_dirty += d_kb; }
+        else        { private_clean += c_kb; private_dirty += d_kb; }
+        if (info.external_pager == 0) { anon += r_kb; }
+
+        mach_vm_offset_t next = addr + size;
+        if (next <= addr) {
+            break;
+        }
+        addr = next;
+    }
+
+    proc_rele(p);
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+    sbuf_printf(&sb, "%016llx-%016llx ---p 00000000 00:00 0 [rollup]\n",
+        (unsigned long long)first, (unsigned long long)last);
+    sbuf_printf(&sb,
+        "Rss:            %8llu kB\n"
+        "Pss:            %8llu kB\n"
+        "Shared_Clean:   %8llu kB\n"
+        "Shared_Dirty:   %8llu kB\n"
+        "Private_Clean:  %8llu kB\n"
+        "Private_Dirty:  %8llu kB\n"
+        "Referenced:     %8llu kB\n"
+        "Anonymous:      %8llu kB\n"
+        "Swap:           %8llu kB\n",
+        (unsigned long long)rss, (unsigned long long)rss,
+        (unsigned long long)shared_clean, (unsigned long long)shared_dirty,
+        (unsigned long long)private_clean, (unsigned long long)private_dirty,
+        (unsigned long long)rss, (unsigned long long)anon,
+        (unsigned long long)swap);
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * NetBSD-style formatter: start-end curprot maxprot sharing wired.
  */
 static void

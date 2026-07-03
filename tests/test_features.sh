@@ -124,6 +124,7 @@ hdr "Per-process: virtual memory (map/maps/smaps/mem)"
 tfile "$P/map"   "map (NetBSD)"
 tfile "$P/maps"  "maps (Linux)"
 tfile "$P/smaps" "smaps"
+tfile "$P/smaps_rollup" "smaps_rollup"
 # mem: read semantics use the virtual address as offset. Read 16 bytes from the
 # first mapped region reported by maps.
 addr=$(head -1 "$P/maps" 2>/dev/null | cut -d- -f1)

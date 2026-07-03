@@ -477,6 +477,7 @@ extern int           procfs_dokcmdline(pfsnode_t *pnp, uio_t uio, vfs_context_t 
 extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosmaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 
 /* Process machine state (NetBSD-style binary register dumps) and the auxiliary
  * vector (XNU's apple[] array). */
