@@ -28,10 +28,10 @@ and offers one-click mount/unmount, Linux-compatibility, and daemon controls.
 
 UNINSTALL
 ---------
-Auto-load/auto-mount is armed via /var/db/procfs.enabled. To remove ProcFS,
-delete the installed files (/Library/Extensions/procfs.kext,
-/Library/Filesystems/procfs.fs, /usr/local/sbin/procfsd,
-/usr/local/sbin/procfs_ksyms, /Library/LaunchDaemons/com.beako.procfsd.plist,
-/Applications/ProcFS.app), remove /var/db/procfs.enabled and the "proc" line
-from /etc/synthetic.conf, and reboot. (The source tree's `sudo make uninstall`
-does all of this.)
+Double-click "Uninstall ProcFS.command" in this disk image. It opens a Terminal
+window, asks for your administrator password, then unmounts /proc, unloads the
+kext, stops the daemon and removes every installed file. (If macOS blocks it as
+being from an unidentified developer, right-click it and choose "Open".) The
+now-empty /proc mount point disappears after the next reboot.
+
+The source tree's `sudo make uninstall` does the same thing.

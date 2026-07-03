@@ -205,6 +205,8 @@ dmg: pkg
 	mkdir -p $(OUT)/dmg
 	cp $(PKG_OUT) $(OUT)/dmg/
 	cp installer/resources/DMG-README.txt $(OUT)/dmg/README.txt
+	cp installer/uninstall.command "$(OUT)/dmg/Uninstall ProcFS.command"
+	chmod +x "$(OUT)/dmg/Uninstall ProcFS.command"
 	hdiutil create -volname "ProcFS $(VERSION)" -srcfolder $(OUT)/dmg \
 	               -ov -format UDZO $(DMG_OUT)
 	rm -rf $(OUT)/dmg
