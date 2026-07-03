@@ -29,6 +29,7 @@ Linux-compatible files and helpers:
 | Entry        | Summary                                                              |
 |--------------|---------------------------------------------------------------------|
 |`byname/`     | Directory of symbolic links, one per process, named by command name |
+|`cmdline`     | Kernel boot command line (macOS boot-args / `kern.bootargs`; Linux's root `/proc/cmdline`) |
 |`cpuinfo`     | Linux-style CPU information (text)                                   |
 |`curproc/`     | Symbolic link to the calling process's directory (BSD name)         |
 |`diskstats`   | Linux-style block-device I/O statistics (per whole disk, 14-field format; from IOKit `IOBlockStorageDriver`) |

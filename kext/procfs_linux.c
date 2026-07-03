@@ -1802,6 +1802,44 @@ procfs_domodules(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     return procfs_dokextlist(PROCFS_REQ_MODULES, uio);
 }
 
+/*
+ * /proc/cmdline - the kernel boot command line (Linux's root /proc/cmdline,
+ * distinct from the per-process /proc/<pid>/cmdline). On macOS this is the
+ * boot-args string (sysctl kern.bootargs). Read in-kernel where permitted,
+ * falling back to the procfsd sysctl bridge (kern.bootargs is not always
+ * CTLFLAG_KERN-readable from a kext, so it can be empty in-kernel without a
+ * connected daemon).
+ */
+int
+procfs_dokcmdline(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    char   raw[1024];
+    size_t rawlen = sizeof(raw);
+
+    if (sysctlbyname("kern.bootargs", raw, &rawlen, NULL, 0) != 0 || rawlen == 0) {
+        uint32_t dlen = 0;
+        if (procfs_ctl_request_named(PROCFS_REQ_SYSCTL, 0, 0, "kern.bootargs",
+                raw, sizeof(raw), &dlen) == 0) {
+            rawlen = dlen;
+        } else {
+            rawlen = 0;
+        }
+    }
+    if (rawlen > 0 && raw[rawlen - 1] == '\0') {
+        rawlen--;                        /* drop the trailing NUL */
+    }
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 256, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+    sbuf_printf(&sb, "%.*s\n", (int)rawlen, raw);
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
 #pragma mark -
 #pragma mark Presentation-mode switch (native vs Linux)
 

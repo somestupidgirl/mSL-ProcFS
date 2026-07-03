@@ -152,6 +152,10 @@ procfs_structure_init(void)
         pfssnode_t *diskstats = add_node(root_node, "diskstats",
                         PFSdiskstats, next_node_id++, 0, 0, NULL, procfs_dodiskstats);
 
+        // Linux-style kernel boot command line (macOS boot-args / kern.bootargs).
+        pfssnode_t *kcmdline = add_node(root_node, "cmdline",
+                        PFSkcmdline, next_node_id++, 0, 0, NULL, procfs_dokcmdline);
+
         // Linux-compatible /proc/self (symlink to the calling process; resolves
         // exactly like "curproc", the BSD name).
         pfssnode_t *self = add_node(root_node, "self",
