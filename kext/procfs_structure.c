@@ -223,6 +223,7 @@ procfs_structure_init(void)
         add_file(one_proc_dir, "maps", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_domaps);
         add_file(one_proc_dir, "smaps", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dosmaps);
         add_file(one_proc_dir, "smaps_rollup", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dosmaps_rollup);
+        add_file(one_proc_dir, "numa_maps", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_donuma_maps);
 
         // Linux-compatible per-process symlinks: exe/cwd/root (target resolved
         // by node name in vnop_readlink; read fn is NULL).

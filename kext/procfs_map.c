@@ -475,6 +475,96 @@ procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 }
 
 /*
+ * "numa_maps" node - Linux /proc/<pid>/numa_maps. One line per VM region:
+ *   <start> <policy> [anon=N] [dirty=N] [swapcache=N] [N<node>=N] kernelpagesize_kB=N
+ * macOS is single-node UMA, so the policy is always "default" and all resident
+ * pages report against node 0. Uses the same VM_REGION_EXTENDED_INFO walk as
+ * smaps for resident / dirtied / swapped page counts and the external pager
+ * (anonymous) flag. Same best-effort caveats as the rest of the VM nodes.
+ */
+int
+procfs_donuma_maps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+{
+    proc_t p = proc_find(pnp->node_id.nodeid_pid);
+    if (p == PROC_NULL) {
+        return ESRCH;
+    }
+
+    int error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
+    if (error != 0) {
+        proc_rele(p);
+        return error;
+    }
+
+    if (procfs_kl_get_task_map == NULL || procfs_kl_mach_vm_region == NULL) {
+        proc_rele(p);
+        return ENOTSUP;
+    }
+    procfs_get_task_map_fn   get_task_map   =
+        ptrauth_sign_unauthenticated(procfs_kl_get_task_map, ptrauth_key_function_pointer, 0);
+    procfs_mach_vm_region_fn mach_vm_region =
+        ptrauth_sign_unauthenticated(procfs_kl_mach_vm_region, ptrauth_key_function_pointer, 0);
+
+    task_t   task = proc_task(p);
+    vm_map_t map  = (task != TASK_NULL) ? get_task_map(task) : NULL;
+    if (map == NULL) {
+        proc_rele(p);
+        return EIO;
+    }
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
+        proc_rele(p);
+        return ENOMEM;
+    }
+
+    const uint64_t pgkb = (uint64_t)PAGE_SIZE / 1024;
+
+    mach_vm_offset_t addr = 0;
+    for (int n = 0; n < PROCFS_MAP_MAX_REGIONS; n++) {
+        mach_vm_size_t                 size = 0;
+        vm_region_extended_info_data_t info;
+        mach_msg_type_number_t         count = VM_REGION_EXTENDED_INFO_COUNT;
+        void                          *object_name = NULL;
+
+        kern_return_t kr = mach_vm_region(map, &addr, &size, VM_REGION_EXTENDED_INFO,
+            (int *)&info, &count, &object_name);
+        if (kr != KERN_SUCCESS) {
+            break;
+        }
+
+        sbuf_printf(&sb, "%llx default", (unsigned long long)(uint64_t)addr);
+        if (info.external_pager == 0 && info.pages_resident > 0) {
+            sbuf_printf(&sb, " anon=%u", info.pages_resident);
+        }
+        if (info.pages_dirtied > 0) {
+            sbuf_printf(&sb, " dirty=%u", info.pages_dirtied);
+        }
+        if (info.pages_swapped_out > 0) {
+            sbuf_printf(&sb, " swapcache=%u", info.pages_swapped_out);
+        }
+        if (info.pages_resident > 0) {
+            sbuf_printf(&sb, " N0=%u", info.pages_resident);   /* single NUMA node */
+        }
+        sbuf_printf(&sb, " kernelpagesize_kB=%llu\n", (unsigned long long)pgkb);
+
+        mach_vm_offset_t next = addr + size;
+        if (next <= addr) {
+            break;
+        }
+        addr = next;
+    }
+
+    proc_rele(p);
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+
+    return error;
+}
+
+/*
  * NetBSD-style formatter: start-end curprot maxprot sharing wired.
  */
 static void

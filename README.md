@@ -68,6 +68,7 @@ Each directory named for a process id represents one process on the system. By d
 |`maps`     | Process virtual-memory regions, Linux `/proc/<pid>/maps` format | text |
 |`mem`      | Process memory; the read offset is the virtual address (NetBSD/Linux `mem` semantics). Resident pages only — see below | binary |
 |`note`     | Write a note to the process (NetBSD/Plan 9-style) | write-only (read returns `EINVAL`); a note delivers a signal to the process — see below |
+|`numa_maps`| Linux `/proc/<pid>/numa_maps`: per-mapping NUMA locality (single-node: policy `default`, `N0=`) | text |
 |`pid`      | Process id                       | `pid_t` (binary `int32`)         |
 |`pgid`     | Process group id                 | `pid_t` (binary `int32`)         |
 |`ppid`     | Parent process id                | `pid_t` (binary `int32`)         |
@@ -179,6 +180,9 @@ Verified with `tests/test_features.sh`.
     whole `Rss` as shared or private (see Apple Silicon note)
   - `smaps_rollup` — the same `smaps` fields summed across every mapping into a
     single `[rollup]` block (Linux's faster-than-parsing-`smaps` accumulation)
+  - `numa_maps` — one line per mapping with its NUMA locality; Apple Silicon is
+    single-node, so the policy is always `default` and resident pages report as
+    `N0=` (with `anon=`/`dirty=` from `VM_REGION_EXTENDED_INFO`)
   - `regs` / `fpregs` — the representative thread's general and FP/SIMD register
     state as the native Mach `arm_thread_state64_t` / `arm_neon_state64_t`
     (x86_64: `x86_thread_state64_t` / `x86_float_state64_t`), supplied by the
