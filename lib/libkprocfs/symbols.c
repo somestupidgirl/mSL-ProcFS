@@ -97,6 +97,7 @@ SYM_INIT(cpuid_info);
  * them. proc_gettty (tty) and cpu_to_processor (loadavg) survive in the symtab.
  */
 int  (*procfs_proc_gettty)(proc_t p, vnode_t *vpp) = NULL;  /* PAC-signed */
+task_t (*procfs_kl_proc_task)(proc_t p) = NULL;            /* PAC-signed */
 void *procfs_kl_cpu_to_processor = NULL;
 void *procfs_kl_get_task_map = NULL;
 void *procfs_kl_mach_vm_region = NULL;
@@ -112,7 +113,7 @@ resolve_symbols(void)
      * file yields NULLs and we leave the features disabled.
      */
     enum { I_VERSION, I_PROC_GETTTY, I_CPU_TO_PROCESSOR, I_VM_PAGE_WIRE_COUNT,
-           I_GET_TASK_MAP, I_MACH_VM_REGION, N_SYMS };
+           I_GET_TASK_MAP, I_MACH_VM_REGION, I_PROC_TASK, N_SYMS };
     static const char *const names[N_SYMS] = {
         [I_VERSION]             = "_version",
         [I_PROC_GETTTY]         = "_proc_gettty",
@@ -120,6 +121,7 @@ resolve_symbols(void)
         [I_VM_PAGE_WIRE_COUNT]  = "_vm_page_wire_count",
         [I_GET_TASK_MAP]        = "_get_task_map",
         [I_MACH_VM_REGION]      = "_mach_vm_region",
+        [I_PROC_TASK]           = "_proc_task",
     };
     void *addr[N_SYMS] = { NULL };
 
@@ -136,6 +138,11 @@ resolve_symbols(void)
     if (addr[I_PROC_GETTTY] != NULL) {
         procfs_proc_gettty = KL_SIGN_FN(addr[I_PROC_GETTTY]);
     }
+    /* proc_task: call the kernel's own accessor rather than reading struct proc
+     * at a compile-time offset, which drifts across kernel point-releases. */
+    if (addr[I_PROC_TASK] != NULL) {
+        procfs_kl_proc_task = KL_SIGN_FN(addr[I_PROC_TASK]);
+    }
     procfs_kl_cpu_to_processor = addr[I_CPU_TO_PROCESSOR];
 
     /* mach_vm_region + get_task_map are called directly (PAC-signed at the use
@@ -148,10 +155,10 @@ resolve_symbols(void)
     procfs_vm_page_wire_count = (unsigned int *)addr[I_VM_PAGE_WIRE_COUNT];
 
     printf("procfs: libklookup OK (proc_gettty=%d cpu_to_processor=%d vm_page_wire_count=%d "
-           "get_task_map=%d mach_vm_region=%d)\n",
+           "get_task_map=%d mach_vm_region=%d proc_task=%d)\n",
            procfs_proc_gettty != NULL, procfs_kl_cpu_to_processor != NULL,
            procfs_vm_page_wire_count != NULL, procfs_kl_get_task_map != NULL,
-           procfs_kl_mach_vm_region != NULL);
+           procfs_kl_mach_vm_region != NULL, procfs_kl_proc_task != NULL);
 
     return KERN_SUCCESS;
 }

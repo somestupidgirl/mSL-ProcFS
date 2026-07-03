@@ -650,14 +650,20 @@ procfs_fd_socket(proc_t p, int fd, socket_t *sop, struct proc_fileinfo *fi)
 }
 
 /*
- * proc_task() - re-implementation of the com.apple.kpi.private KPI. Returns the
- * Mach task for a process via p->p_proc_ro->pr_task. Both p_proc_ro (struct
- * proc) and pr_task (struct proc_ro) sit at config-stable offsets, so this is a
- * straightforward forward-port (mirrors proc_task()/proc_get_task_raw() in XNU).
+ * proc_task() - the Mach task for a process (com.apple.kpi.private, not linkable).
+ *
+ * Prefer the kernel's own proc_task resolved via libklookup: it uses the running
+ * kernel's exact struct proc / proc_ro layout and P_LHASTASK semantics, which
+ * drift across kernel point-releases and otherwise break every task-based node
+ * (map/maps/mem/cmdline/...). Only if the symbol is unavailable do we fall back
+ * to reading p->p_proc_ro->pr_task at the compile-time offset.
  */
 task_t
 proc_task(proc_t p)
 {
+    if (procfs_kl_proc_task != NULL) {
+        return procfs_kl_proc_task(p);
+    }
     task_t task = p->p_proc_ro->pr_task;
     return (p->p_lflag & P_LHASTASK) ? task : TASK_NULL;
 }
