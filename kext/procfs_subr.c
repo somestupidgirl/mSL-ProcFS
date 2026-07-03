@@ -25,6 +25,7 @@
 #include <bsdcompat/sys/malloc.h>
 
 #include <fs/procfs/procfs.h>
+#include <fs/procfs/procfs_ctl.h>
 
 #include <libkprocfs/symbols.h>
 
@@ -471,6 +472,22 @@ procfs_get_fd_list(proc_t p, struct proc_fdinfo **fdlist, size_t *count)
 
     if (p == PROC_NULL) {
         return EINVAL;
+    }
+
+    // Prefer the procfsd daemon (proc_pidinfo PROC_PIDLISTFDS): the in-kernel
+    // fd-table walk depends on struct filedesc offsets that drift across kernel
+    // point-releases. One payload holds up to PROCFS_CTL_MAXPAYLOAD/8 fds; a
+    // process with more has its list truncated (rare for interactive use).
+    struct proc_fdinfo *dbuf = malloc(PROCFS_CTL_MAXPAYLOAD, M_TEMP, M_WAITOK);
+    if (dbuf != NULL) {
+        uint32_t got = 0;
+        if (procfs_ctl_request(PROCFS_REQ_FDLIST, proc_pid(p), 0,
+                dbuf, PROCFS_CTL_MAXPAYLOAD, &got) == 0) {
+            *fdlist = dbuf;
+            *count  = got / sizeof(struct proc_fdinfo);
+            return 0;
+        }
+        free(dbuf, M_TEMP);     /* no daemon -> fall back to the in-kernel walk */
     }
 
     // The first call (NULL buffer) returns an upper bound on the fd count.

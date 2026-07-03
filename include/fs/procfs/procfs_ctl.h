@@ -36,6 +36,9 @@ enum {
     PROCFS_REQ_MODULES    = 9,  /* arg = byte offset; same chunked transfer as
                                  * PROCFS_REQ_EXTENSIONS but Linux /proc/modules
                                  * format (name size refcount deps state address). */
+    PROCFS_REQ_FDLIST     = 10, /* pid; payload: struct proc_fdinfo[] (PROC_PIDLISTFDS) */
+    PROCFS_REQ_FDINFO     = 11, /* pid + arg=fd; payload: struct vnode_fdinfowithpath */
+    PROCFS_REQ_FDSOCKET   = 12, /* pid + arg=fd; payload: struct socket_fdinfo */
 };
 
 /* kext -> daemon */

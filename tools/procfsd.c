@@ -535,6 +535,42 @@ main(int argc, char **argv)
             }
             break;
         }
+        case PROCFS_REQ_FDLIST: {
+            /* Open file descriptors of the process. proc_pidinfo writes
+             * count*sizeof(proc_fdinfo) bytes and naturally caps at the buffer
+             * size, so the list is truncated to what fits in one payload. */
+            int r = proc_pidinfo(req->pid, PROC_PIDLISTFDS, 0, payload, PROCFS_CTL_MAXPAYLOAD);
+            if (r >= 0) {
+                resp->len = (uint32_t)r;
+            } else {
+                resp->error = errno;
+            }
+            break;
+        }
+        case PROCFS_REQ_FDINFO: {
+            struct vnode_fdinfowithpath vi;
+            int r = proc_pidfdinfo(req->pid, (int)req->arg, PROC_PIDFDVNODEPATHINFO,
+                                   &vi, sizeof(vi));
+            if (r == (int)sizeof(vi)) {
+                memcpy(payload, &vi, sizeof(vi));
+                resp->len = sizeof(vi);
+            } else {
+                resp->error = (r < 0) ? errno : EBADF;
+            }
+            break;
+        }
+        case PROCFS_REQ_FDSOCKET: {
+            struct socket_fdinfo si;
+            int r = proc_pidfdinfo(req->pid, (int)req->arg, PROC_PIDFDSOCKETINFO,
+                                   &si, sizeof(si));
+            if (r == (int)sizeof(si)) {
+                memcpy(payload, &si, sizeof(si));
+                resp->len = sizeof(si);
+            } else {
+                resp->error = (r < 0) ? errno : EBADF;
+            }
+            break;
+        }
         case PROCFS_REQ_EXTENSIONS: {
             /* arg = byte offset. Rebuild the listing at the start of a read,
              * then return the slice at this offset (chunked). */

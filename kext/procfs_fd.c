@@ -23,64 +23,37 @@
 #include <netinet/in.h>
 
 #include <fs/procfs/procfs.h>
+#include <fs/procfs/procfs_ctl.h>
 
 #include <libkprocfs/symbols.h>
 #include <libkprocfs/kern.h>
 
 /*
- * Reads the data associated with a file descriptor node. The data is 
- * a vnode_infowithpath structure containing information about both the target
- * vnode and the file itself.
+ * Reads the data associated with a file descriptor node: a
+ * vnode_fdinfowithpath structure describing the target vnode and the file.
+ *
+ * Served by the procfsd daemon (proc_pidfdinfo(PROC_PIDFDVNODEPATHINFO)) rather
+ * than an in-kernel fd-table walk, which depends on struct filedesc offsets that
+ * drift across kernel point-releases. Returns the daemon's errno (ENOTCONN with
+ * no daemon).
  */
 int
-procfs_dofd(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+procfs_dofd(pfsnode_t *pnp, __unused uio_t uio, __unused vfs_context_t ctx)
 {
-    int error = 0;
-
-    // We need the file descriptor and the process id. We get
-    // both of them from the node id.
-    int fd = pnp->node_id.nodeid_objectid;
-    proc_t p = proc_find(pnp->node_id.nodeid_pid);
-
-    if (p == PROC_NULL) {
-        return ESRCH;
-    }
+    int fd  = pnp->node_id.nodeid_objectid;
+    int pid = pnp->node_id.nodeid_pid;
 
     struct vnode_fdinfowithpath info;
-    bzero(&info, sizeof(info));
-
-    // Validate the descriptor and capture the vnode + vnode id + file info
-    // under proc_fdlock (which keeps the fileproc alive). No fileproc iocount
-    // is taken: the os_ref retain/release path is unavailable to a third-party
-    // kext, so instead we re-acquire the vnode by id once the lock is dropped.
-    vnode_t vp = NULLVP;
-    uint32_t vid = 0;
-    error = procfs_fd_vnode_info(p, fd, &vp, &vid, &info.pfi);
-    if (error == 0) {
-        // vnode_getwithvid() takes an iocount and fails cleanly if the vnode
-        // was reclaimed between dropping proc_fdlock and here.
-        error = vnode_getwithvid(vp, vid);
-        if (error == 0) {
-            error = fill_vnodeinfo(vp, &info.pvip.vip_vi, FALSE);
-            if (error == 0) {
-                // Add the file path and copy the data out to user space.
-                int count = MAXPATHLEN;
-                vn_getpath(vp, info.pvip.vip_path, &count);
-                info.pvip.vip_path[MAXPATHLEN-1] = 0;
-                // vn_getpath()/build_path() constructs the path backwards from
-                // the end of the buffer and leaves a stale copy in the tail;
-                // zero everything past the returned string so the node holds
-                // the path exactly once.
-                size_t plen = strlen(info.pvip.vip_path);
-                bzero(info.pvip.vip_path + plen, MAXPATHLEN - plen);
-                error = procfs_copy_data((const char *)&info, sizeof(info), uio);
-            }
-            vnode_put(vp);
-        }
+    uint32_t got = 0;
+    int error = procfs_ctl_request(PROCFS_REQ_FDINFO, pid, (uint64_t)fd,
+                                   &info, sizeof(info), &got);
+    if (error != 0) {
+        return error;
     }
-
-    proc_rele(p);
-    return error;
+    if (got != sizeof(info)) {
+        return EIO;
+    }
+    return procfs_copy_data((const char *)&info, sizeof(info), uio);
 }
 
 /*
@@ -149,35 +122,28 @@ procfs_fill_socketinfo(socket_t so, struct socket_info *si)
 }
 
 /*
- * Reads the data associated with a file descriptor that refers to a socket.
+ * Reads the data associated with a file descriptor that refers to a socket:
+ * a socket_fdinfo. Served by the procfsd daemon
+ * (proc_pidfdinfo(PROC_PIDFDSOCKETINFO)) - which fills the full per-protocol
+ * socket_info from userspace - rather than the in-kernel fd-table walk.
  */
 int
-procfs_dosocket(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+procfs_dosocket(pfsnode_t *pnp, __unused uio_t uio, __unused vfs_context_t ctx)
 {
-    int error = 0;
-    int fd = pnp->node_id.nodeid_objectid;
-    proc_t p = proc_find(pnp->node_id.nodeid_pid);
-
-    if (p == PROC_NULL) {
-        return ESRCH;
-    }
+    int fd  = pnp->node_id.nodeid_objectid;
+    int pid = pnp->node_id.nodeid_pid;
 
     struct socket_fdinfo info;
-    bzero(&info, sizeof(info));
-    socket_t so = NULL;
-
-    // Validate the socket descriptor and take a sock_retain() reference under
-    // proc_fdlock so the socket survives once the lock is dropped (sockets have
-    // no vnode-id reclaim guard). info.pfi is filled while the lock is held.
-    error = procfs_fd_socket(p, fd, &so, &info.pfi);
-    if (error == 0) {
-        procfs_fill_socketinfo(so, &info.psi);
-        sock_release(so);
-        error = procfs_copy_data((const char *)&info, sizeof(info), uio);
+    uint32_t got = 0;
+    int error = procfs_ctl_request(PROCFS_REQ_FDSOCKET, pid, (uint64_t)fd,
+                                   &info, sizeof(info), &got);
+    if (error != 0) {
+        return error;
     }
-
-    proc_rele(p);
-    return error;
+    if (got != sizeof(info)) {
+        return EIO;
+    }
+    return procfs_copy_data((const char *)&info, sizeof(info), uio);
 }
 
 /*
