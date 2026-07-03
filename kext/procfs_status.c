@@ -34,7 +34,7 @@
  * owning process's pid.
  */
 int
-procfs_read_pid_data(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+procfs_dopid(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     int pid = pnp->node_id.nodeid_pid;
     int error = procfs_copy_data((const char *)&pid, sizeof(pid), uio);
@@ -46,7 +46,7 @@ procfs_read_pid_data(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
  * owning process's parent's pid.
  */
 int
-procfs_read_ppid_data(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+procfs_doppid(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     int error = 0;
 
@@ -67,7 +67,7 @@ procfs_read_ppid_data(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
  * owning process's process group id.
  */
 int
-procfs_read_pgid_data(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+procfs_dopgid(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     int error = 0;
 
@@ -88,7 +88,7 @@ procfs_read_pgid_data(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
  * owning process's session id.
  */
 int
-procfs_read_sid_data(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx) {
+procfs_dosid(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx) {
     int error = 0;
 
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
@@ -108,7 +108,7 @@ procfs_read_sid_data(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx) {
  * name of the owning process's controlling terminal.
  */
 int
-procfs_read_tty_data(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+procfs_dotty(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     // The controlling terminal lives at p->p_pgrp->pg_session->s_ttyvp, reached
     // through the SMR-protected p_pgrp. The safe accessor is proc_gettty(), which
@@ -188,7 +188,7 @@ procfs_dostatus(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
  * by a uio structure.
  */
 int
-procfs_read_task_info(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+procfs_dotaskinfo(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     // Get the process id from the node id in the pfsnode and locate
     // the process.
@@ -266,7 +266,7 @@ procfs_read_task_info(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
  * structure and copies it to tthe area described by a uio structure.
  */
 int
-procfs_read_thread_info(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+procfs_dothreadinfo(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     // Get the process id and thread from the node id in the pfsnode and locate
     // the process.

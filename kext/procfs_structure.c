@@ -192,13 +192,13 @@ procfs_structure_init(void)
         // Files that returns the process's pid, parent pid, process group id,
         // session id and controlling terminal name.
         add_file(one_proc_dir, "cmdline", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doprocargs);
-        add_file(one_proc_dir, "pid", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_read_pid_data);
-        add_file(one_proc_dir, "ppid", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_read_ppid_data);
-        add_file(one_proc_dir, "pgid", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_read_pgid_data);
-        add_file(one_proc_dir, "sid", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_read_sid_data);
-        add_file(one_proc_dir, "tty", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_read_tty_data);
+        add_file(one_proc_dir, "pid", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dopid);
+        add_file(one_proc_dir, "ppid", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doppid);
+        add_file(one_proc_dir, "pgid", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dopgid);
+        add_file(one_proc_dir, "sid", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dosid);
+        add_file(one_proc_dir, "tty", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dotty);
         add_file(one_proc_dir, "status", next_node_id++, PSN_FLAG_PROCESS, sizeof(struct proc_bsdshortinfo), NULL, procfs_dostatus);
-        add_file(one_proc_dir, "taskinfo", next_node_id++, PSN_FLAG_PROCESS, sizeof(struct proc_taskinfo), NULL, procfs_read_task_info);
+        add_file(one_proc_dir, "taskinfo", next_node_id++, PSN_FLAG_PROCESS, sizeof(struct proc_taskinfo), NULL, procfs_dotaskinfo);
 
         add_file(one_proc_dir, "note", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_donote);
         add_file(one_proc_dir, "limit", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dolimit);
@@ -226,8 +226,8 @@ procfs_structure_init(void)
         add_file(one_proc_dir, "auxv", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doauxv);
 
         // --- Per thread files.
-        add_file(one_thread_dir, "info", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, sizeof(struct proc_threadinfo), NULL, procfs_read_thread_info);
-        add_file(one_task_dir, "info", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, sizeof(struct proc_threadinfo), NULL, procfs_read_thread_info);
+        add_file(one_thread_dir, "info", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, sizeof(struct proc_threadinfo), NULL, procfs_dothreadinfo);
+        add_file(one_task_dir, "info", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, sizeof(struct proc_threadinfo), NULL, procfs_dothreadinfo);
 
         // Linux-compatible per-thread files under /proc/<pid>/task/<tid>/.
         // maps reuses the process map walk (threads share the address space).
@@ -238,8 +238,8 @@ procfs_structure_init(void)
         add_file(one_task_dir, "maps", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, 0, NULL, procfs_domaps);
 
         // --- Per file descriptor files.
-        add_file(one_fd_dir, "details", next_node_id++, PSN_FLAG_PROCESS, sizeof(struct vnode_fdinfowithpath), NULL, procfs_read_fd_data);
-        add_file(one_fd_dir, "socket", next_node_id++, PSN_FLAG_PROCESS, sizeof(struct socket_fdinfo), NULL, procfs_read_socket_data);
+        add_file(one_fd_dir, "details", next_node_id++, PSN_FLAG_PROCESS, sizeof(struct vnode_fdinfowithpath), NULL, procfs_dofd);
+        add_file(one_fd_dir, "socket", next_node_id++, PSN_FLAG_PROCESS, sizeof(struct socket_fdinfo), NULL, procfs_dosocket);
     }
 }
 

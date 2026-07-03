@@ -411,16 +411,16 @@ extern enum vtype procfs_allocvp(pfstype);
 extern int procfs_copy_data(const char *data, int data_len, uio_t uio);
 
 /* Functions that copy pfsnode_t data to a buffer described by a uio_t structure. */
-extern int procfs_read_pid_data(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_read_ppid_data(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_read_pgid_data(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_read_sid_data(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_read_tty_data(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dopid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doppid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dopgid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dosid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dotty(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dostatus(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_read_task_info(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_read_thread_info(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_read_fd_data(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_read_socket_data(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dotaskinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dothreadinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dofd(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dosocket(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doprocargs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 /* Shared reader of the flattened argument region: buffer + argv/env/apple offsets
  * (used by cmdline, environ and the native auxv node). Caller holds proc_find. */

@@ -33,7 +33,7 @@
  * vnode and the file itself.
  */
 int
-procfs_read_fd_data(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+procfs_dofd(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 {
     int error = 0;
 
@@ -152,7 +152,7 @@ procfs_fill_socketinfo(socket_t so, struct socket_info *si)
  * Reads the data associated with a file descriptor that refers to a socket.
  */
 int
-procfs_read_socket_data(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+procfs_dosocket(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     int error = 0;
     int fd = pnp->node_id.nodeid_objectid;
