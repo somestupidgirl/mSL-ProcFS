@@ -148,6 +148,10 @@ procfs_structure_init(void)
         pfssnode_t *modules = add_node(root_node, "modules",
                         PFSmodules, next_node_id++, 0, 0, NULL, procfs_domodules);
 
+        // Linux-style block-device I/O statistics (IOKit IOBlockStorageDriver).
+        pfssnode_t *diskstats = add_node(root_node, "diskstats",
+                        PFSdiskstats, next_node_id++, 0, 0, NULL, procfs_dodiskstats);
+
         // Linux-compatible /proc/self (symlink to the calling process; resolves
         // exactly like "curproc", the BSD name).
         pfssnode_t *self = add_node(root_node, "self",

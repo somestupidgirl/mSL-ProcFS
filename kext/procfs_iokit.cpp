@@ -19,6 +19,7 @@
 #include <libkern/c++/OSObject.h>
 #include <libkern/c++/OSString.h>
 #include <libkern/c++/OSNumber.h>
+#include <libkern/c++/OSBoolean.h>
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSIterator.h>
 #include <libkern/libkern.h>
@@ -33,6 +34,17 @@
 #define PROCFS_KEY_BSD_MAJOR    "BSD Major"
 #define PROCFS_KEY_BSD_MINOR    "BSD Minor"
 #define PROCFS_KEY_SIZE         "Size"
+#define PROCFS_KEY_WHOLE        "Whole"
+
+/* IOBlockStorageDriver "Statistics" sub-dictionary keys (IOBlockStorageDriver.h;
+ * hardcoded for the same reason). Times are in nanoseconds. */
+#define PROCFS_KEY_STATISTICS   "Statistics"
+#define PROCFS_STAT_READS       "Operations (Read)"
+#define PROCFS_STAT_WRITES      "Operations (Write)"
+#define PROCFS_STAT_BYTES_READ  "Bytes (Read)"
+#define PROCFS_STAT_BYTES_WRITE "Bytes (Write)"
+#define PROCFS_STAT_TIME_READ   "Total Time (Read)"
+#define PROCFS_STAT_TIME_WRITE  "Total Time (Write)"
 
 extern "C" int
 procfs_iokit_get_partitions(struct procfs_partition *out, int max, int *count)
@@ -76,6 +88,81 @@ procfs_iokit_get_partitions(struct procfs_partition *out, int max, int *count)
         p->major = major != nullptr ? major->unsigned32BitValue() : 0;
         p->minor = minor != nullptr ? minor->unsigned32BitValue() : 0;
         p->size  = size  != nullptr ? size->unsigned64BitValue()  : 0;
+        n++;
+    }
+    it->release();
+
+    *count = n;
+    return 0;
+}
+
+/* Read a uint64 value out of an OSDictionary by key, or 0 if absent. */
+static uint64_t
+procfs_stat_u64(OSDictionary *stats, const char *key)
+{
+    OSNumber *n = OSDynamicCast(OSNumber, stats->getObject(key));
+    return n != nullptr ? n->unsigned64BitValue() : 0;
+}
+
+extern "C" int
+procfs_iokit_get_diskstats(struct procfs_diskstat *out, int max, int *count)
+{
+    if (out == nullptr || count == nullptr || max <= 0) {
+        return EINVAL;
+    }
+    *count = 0;
+
+    OSDictionary *match = IOService::serviceMatching(PROCFS_IOMEDIA_CLASS);
+    if (match == nullptr) {
+        return ENOMEM;
+    }
+    OSIterator *it = IOService::getMatchingServices(match);
+    match->release();
+    if (it == nullptr) {
+        return EIO;
+    }
+
+    int n = 0;
+    OSObject *obj;
+    while (n < max && (obj = it->getNextObject()) != nullptr) {
+        IOService *media = OSDynamicCast(IOService, obj);
+        if (media == nullptr) {
+            continue;
+        }
+
+        /* diskstats is per whole disk (disk0), not per partition. */
+        OSBoolean *whole = OSDynamicCast(OSBoolean, media->getProperty(PROCFS_KEY_WHOLE));
+        if (whole == nullptr || !whole->isTrue()) {
+            continue;
+        }
+        OSString *name = OSDynamicCast(OSString, media->getProperty(PROCFS_KEY_BSD_NAME));
+        if (name == nullptr) {
+            continue;
+        }
+
+        /* The whole-disk IOMedia's provider is the IOBlockStorageDriver, which
+         * publishes the cumulative I/O "Statistics" dictionary. */
+        IOService *drv = media->getProvider();
+        OSDictionary *stats = (drv != nullptr)
+            ? OSDynamicCast(OSDictionary, drv->getProperty(PROCFS_KEY_STATISTICS))
+            : nullptr;
+        if (stats == nullptr) {
+            continue;                       /* no stats (e.g. synthesized media) */
+        }
+
+        OSNumber *major = OSDynamicCast(OSNumber, media->getProperty(PROCFS_KEY_BSD_MAJOR));
+        OSNumber *minor = OSDynamicCast(OSNumber, media->getProperty(PROCFS_KEY_BSD_MINOR));
+
+        struct procfs_diskstat *d = &out[n];
+        strlcpy(d->name, name->getCStringNoCopy(), sizeof(d->name));
+        d->major = major != nullptr ? major->unsigned32BitValue() : 0;
+        d->minor = minor != nullptr ? minor->unsigned32BitValue() : 0;
+        d->reads          = procfs_stat_u64(stats, PROCFS_STAT_READS);
+        d->writes         = procfs_stat_u64(stats, PROCFS_STAT_WRITES);
+        d->read_sectors   = procfs_stat_u64(stats, PROCFS_STAT_BYTES_READ) / 512;
+        d->write_sectors  = procfs_stat_u64(stats, PROCFS_STAT_BYTES_WRITE) / 512;
+        d->read_ticks_ms  = procfs_stat_u64(stats, PROCFS_STAT_TIME_READ) / 1000000;
+        d->write_ticks_ms = procfs_stat_u64(stats, PROCFS_STAT_TIME_WRITE) / 1000000;
         n++;
     }
     it->release();

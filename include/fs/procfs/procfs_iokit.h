@@ -31,6 +31,29 @@ struct procfs_partition {
  */
 int procfs_iokit_get_partitions(struct procfs_partition *out, int max, int *count);
 
+/* Per-whole-disk I/O statistics (from IOBlockStorageDriver's "Statistics"),
+ * for the Linux /proc/diskstats node. Times are in milliseconds; sector counts
+ * are 512-byte sectors (byte totals / 512). Merged/in-flight/queue counters have
+ * no macOS source and are reported as 0 by the formatter. */
+struct procfs_diskstat {
+    uint32_t major;
+    uint32_t minor;
+    char     name[64];      /* BSD name, e.g. "disk0" */
+    uint64_t reads;         /* completed read operations */
+    uint64_t read_sectors;  /* 512-byte sectors read */
+    uint64_t read_ticks_ms; /* total time spent reading (ms) */
+    uint64_t writes;        /* completed write operations */
+    uint64_t write_sectors; /* 512-byte sectors written */
+    uint64_t write_ticks_ms;/* total time spent writing (ms) */
+};
+
+/*
+ * Enumerate whole-disk I/O statistics via IOKit (whole-disk "IOMedia" entries
+ * and their IOBlockStorageDriver provider's "Statistics"), filling up to `max`
+ * entries and setting *count. Returns 0 on success or an errno on failure.
+ */
+int procfs_iokit_get_diskstats(struct procfs_diskstat *out, int max, int *count);
+
 #ifdef __cplusplus
 }
 #endif

@@ -991,6 +991,53 @@ procfs_dopartitions(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
 }
 
 /*
+ * Linux-compatible /proc/diskstats: per-whole-disk cumulative I/O statistics
+ * from IOKit (IOBlockStorageDriver "Statistics", via procfs_iokit.cpp). Each line
+ * is the classic 14-field Linux format:
+ *   major minor name  reads rd_merged rd_sectors rd_ticks
+ *                     writes wr_merged wr_sectors wr_ticks
+ *                     in_flight io_ticks time_in_queue
+ * macOS has no per-device merge/in-flight/queue accounting, so those fields are
+ * 0 and io_ticks is approximated as the sum of read and write service times.
+ */
+int
+procfs_dodiskstats(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 1024, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    enum { PROCFS_MAX_DISKS = 64 };
+    struct procfs_diskstat *ds = (struct procfs_diskstat *)
+        OSMalloc(PROCFS_MAX_DISKS * sizeof(struct procfs_diskstat), procfs_osmalloc_tag);
+    int n = 0;
+    if (ds != NULL && procfs_iokit_get_diskstats(ds, PROCFS_MAX_DISKS, &n) == 0) {
+        for (int i = 0; i < n; i++) {
+            struct procfs_diskstat *d = &ds[i];
+            sbuf_printf(&sb,
+                "%4u %7u %s %llu 0 %llu %llu %llu 0 %llu %llu 0 %llu 0\n",
+                d->major, d->minor, d->name,
+                (unsigned long long)d->reads,
+                (unsigned long long)d->read_sectors,
+                (unsigned long long)d->read_ticks_ms,
+                (unsigned long long)d->writes,
+                (unsigned long long)d->write_sectors,
+                (unsigned long long)d->write_ticks_ms,
+                (unsigned long long)(d->read_ticks_ms + d->write_ticks_ms));
+        }
+    }
+    if (ds != NULL) {
+        OSFree(ds, PROCFS_MAX_DISKS * sizeof(struct procfs_diskstat), procfs_osmalloc_tag);
+    }
+
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * Linux-compatible /proc/mtab (the /etc/mtab equivalent): one line per mounted
  * filesystem, "device mountpoint fstype options 0 0". Enumerated the same way as
  * partitions (vfs_iterate + vfs_statfs), but lists every mount, not just block

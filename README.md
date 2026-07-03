@@ -31,6 +31,7 @@ Linux-compatible files and helpers:
 |`byname/`     | Directory of symbolic links, one per process, named by command name |
 |`cpuinfo`     | Linux-style CPU information (text)                                   |
 |`curproc/`     | Symbolic link to the calling process's directory (BSD name)         |
+|`diskstats`   | Linux-style block-device I/O statistics (per whole disk, 14-field format; from IOKit `IOBlockStorageDriver`) |
 |`extensions`  | macOS-style list of loaded kernel extensions (kextstat-like: index, refs, address, size, name/version; via the `procfsd` daemon) |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
@@ -257,6 +258,18 @@ libkern KPIs (no dependency on `IOStorageFamily`'s `IOMedia` class). Each row is
 IOKit matching fails, the node falls back to the mounted-filesystem list
 (`vfs_iterate()` + `vfs_statfs()`), which shows mounted volumes only.
 
+`diskstats` shares that same C++ IOKit translation unit for the Linux
+`/proc/diskstats` node. It enumerates the whole-disk `IOMedia` entries
+(`Whole` = true) and reads the cumulative I/O counters from each disk's
+`IOBlockStorageDriver` provider (the `Statistics` dictionary: `Operations`,
+`Bytes` and `Total Time` for reads and writes) off the base `IORegistryEntry`.
+Each line is the classic 14-field Linux format (`major minor name reads
+rd_merged rd_sectors rd_ticks writes wr_merged wr_sectors wr_ticks in_flight
+io_ticks time_in_queue`); bytes become 512-byte sectors and nanosecond service
+times become milliseconds. macOS keeps no per-device merge, in-flight or queue
+accounting, so those fields read 0 and `io_ticks` is approximated as the sum of
+read and write service times.
+
 `sys/` is a dynamic mirror of the kernel's sysctl MIB — the macOS counterpart
 to Linux's `/proc/sys`. Rather than static structure nodes, every `/proc/sys`
 vnode is one shared marker node distinguished by the kernel address of its
@@ -432,7 +445,7 @@ through `hexdump` to read the raw contents:
 ## TODO:
  - Extend the `procfs.linux` presentation-mode switch to more nodes as native
    and Linux renderings diverge (only `regs`/`fpregs`/`auxv` differ today).
- - Implement more linux-compatible features (`/proc/diskstats`, etc.)
+ - Implement more linux-compatible features (see the roadmap).
  - Implement a GUI menu bar utility.
 
 ## Issues
