@@ -134,9 +134,11 @@ else
 fi
 
 hdr "Per-process: registers / auxv / taskinfo"
-# taskinfo + auxv should always have data (daemon / pmap-of-own-process).
+# taskinfo has a fixed struct size; auxv is a size-0 dynamic node (report 0 in
+# getattr) so it must be checked by content, not by [ -s ].
 bfile "$P/taskinfo" "taskinfo"
-if [ -s "$P/auxv" ] && cat "$P/auxv" >/dev/null 2>&1; then ok "auxv ($(wc -c < "$P/auxv" | tr -d ' ') bytes)"; else bad "auxv empty (should carry apple[] entries)"; fi
+a=$(cat "$P/auxv" 2>/dev/null | tr '\0' '\n' | grep -c .)
+if [ "${a:-0}" -gt 0 ]; then ok "auxv ($a apple entries)"; else bad "auxv empty (should carry apple[] entries)"; fi
 # regs/fpregs need procfsd AND task_for_pid, which is denied to root for many
 # processes (SIP/AMFI) - an empty result there is expected, not a failure.
 for n in regs fpregs; do
