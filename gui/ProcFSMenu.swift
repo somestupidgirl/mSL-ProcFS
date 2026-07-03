@@ -11,6 +11,7 @@
 // unprivileged.
 //
 import Cocoa
+import ServiceManagement
 
 private let kMountPoint  = "/proc"
 private let kDaemonLabel = "com.beako.procfsd"
@@ -138,6 +139,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addAction(menu, daemon ? "Stop daemon" : "Start daemon", #selector(toggleDaemon))
 
         menu.addItem(.separator())
+        if #available(macOS 13.0, *) {
+            let loginItem = addAction(menu, "Open at Login", #selector(toggleLoginItem))
+            loginItem.state = loginEnabled ? .on : .off
+        }
         addAction(menu, "Quit", #selector(NSApplication.terminate(_:)), target: NSApp)
     }
 
@@ -177,6 +182,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             runPrivileged("/bin/launchctl bootout system/\(kDaemonLabel)")
         } else {
             runPrivileged("/bin/launchctl bootstrap system \(kDaemonPlist)")
+        }
+    }
+
+    // Whether the app is registered to open at login (SMAppService, no privilege).
+    private var loginEnabled: Bool {
+        if #available(macOS 13.0, *) {
+            return SMAppService.mainApp.status == .enabled
+        }
+        return false
+    }
+
+    @objc private func toggleLoginItem() {
+        guard #available(macOS 13.0, *) else { return }
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could not change the Open at Login setting."
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
         }
     }
 }
