@@ -64,6 +64,9 @@ Each directory named for a process id represents one process on the system. By d
 |`fd/`       | File descriptor| directory |
 |`fpregs`   | Representative thread's FP/SIMD registers, native `arm_neon_state64_t` (x86_64: `x86_float_state64_t`) — served by the daemon | binary |
 |`limit`    | Process resource limits, one `<name> <cur> <max>` line per limit (`-1` = unlimited) | text |
+|`map`      | Process virtual-memory regions, NetBSD `procfs` format (address range, cur/max prot, sharing, wired) | text |
+|`maps`     | Process virtual-memory regions, Linux `/proc/<pid>/maps` format | text |
+|`mem`      | Process memory; the read offset is the virtual address (NetBSD/Linux `mem` semantics). Resident pages only — see below | binary |
 |`note`     | Write a note to the process (NetBSD/Plan 9-style) | write-only (read returns `EINVAL`); a note delivers a signal to the process — see below |
 |`pid`      | Process id                       | `pid_t` (binary `int32`)         |
 |`pgid`     | Process group id                 | `pid_t` (binary `int32`)         |
@@ -77,7 +80,7 @@ Each directory named for a process id represents one process on the system. By d
 |`status`   | Basic process info (mode-switched) | native: `struct proc_bsdshortinfo`; linux: `Name:/State:/Pid:/Uid:/VmRSS:…` text |
 |`task/`       | Linux-style task directory | directory |
 |`taskinfo` | Info for the process’s Mach task | `struct proc_taskinfo` — exact via the `procfsd` daemon; falls back to the kext’s partial fill without it (see Feature status) |
-|`thread/`       | Thread directory | directory |
+|`threads/`   | Thread directory (BSD name), one subdirectory per thread id | directory |
 |`tty`      | Controlling terminal device path (e.g. `/dev/ttys001`) | text |
 
 The `fd` directory contains one entry for each file that the process has open. Each entry is a directory that’s numbered for the corresponding file descriptor. Within each subdirectory you’ll find two files called `details` and `socket`. The `details` file contains a `vnode_fdinfowithpath` structure, which contains information about the file including its path name if it is a file system file. If the file is a socket endpoint, you can read a `socket_fdinfo` structure from the `socket` file.
@@ -467,7 +470,6 @@ through `hexdump` to read the raw contents:
  - Extend the `procfs.linux` presentation-mode switch to more nodes as native
    and Linux renderings diverge (only `regs`/`fpregs`/`auxv` differ today).
  - Implement more linux-compatible features (see the roadmap).
- - Implement a GUI menu bar utility.
 
 ## Issues
 Currently known issues:
