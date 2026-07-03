@@ -61,11 +61,11 @@ endif
 # Per-arch settings
 ifeq ($(ARCH),arm64e)
     KEXT_ARCHFLAGS    := -arch arm64e
-    KEXT_TRIPLE       := arm64e-apple-macos26.5
+    KEXT_TRIPLE       := arm64e-apple-macos12.0
     FS_ARCHFLAGS      := -arch arm64
-    FS_TRIPLE         := arm64-apple-macos26.5
+    FS_TRIPLE         := arm64-apple-macos12.0
     LIB_ARCHFLAGS     := -arch arm64e
-    LIB_TRIPLE        := arm64e-apple-macos26.5
+    LIB_TRIPLE        := arm64e-apple-macos12.0
 else ifeq ($(ARCH),x86_64)
     KEXT_ARCHFLAGS    := -arch x86_64
     KEXT_TRIPLE       := x86_64-apple-macos10.15

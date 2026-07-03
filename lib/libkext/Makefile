@@ -22,6 +22,8 @@ CFLAGS?=    -target $(TARGET_TRIPLE)            \
             -fno-builtin                        \
             -fno-common                         \
             -mkernel                            \
+            -fno-stack-check                    \
+            -fno-stack-protector                \
             $(ARCHFLAGS)                        \
             -Wall -Wextra -Wno-unused-function  \
             -I../xnu/bsd                        \
@@ -31,7 +33,7 @@ CFLAGS?=    -target $(TARGET_TRIPLE)            \
             -isystem $(KERNEL_HEADERS)          \
             -isystem $(KERNEL_HEADERS)/arm64    \
             -isystem $(KERNEL_HEADERS)/arm      \
-            -DDEBUG
+            -DKEXTNAME_S=\"procfs\"
 
 EXT =       a
 LIB =       libkext.$(EXT)

@@ -25,6 +25,8 @@ CFLAGS?=    -target $(TARGET_TRIPLE)            \
             -fno-builtin                        \
             -fno-common                         \
             -mkernel                            \
+            -fno-stack-check                    \
+            -fno-stack-protector                \
             $(ARCHFLAGS)                        \
             -Wall -Wextra -Wno-unused-function
 
@@ -46,8 +48,7 @@ endif
 CFLAGS+=    -I../../lib                         \
             -isystem $(KERNEL_HEADERS)          \
             -isystem $(USR_HEADERS)             \
-            -isystem $(USR_HEADERS)             \
-            -DDEBUG
+            -isystem $(USR_HEADERS)
 
 # Compile the vendored XNU headers in their kernel-private configuration,
 # matching the kext build (see kext/Makefile).
