@@ -3,7 +3,11 @@
 #
 
 KEXTNAME?=				procfs
-KEXTVERSION?=			1.0.0
+# Single source of truth: the repo VERSION file (next to this Makefile.inc).
+# Bump the version by editing VERSION; the kext defines, Info.plist and the
+# procfs.fs bundle plist all pick it up from here. Overridable from the command
+# line / environment (KEXTVERSION=...).
+KEXTVERSION?=			$(strip $(shell cat $(dir $(lastword $(MAKEFILE_LIST)))VERSION 2>/dev/null || echo 1.0.0))
 KEXTBUILD?=				1
 FSNAME?=				$(KEXTNAME)
 FSVERSION?=				$(KEXTVERSION)
