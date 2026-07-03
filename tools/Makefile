@@ -11,7 +11,7 @@ procfs_ksyms: procfs_ksyms.c
 	$(CC) $(CFLAGS) -o $@ -lcompression $<
 
 procfsd: procfsd.c
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $< -framework IOKit -framework CoreFoundation
 
 clean:
 	rm -f $(PROGS)

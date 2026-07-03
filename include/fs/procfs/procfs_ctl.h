@@ -29,6 +29,10 @@ enum {
     PROCFS_REQ_REGS       = 5,  /* payload: arm_thread_state64_t / x86_thread_state64_t */
     PROCFS_REQ_FPREGS     = 6,  /* payload: arm_neon_state64_t / x86_float_state64_t   */
     PROCFS_REQ_SYSCTL     = 7,  /* name = dotted MIB name; payload: raw value bytes */
+    PROCFS_REQ_EXTENSIONS = 8,  /* arg = byte offset; payload: text chunk of the
+                                 * loaded-kext listing (macOS/kextstat style).
+                                 * The reply is a slice [arg, arg+MAXPAYLOAD); the
+                                 * caller keeps requesting until a short chunk. */
 };
 
 /* kext -> daemon */

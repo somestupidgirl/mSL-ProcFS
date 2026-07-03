@@ -140,6 +140,10 @@ procfs_structure_init(void)
         pfssnode_t *sysctl = add_node(root_node, "sys",
                         PFSsysctl, next_node_id++, 0, 0, NULL, NULL);
 
+        // macOS-style loaded kernel-extension listing (data from procfsd).
+        pfssnode_t *extensions = add_node(root_node, "extensions",
+                        PFSextensions, next_node_id++, 0, 0, NULL, procfs_doextensions);
+
         // Linux-compatible /proc/self (symlink to the calling process; resolves
         // exactly like "curproc", the BSD name).
         pfssnode_t *self = add_node(root_node, "self",

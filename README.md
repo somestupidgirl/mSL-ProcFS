@@ -31,6 +31,7 @@ Linux-compatible files and helpers:
 |`byname/`     | Directory of symbolic links, one per process, named by command name |
 |`cpuinfo`     | Linux-style CPU information (text)                                   |
 |`curproc/`     | Symbolic link to the calling process's directory (BSD name)         |
+|`extensions`  | macOS-style list of loaded kernel extensions (kextstat-like: index, refs, address, size, name/version; via the `procfsd` daemon) |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
@@ -275,6 +276,18 @@ the path to full coverage. Because every sysctl vnode shares one structure node,
 back to the enclosing sysctl oid (and from `/proc/sys` itself to the `/proc`
 root), so relative paths through the tree behave normally.
 
+`extensions` lists the loaded kernel extensions, macOS's answer to the module
+list, in a `kextstat`-style format (load index, reference count, load address,
+size, wired size, bundle id and version). A kext cannot enumerate loaded kexts
+itself — that needs the private C++ `OSKext` class, which is neither a bindable
+KPI nor safe to call — so the listing is produced by the `procfsd` daemon via
+`KextManagerCopyLoadedKextInfo()` and delivered over the control bridge. The
+listing (200+ kexts, tens of KB) far exceeds one bridge payload, so it is
+streamed in `PROCFS_CTL_MAXPAYLOAD`-sized chunks (`procfs_ctl_request_blob()`):
+the daemon rebuilds the listing when a read starts at offset 0 and returns the
+slice for each subsequent offset, and the kext reassembles them into an `sbuf`.
+Without a connected daemon the node is empty.
+
 ### The `procfsd` daemon
 
 Several fields are unreachable from a kext on Apple Silicon: the kernel
@@ -285,10 +298,10 @@ data lives in per-CPU/`recount` structures with no linkable accessor. The
 `host_statistics64()` — the same interfaces `top`/Activity Monitor use — over a
 privileged `PF_SYSTEM` kernel control (`procfs_ctl.c`): a node read sends a
 request and the daemon replies. So `taskinfo` (all 18 fields exact),
-`task/<tid>/{info,comm,stat,status,sched}`, `vmstat` and the `sys/` sysctl
-values are fully populated when the daemon runs, and fall back to the kext's
-best-effort values (or zero, or the `CTLFLAG_KERN` sysctl subset) when it does
-not. The daemon also stages the libklookup symbol file at boot and,
+`task/<tid>/{info,comm,stat,status,sched}`, `vmstat`, the `sys/` sysctl values
+and the `extensions` kext listing are fully populated when the daemon runs, and
+fall back to the kext's best-effort values (or zero, the `CTLFLAG_KERN` sysctl
+subset, or an empty node) when it does not. The daemon also stages the libklookup symbol file at boot and,
 when armed, loads the kext; see *Installing*. `taskinfo`'s `pti_resident_size`
 is then the exact `phys_footprint` from the daemon (the kext's own estimate is
 only the fallback). Without the daemon the per-thread `info` reads zero
@@ -402,6 +415,7 @@ Likewise you can use the `cat` command to get the contents of a file:
     cat /proc/version
     cat /proc/sys/kern/ostype        # like Linux's /proc/sys/kern/ostype
     ls  /proc/sys/kern
+    cat /proc/extensions             # kextstat-style loaded-kext listing
 
 For per-process files that contain binary structures rather than text, you must pipe them
 through `hexdump` to read the raw contents:
@@ -413,7 +427,8 @@ through `hexdump` to read the raw contents:
 ## TODO:
  - Extend the `procfs.linux` presentation-mode switch to more nodes as native
    and Linux renderings diverge (only `regs`/`fpregs`/`auxv` differ today).
- - Implement more linux-compatible features (`/proc/modules`, `/proc/diskstats`, etc.)
+ - Implement more linux-compatible features (`/proc/modules` — the Linux-format
+   counterpart to `/proc/extensions` — `/proc/diskstats`, etc.)
  - Implement a GUI menu bar utility.
 
 ## Issues

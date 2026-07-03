@@ -20,6 +20,7 @@
 #include <sys/proc.h>
 #include <sys/systm.h>
 #include <sys/time.h>
+#include <sys/sbuf.h>
 #include <kern/locks.h>
 #include <libkern/libkern.h>
 #include <string.h>
@@ -213,6 +214,36 @@ procfs_ctl_request_named(uint32_t type, int pid, uint64_t arg, const char *name,
     void *out, uint32_t outcap, uint32_t *outlen)
 {
     return procfs_ctl_request_impl(type, pid, arg, name, out, outcap, outlen);
+}
+
+/*
+ * Assemble a large text reply from the daemon into `sb` by requesting it in
+ * PROCFS_CTL_MAXPAYLOAD-sized chunks (arg = byte offset), stopping at the first
+ * short (or empty) chunk. Used for listings that exceed one payload (e.g. the
+ * loaded-kext list). Returns 0 on success, or an errno (ENOTCONN with no daemon)
+ * so the caller can fall back.
+ */
+int
+procfs_ctl_request_blob(uint32_t type, struct sbuf *sb)
+{
+    uint8_t   chunk[PROCFS_CTL_MAXPAYLOAD];
+    uint64_t  offset = 0;
+
+    for (;;) {
+        uint32_t got = 0;
+        int e = procfs_ctl_request(type, 0, offset, chunk, sizeof(chunk), &got);
+        if (e != 0) {
+            return e;
+        }
+        if (got > 0) {
+            sbuf_bcat(sb, chunk, got);
+        }
+        offset += got;
+        if (got < PROCFS_CTL_MAXPAYLOAD) {
+            break;      /* short chunk: end of the listing */
+        }
+    }
+    return 0;
 }
 
 kern_return_t

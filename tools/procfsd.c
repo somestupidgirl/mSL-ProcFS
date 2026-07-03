@@ -29,6 +29,8 @@
 #include <libproc.h>
 #include <sys/proc_info.h>
 #include <sys/sysctl.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/kext/KextManager.h>
 #include <mach/mach.h>
 #include <mach/task.h>
 #include <mach/thread_act.h>
@@ -193,6 +195,112 @@ wait_connect(void)
         }
         sleep(1);       /* wait for the kext to register the control */
     }
+}
+
+/*
+ * ---- /proc/extensions: loaded kernel-extension listing --------------------
+ *
+ * The kext cannot enumerate loaded kexts (the private C++ OSKext class), so we
+ * build a kextstat-style text listing from KextManagerCopyLoadedKextInfo() and
+ * serve it to the kext in chunks. The blob is (re)built when a read starts at
+ * offset 0 and cached for the remaining chunks of that read, so the listing is
+ * self-consistent and IOKit is queried once per read.
+ */
+static char  *g_ext_blob = NULL;
+static size_t g_ext_blob_len = 0;
+
+struct kextrow {
+    long long tag, refs, addr, size, wired;
+    char name[128];
+    char vers[64];
+};
+
+static long long
+cfnum_ll(CFDictionaryRef d, CFStringRef key)
+{
+    long long v = 0;
+    CFNumberRef n = (CFNumberRef)CFDictionaryGetValue(d, key);
+    if (n && CFGetTypeID(n) == CFNumberGetTypeID()) {
+        CFNumberGetValue(n, kCFNumberLongLongType, &v);
+    }
+    return v;
+}
+
+static void
+cfstr_copy(CFDictionaryRef d, CFStringRef key, char *out, size_t cap)
+{
+    out[0] = '\0';
+    CFStringRef s = (CFStringRef)CFDictionaryGetValue(d, key);
+    if (s && CFGetTypeID(s) == CFStringGetTypeID()) {
+        CFStringGetCString(s, out, (CFIndex)cap, kCFStringEncodingUTF8);
+    }
+}
+
+static int
+kextrow_cmp(const void *a, const void *b)
+{
+    long long ta = ((const struct kextrow *)a)->tag;
+    long long tb = ((const struct kextrow *)b)->tag;
+    return (ta > tb) - (ta < tb);
+}
+
+static void
+build_ext_blob(void)
+{
+    free(g_ext_blob);
+    g_ext_blob = NULL;
+    g_ext_blob_len = 0;
+
+    CFDictionaryRef info = KextManagerCopyLoadedKextInfo(NULL, NULL);
+    if (info == NULL) {
+        return;
+    }
+    CFIndex n = CFDictionaryGetCount(info);
+    const void **vals = calloc((size_t)n, sizeof(*vals));
+    struct kextrow *rows = calloc((size_t)n, sizeof(*rows));
+    if (vals == NULL || rows == NULL) {
+        free(vals); free(rows); CFRelease(info);
+        return;
+    }
+    CFDictionaryGetKeysAndValues(info, NULL, vals);
+
+    CFIndex nrows = 0;
+    for (CFIndex i = 0; i < n; i++) {
+        CFDictionaryRef d = (CFDictionaryRef)vals[i];
+        if (d == NULL || CFGetTypeID(d) != CFDictionaryGetTypeID()) {
+            continue;
+        }
+        struct kextrow *r = &rows[nrows++];
+        r->tag   = cfnum_ll(d, CFSTR("OSBundleLoadTag"));
+        r->refs  = cfnum_ll(d, CFSTR("OSBundleRetainCount"));
+        r->addr  = cfnum_ll(d, CFSTR("OSBundleLoadAddress"));
+        r->size  = cfnum_ll(d, CFSTR("OSBundleLoadSize"));
+        r->wired = cfnum_ll(d, CFSTR("OSBundleWiredSize"));
+        cfstr_copy(d, CFSTR("CFBundleIdentifier"), r->name, sizeof(r->name));
+        cfstr_copy(d, CFSTR("CFBundleVersion"), r->vers, sizeof(r->vers));
+    }
+    qsort(rows, (size_t)nrows, sizeof(*rows), kextrow_cmp);
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f != NULL) {
+        fprintf(f, "Index Refs Address            Size       Wired      "
+                   "Name (Version)\n");
+        for (CFIndex i = 0; i < nrows; i++) {
+            struct kextrow *r = &rows[i];
+            fprintf(f, "%5lld %4lld 0x%-16llx 0x%-8llx 0x%-8llx %s (%s)\n",
+                    r->tag, r->refs, r->addr, r->size, r->wired,
+                    r->name, r->vers);
+        }
+        fclose(f);
+        g_ext_blob = buf;
+        g_ext_blob_len = sz;
+    }
+
+    free(vals);
+    free(rows);
+    CFRelease(info);
 }
 
 /*
@@ -377,6 +485,23 @@ main(int argc, char **argv)
                 resp->len = (uint32_t)len;
             } else {
                 resp->error = errno;
+            }
+            break;
+        }
+        case PROCFS_REQ_EXTENSIONS: {
+            /* arg = byte offset. Rebuild the listing at the start of a read,
+             * then return the slice at this offset (chunked). */
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_ext_blob();
+            }
+            if (g_ext_blob != NULL && off < g_ext_blob_len) {
+                size_t avail = g_ext_blob_len - off;
+                size_t n = (avail < PROCFS_CTL_MAXPAYLOAD) ? avail : PROCFS_CTL_MAXPAYLOAD;
+                memcpy(payload, g_ext_blob + off, n);
+                resp->len = (uint32_t)n;
+            } else {
+                resp->len = 0;      /* past the end (or empty): final chunk */
             }
             break;
         }
