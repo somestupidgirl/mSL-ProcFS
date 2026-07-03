@@ -35,6 +35,7 @@ Linux-compatible files and helpers:
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
+|`modules`     | Linux-style `/proc/modules` view of the same loaded kexts (`name size refcount deps state address`) |
 |`mounts`      | The Linux name for the same mounted-filesystem table as `mtab`       |
 |`mtab`        | Linux-style mounted-filesystem table (`/etc/mtab` format: `device mountpoint fstype options 0 0`) |
 |`partitions`  | Linux-style partition table (text; all block devices via IOKit — see below) |
@@ -286,7 +287,11 @@ listing (200+ kexts, tens of KB) far exceeds one bridge payload, so it is
 streamed in `PROCFS_CTL_MAXPAYLOAD`-sized chunks (`procfs_ctl_request_blob()`):
 the daemon rebuilds the listing when a read starts at offset 0 and returns the
 slice for each subsequent offset, and the kext reassembles them into an `sbuf`.
-Without a connected daemon the node is empty.
+Without a connected daemon the node is empty. `modules` is the same listing in
+Linux `/proc/modules` format (`name size refcount deps state address`, with
+`deps` always `-` and state always `Live`, since macOS exposes no per-kext
+dependency string here); it shares the entire chunked-transfer path and differs
+only in the daemon-side formatting.
 
 ### The `procfsd` daemon
 
@@ -299,7 +304,7 @@ data lives in per-CPU/`recount` structures with no linkable accessor. The
 privileged `PF_SYSTEM` kernel control (`procfs_ctl.c`): a node read sends a
 request and the daemon replies. So `taskinfo` (all 18 fields exact),
 `task/<tid>/{info,comm,stat,status,sched}`, `vmstat`, the `sys/` sysctl values
-and the `extensions` kext listing are fully populated when the daemon runs, and
+and the `extensions`/`modules` kext listings are fully populated when the daemon runs, and
 fall back to the kext's best-effort values (or zero, the `CTLFLAG_KERN` sysctl
 subset, or an empty node) when it does not. The daemon also stages the libklookup symbol file at boot and,
 when armed, loads the kext; see *Installing*. `taskinfo`'s `pti_resident_size`
@@ -427,8 +432,7 @@ through `hexdump` to read the raw contents:
 ## TODO:
  - Extend the `procfs.linux` presentation-mode switch to more nodes as native
    and Linux renderings diverge (only `regs`/`fpregs`/`auxv` differ today).
- - Implement more linux-compatible features (`/proc/modules` — the Linux-format
-   counterpart to `/proc/extensions` — `/proc/diskstats`, etc.)
+ - Implement more linux-compatible features (`/proc/diskstats`, etc.)
  - Implement a GUI menu bar utility.
 
 ## Issues

@@ -33,6 +33,9 @@ enum {
                                  * loaded-kext listing (macOS/kextstat style).
                                  * The reply is a slice [arg, arg+MAXPAYLOAD); the
                                  * caller keeps requesting until a short chunk. */
+    PROCFS_REQ_MODULES    = 9,  /* arg = byte offset; same chunked transfer as
+                                 * PROCFS_REQ_EXTENSIONS but Linux /proc/modules
+                                 * format (name size refcount deps state address). */
 };
 
 /* kext -> daemon */

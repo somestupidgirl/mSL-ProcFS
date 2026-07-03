@@ -206,8 +206,10 @@ wait_connect(void)
  * offset 0 and cached for the remaining chunks of that read, so the listing is
  * self-consistent and IOKit is queried once per read.
  */
-static char  *g_ext_blob = NULL;
+static char  *g_ext_blob = NULL;   /* macOS/kextstat format (/proc/extensions) */
 static size_t g_ext_blob_len = 0;
+static char  *g_mod_blob = NULL;   /* Linux format (/proc/modules) */
+static size_t g_mod_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -244,23 +246,22 @@ kextrow_cmp(const void *a, const void *b)
     return (ta > tb) - (ta < tb);
 }
 
-static void
-build_ext_blob(void)
+/* Collect the loaded kexts into a sorted rows array (caller frees). Returns NULL
+ * on failure; *out_n is the row count. */
+static struct kextrow *
+collect_kexts(CFIndex *out_n)
 {
-    free(g_ext_blob);
-    g_ext_blob = NULL;
-    g_ext_blob_len = 0;
-
+    *out_n = 0;
     CFDictionaryRef info = KextManagerCopyLoadedKextInfo(NULL, NULL);
     if (info == NULL) {
-        return;
+        return NULL;
     }
     CFIndex n = CFDictionaryGetCount(info);
     const void **vals = calloc((size_t)n, sizeof(*vals));
     struct kextrow *rows = calloc((size_t)n, sizeof(*rows));
     if (vals == NULL || rows == NULL) {
         free(vals); free(rows); CFRelease(info);
-        return;
+        return NULL;
     }
     CFDictionaryGetKeysAndValues(info, NULL, vals);
 
@@ -281,26 +282,72 @@ build_ext_blob(void)
     }
     qsort(rows, (size_t)nrows, sizeof(*rows), kextrow_cmp);
 
+    free(vals);
+    CFRelease(info);
+    *out_n = nrows;
+    return rows;
+}
+
+/*
+ * (Re)build a listing into *blobp. linux_fmt selects the Linux /proc/modules
+ * format (name size refcount deps state address) versus the macOS kextstat-style
+ * /proc/extensions format.
+ */
+static void
+build_blob(int linux_fmt, char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    CFIndex nrows = 0;
+    struct kextrow *rows = collect_kexts(&nrows);
+    if (rows == NULL) {
+        return;
+    }
+
     char  *buf = NULL;
     size_t sz  = 0;
     FILE  *f   = open_memstream(&buf, &sz);
     if (f != NULL) {
-        fprintf(f, "Index Refs Address            Size       Wired      "
-                   "Name (Version)\n");
+        if (!linux_fmt) {
+            fprintf(f, "Index Refs Address            Size       Wired      "
+                       "Name (Version)\n");
+        }
         for (CFIndex i = 0; i < nrows; i++) {
             struct kextrow *r = &rows[i];
-            fprintf(f, "%5lld %4lld 0x%-16llx 0x%-8llx 0x%-8llx %s (%s)\n",
-                    r->tag, r->refs, r->addr, r->size, r->wired,
-                    r->name, r->vers);
+            if (linux_fmt) {
+                /* Linux /proc/modules: name size refcount deps state address.
+                 * macOS has no dependency string here, so deps is "-" and every
+                 * loaded kext is "Live". */
+                fprintf(f, "%s %lld %lld - Live 0x%llx\n",
+                        r->name, r->size, r->refs, (unsigned long long)r->addr);
+            } else {
+                fprintf(f, "%5lld %4lld 0x%-16llx 0x%-8llx 0x%-8llx %s (%s)\n",
+                        r->tag, r->refs, r->addr, r->size, r->wired,
+                        r->name, r->vers);
+            }
         }
         fclose(f);
-        g_ext_blob = buf;
-        g_ext_blob_len = sz;
+        *blobp = buf;
+        *lenp = sz;
     }
-
-    free(vals);
     free(rows);
-    CFRelease(info);
+}
+
+/* Copy the slice of `blob` at `off` into a response payload (chunked transfer). */
+static void
+blob_slice(const char *blob, size_t len, size_t off,
+    void *payload, struct procfs_ctl_resp *resp)
+{
+    if (blob != NULL && off < len) {
+        size_t avail = len - off;
+        size_t n = (avail < PROCFS_CTL_MAXPAYLOAD) ? avail : PROCFS_CTL_MAXPAYLOAD;
+        memcpy(payload, blob + off, n);
+        resp->len = (uint32_t)n;
+    } else {
+        resp->len = 0;      /* past the end (or empty): final chunk */
+    }
 }
 
 /*
@@ -493,16 +540,17 @@ main(int argc, char **argv)
              * then return the slice at this offset (chunked). */
             size_t off = (size_t)req->arg;
             if (off == 0) {
-                build_ext_blob();
+                build_blob(0, &g_ext_blob, &g_ext_blob_len);
             }
-            if (g_ext_blob != NULL && off < g_ext_blob_len) {
-                size_t avail = g_ext_blob_len - off;
-                size_t n = (avail < PROCFS_CTL_MAXPAYLOAD) ? avail : PROCFS_CTL_MAXPAYLOAD;
-                memcpy(payload, g_ext_blob + off, n);
-                resp->len = (uint32_t)n;
-            } else {
-                resp->len = 0;      /* past the end (or empty): final chunk */
+            blob_slice(g_ext_blob, g_ext_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_MODULES: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_blob(1, &g_mod_blob, &g_mod_blob_len);
             }
+            blob_slice(g_mod_blob, g_mod_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_REGS:

@@ -59,6 +59,7 @@ procfs_allocvp(pfstype pfs_type)
     case PFSswaps:          /* FALLTHROUGH */
     case PFSfilesystems:    /* FALLTHROUGH */
     case PFSextensions:     /* FALLTHROUGH */
+    case PFSmodules:        /* FALLTHROUGH */
         return VREG;
 
     case PFSprocnamedir:    /* FALLTHROUGH */
@@ -110,7 +111,8 @@ procfs_node_type_has_pid(pfstype node_type)
         && node_type != PFSmtab && node_type != PFSstat
         && node_type != PFSvmstat && node_type != PFSuptime
         && node_type != PFSswaps && node_type != PFSfilesystems
-        && node_type != PFSsysctl && node_type != PFSextensions;
+        && node_type != PFSsysctl && node_type != PFSextensions
+        && node_type != PFSmodules;
 }
 
 /*

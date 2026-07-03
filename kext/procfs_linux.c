@@ -1743,6 +1743,18 @@ procfs_dofilesystems(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
     return error;
 }
 
+/*
+ * /proc/modules - the Linux-format view of the loaded kernel extensions
+ * (name size refcount deps state address). The listing is produced by the
+ * procfsd daemon and reassembled by the shared helper in procfs_extensions.c;
+ * only the daemon request type differs from /proc/extensions.
+ */
+int
+procfs_domodules(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    return procfs_dokextlist(PROCFS_REQ_MODULES, uio);
+}
+
 #pragma mark -
 #pragma mark Presentation-mode switch (native vs Linux)
 
