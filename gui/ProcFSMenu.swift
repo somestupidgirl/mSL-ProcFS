@@ -73,13 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         iconLight = loadIcon("icon_light")
         iconDark  = loadIcon("icon_dark")
-        updateIcon()
-
-        // The menu bar can be light or dark independently of the app; re-pick the
-        // icon whenever the system appearance changes so it stays legible.
-        DistributedNotificationCenter.default.addObserver(
-            self, selector: #selector(updateIcon),
-            name: NSNotification.Name("AppleInterfaceThemeChangedNotification"), object: nil)
+        setIcon()
 
         let menu = NSMenu()
         menu.delegate = self
@@ -93,23 +87,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return image
     }
 
-    // Choose the icon that contrasts with the current menu-bar appearance. Runs
-    // again on the next runloop tick, since effectiveAppearance can lag the
-    // theme-change notification by a cycle.
-    @objc private func updateIcon() {
-        setIcon()
-        DispatchQueue.main.async { [weak self] in self?.setIcon() }
-    }
-
+    // Use the white (light-coloured) icon by default; fall back to the dark art,
+    // then to a text title, if the white art is unavailable.
     private func setIcon() {
         guard let button = statusItem?.button else { return }
-        let isDark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        if let image = isDark ? iconLight : iconDark {
+        if let image = iconLight ?? iconDark {
             button.image = image
             button.title = ""
         } else {
             button.image = nil
-            button.title = "proc"                       // fallback if art missing
+            button.title = "proc"
         }
     }
 
