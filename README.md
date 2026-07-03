@@ -358,9 +358,22 @@ the binary Mach state / raw `apple[]` array; in Linux mode they emit the
 human-readable text forms (`Name:/State:/…`, `x0 0x…`, `q0 0x…`, `AT_PAGESZ …`)
 from `procfs_linux.c`. Other nodes keep their single format for now.
 
+## Menu-bar app
+
+`ProcFS.app` is a lightweight menu-bar (status-bar) app for controlling procfs
+without the command line. Its menu shows live status — whether `/proc` is
+mounted, whether the `procfsd` daemon is running, and whether Linux presentation
+mode is on — and offers one-click toggles for each (mount/unmount, Linux
+compatibility on/off, start/stop daemon), plus the current version. The
+mutating actions need root, so they go through the standard macOS
+administrator-authorization prompt; status is read unprivileged. It is built as
+part of `make` (into `bin/ProcFS.app`, version stamped from `VERSION`) and
+installed to `/Applications` by `sudo make install`.
+
 ## How to build procfs
 `make` builds the kext, the `procfs.fs` mount bundle, the userspace tools
-(`procfsd`, `procfs_ksyms`) and the LaunchDaemon plist into `bin/`:
+(`procfsd`, `procfs_ksyms`), the LaunchDaemon plist and the `ProcFS.app`
+menu-bar app into `bin/`:
 
     make                    # native arch (arm64e on Apple Silicon)
     make ARCH=universal     # fat arm64e + x86_64
@@ -375,8 +388,9 @@ To build and install in one step, use the install script — it runs
 compiles, so `bin/` and the build tree stay owned by you and `make clean` never
 needs sudo). It installs, with `root:wheel`/`755`: the kext to
 `/Library/Extensions`, the `procfs.fs` bundle to `/Library/Filesystems`,
-`procfsd`/`procfs_ksyms` to `/usr/local/sbin`, and the LaunchDaemon plist to
-`/Library/LaunchDaemons`. It also adds `proc` to `/etc/synthetic.conf` (so `/proc`
+`procfsd`/`procfs_ksyms` to `/usr/local/sbin`, the LaunchDaemon plist to
+`/Library/LaunchDaemons`, and `ProcFS.app` to `/Applications`. It also adds
+`proc` to `/etc/synthetic.conf` (so `/proc`
 is created at boot) and enables the LaunchDaemon. `sudo make uninstall` reverses
 all of this — unmounts, unloads the kext, clears the staging cache, and removes
 the installed files.

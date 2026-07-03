@@ -27,6 +27,7 @@ EXT_DIR        := /Library/Extensions
 FS_DIR         := /Library/Filesystems
 SBIN_DIR       := /usr/local/sbin
 DAEMON_DIR     := /Library/LaunchDaemons
+APP_DIR        := /Applications
 SYNTHETIC_CONF := /etc/synthetic.conf
 
 # Identifiers / runtime files.
@@ -86,8 +87,8 @@ LIB_FLAGS  := ARCHFLAGS="$(LIB_ARCHFLAGS)"  TARGET_TRIPLE="$(LIB_TRIPLE)"
 # Build  ->  $(OUT)
 # ---------------------------------------------------------------------------
 
-# Default: everything needed to install (kext, fs, tools, plists). Not tests.
-all: kextfs tools plists
+# Default: everything needed to install (kext, fs, tools, plists, GUI). Not tests.
+all: kextfs tools plists gui
 
 ifeq ($(ARCH),universal)
 
@@ -146,6 +147,13 @@ plists:
 	@mkdir -p $(OUT)
 	cp tools/$(DAEMON_PLIST) $(OUT)/
 
+# Menu-bar GUI app (ProcFS.app). Its version is stamped from the VERSION file.
+gui:
+	@mkdir -p $(OUT)
+	$(MAKE) -C gui
+	rm -rf $(OUT)/ProcFS.app
+	mv gui/ProcFS.app $(OUT)/
+
 # Test programs (not part of the default build).
 tests:
 	$(MAKE) -C test
@@ -159,7 +167,7 @@ release: kextfs
 # Install  (run as root, AFTER `make`; copies only, never compiles)
 # ---------------------------------------------------------------------------
 
-install: require-root require-built preinstall install-kext install-fs install-tools install-plists postinstall
+install: require-root require-built preinstall install-kext install-fs install-tools install-plists install-gui postinstall
 
 require-root:
 	@[ "$$(id -u)" -eq 0 ] || { echo "error: this target must be run as root (use: sudo make $(MAKECMDGOALS))"; exit 1; }
@@ -167,7 +175,7 @@ require-root:
 require-built:
 	@[ -d "$(OUT)/procfs.kext" ] && [ -d "$(OUT)/procfs.fs" ] && \
 	 [ -x "$(OUT)/procfsd" ] && [ -x "$(OUT)/procfs_ksyms" ] && \
-	 [ -f "$(OUT)/$(DAEMON_PLIST)" ] || \
+	 [ -f "$(OUT)/$(DAEMON_PLIST)" ] && [ -d "$(OUT)/ProcFS.app" ] || \
 		{ echo "error: build artifacts missing in $(OUT)/. Run 'make' first."; exit 1; }
 
 # Tear down any previously installed/loaded build first. macOS caches third-party
@@ -206,6 +214,12 @@ install-tools:
 # The LaunchDaemon is RunAtLoad, so procfsd starts on the next boot. Auto-load
 # of the kext and auto-mount of /proc stay DISARMED until the operator creates
 # $(ARM_FLAG), so a kext panic during development cannot boot-loop the machine.
+install-gui:
+	rm -rf $(APP_DIR)/ProcFS.app
+	cp -R $(OUT)/ProcFS.app $(APP_DIR)/ProcFS.app
+	chown -R root:wheel $(APP_DIR)/ProcFS.app
+	chmod -R 755 $(APP_DIR)/ProcFS.app
+
 install-plists:
 	install -m 644 -o root -g wheel $(OUT)/$(DAEMON_PLIST) $(DAEMON_DIR)/$(DAEMON_PLIST)
 	@# Ensure the LaunchDaemon is enabled. A prior `launchctl disable` (e.g. during
@@ -245,6 +259,7 @@ uninstall: require-root
 	@echo "==> Removing installed files"
 	rm -rf $(EXT_DIR)/procfs.kext
 	rm -rf $(FS_DIR)/procfs.fs
+	rm -rf $(APP_DIR)/ProcFS.app
 	rm -f  $(SBIN_DIR)/procfsd $(SBIN_DIR)/procfs_ksyms
 	rm -f  $(ARM_FLAG) $(KSYMS_FILE)
 	@echo "==> Removing 'proc' from $(SYNTHETIC_CONF)"
@@ -266,8 +281,9 @@ clean:
 	$(MAKE) -C lib clean
 	$(MAKE) -C test clean
 	$(MAKE) -C tools clean
+	$(MAKE) -C gui clean
 
-.PHONY: all kextfs tools plists tests debug release \
+.PHONY: all kextfs tools plists gui tests debug release \
         install require-root require-built preinstall \
-        install-kext install-fs install-tools install-plists postinstall \
+        install-kext install-fs install-tools install-plists install-gui postinstall \
         tools-install uninstall clean
