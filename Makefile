@@ -37,6 +37,14 @@ DAEMON_LABEL   := com.beako.procfsd
 ARM_FLAG       := /var/db/procfs.enabled
 KSYMS_FILE     := /var/db/procfs.ksyms
 
+# Version (single source of truth: the repo VERSION file), used for the
+# installer package / disk image names and metadata.
+VERSION        := $(strip $(shell cat VERSION 2>/dev/null || echo 0.0.0))
+PKG_ID         := com.beako.filesystems.procfs.pkg
+PKG_COMP       := $(OUT)/procfs-component.pkg
+PKG_OUT        := $(OUT)/ProcFS-$(VERSION).pkg
+DMG_OUT        := $(OUT)/ProcFS-$(VERSION).dmg
+
 # Detect native arch if ARCH not specified
 NATIVE_ARCH := $(shell uname -m)
 ifeq ($(NATIVE_ARCH),arm64)
@@ -153,6 +161,54 @@ gui:
 	$(MAKE) -C gui
 	rm -rf $(OUT)/ProcFS.app
 	mv gui/ProcFS.app $(OUT)/
+
+# ---------------------------------------------------------------------------
+# Distribution: a double-clickable installer (.pkg) and disk image (.dmg).
+# These build the artifacts and stage them; no root needed (nothing is installed
+# on the build host). The .pkg's postinstall does the system setup at install
+# time on the target machine.
+# ---------------------------------------------------------------------------
+
+# Installer package (.pkg) built from the artifacts in $(OUT).
+pkg: all
+	@echo "==> Staging installer payload"
+	rm -rf $(OUT)/pkgroot $(OUT)/pkgres
+	install -d $(OUT)/pkgroot/Library/Extensions $(OUT)/pkgroot/Library/Filesystems \
+	           $(OUT)/pkgroot/usr/local/sbin $(OUT)/pkgroot/Library/LaunchDaemons \
+	           $(OUT)/pkgroot/Applications
+	cp -R $(OUT)/procfs.kext          $(OUT)/pkgroot/Library/Extensions/
+	cp -R $(OUT)/procfs.fs            $(OUT)/pkgroot/Library/Filesystems/
+	cp    $(OUT)/procfsd $(OUT)/procfs_ksyms $(OUT)/pkgroot/usr/local/sbin/
+	cp    $(OUT)/$(DAEMON_PLIST)      $(OUT)/pkgroot/Library/LaunchDaemons/
+	cp -R $(OUT)/ProcFS.app           $(OUT)/pkgroot/Applications/
+	@# codesign/pkgbuild reject Finder-info and similar xattrs.
+	xattr -cr $(OUT)/pkgroot
+	@echo "==> Building component package"
+	pkgbuild --root $(OUT)/pkgroot --identifier $(PKG_ID) --version $(VERSION) \
+	         --scripts installer/scripts --ownership recommended \
+	         --install-location / $(PKG_COMP)
+	@echo "==> Building product archive"
+	mkdir -p $(OUT)/pkgres
+	cp installer/resources/welcome.html installer/resources/conclusion.html $(OUT)/pkgres/
+	cp LICENSE $(OUT)/pkgres/LICENSE
+	sed -e 's/__KEXTVERSION__/$(VERSION)/g' installer/distribution.xml.in > $(OUT)/distribution.xml
+	productbuild --distribution $(OUT)/distribution.xml --package-path $(OUT) \
+	             --resources $(OUT)/pkgres $(PKG_OUT)
+	rm -rf $(PKG_COMP) $(OUT)/distribution.xml $(OUT)/pkgroot $(OUT)/pkgres
+	@echo "==> Built $(PKG_OUT)"
+
+# Disk image (.dmg) wrapping the installer package and a README.
+dmg: pkg
+	@echo "==> Building disk image"
+	rm -f $(DMG_OUT)
+	rm -rf $(OUT)/dmg
+	mkdir -p $(OUT)/dmg
+	cp $(PKG_OUT) $(OUT)/dmg/
+	cp installer/resources/DMG-README.txt $(OUT)/dmg/README.txt
+	hdiutil create -volname "ProcFS $(VERSION)" -srcfolder $(OUT)/dmg \
+	               -ov -format UDZO $(DMG_OUT)
+	rm -rf $(OUT)/dmg
+	@echo "==> Built $(DMG_OUT)"
 
 # Test programs (not part of the default build).
 tests:
@@ -283,7 +339,7 @@ clean:
 	$(MAKE) -C tools clean
 	$(MAKE) -C gui clean
 
-.PHONY: all kextfs tools plists gui tests debug release \
+.PHONY: all kextfs tools plists gui tests debug release pkg dmg \
         install require-root require-built preinstall \
         install-kext install-fs install-tools install-plists install-gui postinstall \
         tools-install uninstall clean

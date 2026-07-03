@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+  body { font: 13px -apple-system, "Helvetica Neue", sans-serif; color: #222; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 8px 0; }
+  code { font-family: "SF Mono", Menlo, monospace; font-size: 12px; }
+  ul { margin: 6px 0 0 0; padding-left: 18px; }
+  li { margin: 3px 0; }
+  .note { color: #666; margin-top: 12px; }
+</style></head>
+<body>
+  <h2>ProcFS for macOS</h2>
+  <p>This installs a <code>/proc</code> filesystem for macOS &mdash; a kernel
+     extension that exposes running processes and threads as files, with BSD-
+     and Linux-compatible per-process information.</p>
+  <p>The installer places:</p>
+  <ul>
+    <li>the <b>procfs</b> kernel extension in <code>/Library/Extensions</code></li>
+    <li>the <b>procfs.fs</b> mount bundle in <code>/Library/Filesystems</code></li>
+    <li>the <b>procfsd</b> daemon and <b>procfs_ksyms</b> helper in <code>/usr/local/sbin</code></li>
+    <li>the <b>LaunchDaemon</b> in <code>/Library/LaunchDaemons</code></li>
+    <li>the <b>ProcFS</b> menu-bar app in <code>/Applications</code></li>
+  </ul>
+  <p class="note">A kernel extension is being installed. After installation you
+     will need to approve it in System Settings and restart &mdash; see the final
+     screen for the exact steps.</p>
+</body>
+</html>

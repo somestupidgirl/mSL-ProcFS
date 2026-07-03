@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+  body { font: 13px -apple-system, "Helvetica Neue", sans-serif; color: #222; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 8px 0; }
+  code { font-family: "SF Mono", Menlo, monospace; font-size: 12px;
+         background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  ol { margin: 6px 0 0 0; padding-left: 18px; }
+  li { margin: 5px 0; }
+  .note { color: #666; margin-top: 12px; }
+</style></head>
+<body>
+  <h2>Almost done &mdash; two steps remain</h2>
+  <p>Because ProcFS installs a kernel extension, macOS requires you to approve it
+     and restart before <code>/proc</code> can be mounted:</p>
+  <ol>
+    <li>Open <b>System Settings &rarr; Privacy &amp; Security</b>, scroll to the
+        security section, and <b>Allow</b> the extension from
+        &ldquo;Sunneva N. Mariu&rdquo; / beako. You may need to reboot once for the
+        prompt to appear.</li>
+    <li><b>Restart your Mac.</b> On the next boot the mount point is created, the
+        extension loads, and the <b>procfsd</b> daemon mounts <code>/proc</code>
+        for all users.</li>
+  </ol>
+  <p>After rebooting, verify with <code>ls /proc</code> and click the ProcFS
+     menu-bar icon to mount/unmount, toggle Linux mode, or control the daemon.</p>
+  <p class="note">Auto-load and auto-mount were armed by this installer
+     (<code>/var/db/procfs.enabled</code>). To disable them, remove that file and
+     reboot.</p>
+</body>
+</html>

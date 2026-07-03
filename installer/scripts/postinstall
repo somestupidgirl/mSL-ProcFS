@@ -1,0 +1,31 @@
+#!/bin/bash
+#
+# ProcFS installer postinstall.
+#
+# The payload (kext, procfs.fs, procfsd/procfs_ksyms, LaunchDaemon plist and
+# ProcFS.app) has already been laid down by the installer with root:wheel
+# ownership. Here we do the parts that are not plain file copies: create the
+# /proc mount point at boot, enable the daemon, and arm auto-load/auto-mount.
+#
+set -e
+
+SYNTHETIC=/etc/synthetic.conf
+DAEMON=com.beako.procfsd
+ARM_FLAG=/var/db/procfs.enabled
+
+# /proc lives on the read-only system volume; synthetic.conf makes apfs.util
+# create the empty mount point at boot. Add it if not already present.
+if ! grep -qxF 'proc' "$SYNTHETIC" 2>/dev/null; then
+    printf 'proc\n' >> "$SYNTHETIC"
+fi
+
+# The LaunchDaemon is RunAtLoad, so procfsd starts on the next boot. Clear any
+# stale `launchctl disable` override that would otherwise keep it from starting.
+launchctl enable "system/$DAEMON" 2>/dev/null || true
+
+# Arm auto-load of the kext and auto-mount of /proc so the system comes up with
+# /proc after the reboot. (Remove this line to keep it disarmed, matching
+# `make install`; the user would then `sudo touch $ARM_FLAG` manually.)
+touch "$ARM_FLAG"
+
+exit 0
