@@ -51,6 +51,7 @@ extern char **environ;
 #define PROCFS_KEXT_PATH  "/Library/Extensions/procfs.kext"  /* load by path at boot */
 #define PROCFS_STAGER     "/usr/local/sbin/procfs_ksyms"   /* symbol-staging helper */
 #define PROCFS_ARM_FLAG   "/var/db/procfs.enabled"         /* gate for auto-loading the kext */
+#define PROCFS_LINUX_CONF "/var/db/procfs.linux"           /* persisted procfs.linux mode */
 
 /* Run a program to completion (best-effort). */
 static void
@@ -553,6 +554,49 @@ procfsd_handle_regs(const struct procfs_ctl_req *req, struct procfs_ctl_resp *re
     mach_port_deallocate(mach_task_self(), task);
 }
 
+/*
+ * Restore the persisted native/Linux presentation mode. The `procfs.linux`
+ * sysctl lives in the kext and resets to its default (0, native) every time the
+ * kext loads, so the GUI's choice is saved to PROCFS_LINUX_CONF and re-applied
+ * here whenever the kext (re)appears - at boot and after any reload. Absent file
+ * means "never set" and leaves the kext default untouched.
+ */
+static void
+apply_persisted_linux_mode(void)
+{
+    FILE *f = fopen(PROCFS_LINUX_CONF, "r");
+    if (f == NULL) {
+        return;
+    }
+    int mode = 0;
+    int got  = fscanf(f, "%d", &mode);
+    fclose(f);
+    if (got != 1) {
+        return;
+    }
+    mode = (mode != 0) ? 1 : 0;
+
+    /*
+     * wait_connect() returns as soon as the kext registers its kernel control,
+     * which the start routine does just before registering the procfs.linux
+     * sysctl - so the oid may not exist for a few microseconds yet. Retry while
+     * it is still absent (ENOENT), up to ~1s, rather than lose the restore to
+     * that window.
+     */
+    for (int tries = 0; tries < 50; tries++) {
+        if (sysctlbyname("procfs.linux", NULL, NULL, &mode, sizeof(mode)) == 0) {
+            fprintf(stderr, "procfsd: restored procfs.linux=%d\n", mode);
+            return;
+        }
+        if (errno != ENOENT) {
+            break;              /* a real error, not "oid not ready yet" */
+        }
+        usleep(20000);          /* 20 ms */
+    }
+    fprintf(stderr, "procfsd: could not restore procfs.linux=%d: %s\n",
+        mode, strerror(errno));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -584,6 +628,7 @@ main(int argc, char **argv)
 
     int fd = wait_connect();
     fprintf(stderr, "procfsd: connected to %s\n", PROCFS_CTL_NAME);
+    apply_persisted_linux_mode();   /* restore saved native/Linux mode */
 
     for (;;) {
         uint8_t rbuf[sizeof(struct procfs_ctl_req)];
@@ -595,6 +640,7 @@ main(int argc, char **argv)
             close(fd);                  /* kext unloaded / socket error */
             fd = wait_connect();
             fprintf(stderr, "procfsd: reconnected\n");
+            apply_persisted_linux_mode();   /* kext reloaded -> re-apply saved mode */
             continue;
         }
         if (n < (ssize_t)sizeof(struct procfs_ctl_req)) {

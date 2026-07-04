@@ -377,6 +377,16 @@ the binary Mach state / raw `apple[]` array; in Linux mode they emit the
 human-readable text forms (`Name:/State:/…`, `x0 0x…`, `q0 0x…`, `AT_PAGESZ …`)
 from `procfs_linux.c`. Other nodes keep their single format for now.
 
+The sysctl lives in the kext, so it resets to `0` every time the kext loads.
+To make the choice **persist across reboots**, the setting is saved to
+`/var/db/procfs.linux` (just `0` or `1`) and `procfsd` re-applies it via
+`sysctlbyname` each time the kext (re)appears — at boot and after any reload.
+Toggling *Linux compatibility* in the menu-bar app writes that file for you (it
+already runs the change with administrator rights); to persist a change made on
+the command line, write the file yourself, e.g. `echo 1 | sudo tee
+/var/db/procfs.linux`. Removing the file reverts to the native-by-default
+behaviour.
+
 ## Menu-bar app
 
 `ProcFS.app` is a lightweight menu-bar (status-bar) app for controlling procfs

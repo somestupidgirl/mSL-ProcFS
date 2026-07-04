@@ -48,7 +48,7 @@ rm -rf /Library/Extensions/procfs.kext
 rm -rf /Library/Filesystems/procfs.fs
 rm -rf /Applications/ProcFS.app
 rm -f  /usr/local/sbin/procfsd /usr/local/sbin/procfs_ksyms
-rm -f  /var/db/procfs.enabled /var/db/procfs.ksyms
+rm -f  /var/db/procfs.enabled /var/db/procfs.ksyms /var/db/procfs.linux
 
 echo "  - removing 'proc' from $SYNTHETIC"
 if [ -f "$SYNTHETIC" ]; then

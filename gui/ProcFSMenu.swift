@@ -16,6 +16,7 @@ import ServiceManagement
 private let kMountPoint  = "/proc"
 private let kDaemonLabel = "com.beako.procfsd"
 private let kDaemonPlist = "/Library/LaunchDaemons/com.beako.procfsd.plist"
+private let kLinuxConf   = "/var/db/procfs.linux"   // persisted procfs.linux mode (procfsd restores it)
 
 // MARK: - Shell helpers
 
@@ -161,7 +162,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleLinux() {
-        runPrivileged("/usr/sbin/sysctl -w procfs.linux=\(linuxModeOn() ? "0" : "1")")
+        // Apply live, and persist the choice so procfsd restores it after a
+        // reboot / kext reload. Both run as root in one privileged step; the
+        // file is written only if the sysctl set succeeds.
+        let want = linuxModeOn() ? "0" : "1"
+        _ = runPrivileged("/usr/sbin/sysctl -w procfs.linux=\(want) && "
+                        + "/bin/echo \(want) > \(kLinuxConf)")
     }
 
     @objc private func toggleDaemon() {
