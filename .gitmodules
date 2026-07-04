@@ -1,5 +1,5 @@
 [submodule "MacKernelSDK"]
-	path = MacKernelSDK
+	path = lib/MacKernelSDK
 	url = git@github.com:acidanthera/MacKernelSDK.git
 [submodule "lib/libutil"]
 	path = lib/libutil
