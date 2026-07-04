@@ -2066,6 +2066,34 @@ procfs_dodevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/allocinfo - Linux memory-allocation profiling. Linux keys this on code
+ * tags (file:line func:name); macOS has no code-tag profiling, so the closest
+ * faithful source is the zone allocator (mach_zone_info, what zprint reports):
+ * one row per zone with its live allocated bytes, live element count, and the
+ * zone name in place of the code tag. Gathered by procfsd (mach_zone_info needs
+ * the privileged host port) and streamed in chunks like /proc/devices.
+ */
+int
+procfs_doallocinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_ALLOCINFO, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/net/dev - Linux per-interface network statistics. The interface list
  * and counters come from the public ifnet KPIs (ifnet_list_get / ifnet_stat),
  * so this runs entirely in-kernel. macOS keeps a single dropped counter and no

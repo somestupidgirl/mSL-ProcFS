@@ -35,8 +35,10 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/kext/KextManager.h>
 #include <mach/mach.h>
+#include <mach/mach_host.h>
 #include <mach/task.h>
 #include <mach/thread_act.h>
+#include <mach_debug/zone_info.h>
 #if defined(__arm64__) || defined(__aarch64__)
 #include <mach/arm/thread_status.h>
 #elif defined(__x86_64__)
@@ -216,6 +218,8 @@ static char  *g_mod_blob = NULL;   /* Linux format (/proc/modules) */
 static size_t g_mod_blob_len = 0;
 static char  *g_dev_blob = NULL;   /* Linux format (/proc/devices) */
 static size_t g_dev_blob_len = 0;
+static char  *g_alloc_blob = NULL; /* Linux format (/proc/allocinfo) */
+static size_t g_alloc_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -478,6 +482,82 @@ build_devices_blob(char **blobp, size_t *lenp)
         *lenp = sz;
     }
     free(rows);
+}
+
+/*
+ * /proc/allocinfo support. Linux profiles allocations by code tag; macOS has no
+ * such thing, so the nearest equivalent is the zone allocator (mach_zone_info,
+ * the data behind zprint). Emit one row per zone - live bytes, live element
+ * count, and the zone name in place of Linux's file:line func:name tag - sorted
+ * by size descending. mach_zone_info needs the privileged host port (root).
+ */
+struct allocrow {
+    uint64_t size;      /* live allocated bytes (count * elem_size) */
+    uint64_t calls;     /* live element count */
+    char     name[80];  /* zone name (ZONE_NAME_MAX_LEN) */
+};
+
+static int
+allocrow_cmp(const void *a, const void *b)
+{
+    uint64_t sa = ((const struct allocrow *)a)->size;
+    uint64_t sb = ((const struct allocrow *)b)->size;
+    return (sa < sb) - (sa > sb);       /* descending */
+}
+
+static void
+build_allocinfo_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    host_priv_t hp = HOST_PRIV_NULL;
+    if (host_get_host_priv_port(mach_host_self(), &hp) != KERN_SUCCESS ||
+        hp == HOST_PRIV_NULL) {
+        return;                         /* not privileged -> empty node */
+    }
+
+    mach_zone_name_t      *names = NULL;
+    mach_msg_type_number_t namesCnt = 0;
+    mach_zone_info_t      *info = NULL;
+    mach_msg_type_number_t infoCnt = 0;
+    if (mach_zone_info(hp, &names, &namesCnt, &info, &infoCnt) != KERN_SUCCESS) {
+        return;
+    }
+
+    mach_msg_type_number_t n = (namesCnt < infoCnt) ? namesCnt : infoCnt;
+    struct allocrow *rows = calloc(n, sizeof(*rows));
+    if (rows != NULL) {
+        for (mach_msg_type_number_t i = 0; i < n; i++) {
+            rows[i].size  = info[i].mzi_count * info[i].mzi_elem_size;
+            rows[i].calls = info[i].mzi_count;
+            strlcpy(rows[i].name, names[i].mzn_name, sizeof(rows[i].name));
+        }
+        qsort(rows, n, sizeof(*rows), allocrow_cmp);
+
+        char  *buf = NULL;
+        size_t sz  = 0;
+        FILE  *f   = open_memstream(&buf, &sz);
+        if (f != NULL) {
+            fprintf(f, "allocinfo - version: 1.0\n");
+            fprintf(f, "#     <size>  <calls> <tag info>\n");
+            for (mach_msg_type_number_t i = 0; i < n; i++) {
+                fprintf(f, "%12llu %8llu zone:%s\n",
+                    (unsigned long long)rows[i].size,
+                    (unsigned long long)rows[i].calls, rows[i].name);
+            }
+            fclose(f);
+            *blobp = buf;
+            *lenp = sz;
+        }
+        free(rows);
+    }
+
+    vm_deallocate(mach_task_self(), (vm_address_t)names,
+        namesCnt * sizeof(*names));
+    vm_deallocate(mach_task_self(), (vm_address_t)info,
+        infoCnt * sizeof(*info));
 }
 
 /* Copy the slice of `blob` at `off` into a response payload (chunked transfer). */
@@ -785,6 +865,14 @@ main(int argc, char **argv)
                 build_devices_blob(&g_dev_blob, &g_dev_blob_len);
             }
             blob_slice(g_dev_blob, g_dev_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_ALLOCINFO: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_allocinfo_blob(&g_alloc_blob, &g_alloc_blob_len);
+            }
+            blob_slice(g_alloc_blob, g_alloc_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_RUSAGE: {

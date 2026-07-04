@@ -28,6 +28,7 @@ Linux-compatible files and helpers:
 
 | Entry        | Summary                                                              |
 |--------------|---------------------------------------------------------------------|
+|`allocinfo`   | Linux-style memory-allocation profiling; macOS has no code-tag profiling, so this is the zone allocator (`mach_zone_info`, via `procfsd`): one row per zone with live bytes, live count and the zone name in place of Linux's `file:line func:` tag |
 |`byname/`     | Directory of symbolic links, one per process, named by command name |
 |`cmdline`     | Kernel boot command line (macOS boot-args / `kern.bootargs`; Linux's root `/proc/cmdline`) |
 |`cpuinfo`     | Linux-style CPU information (text)                                   |
@@ -325,6 +326,16 @@ Linux `/proc/modules` format (`name size refcount deps state address`, with
 `deps` always `-` and state always `Live`, since macOS exposes no per-kext
 dependency string here); it shares the entire chunked-transfer path and differs
 only in the daemon-side formatting.
+
+`allocinfo` is the Linux memory-allocation profiling node (`/proc/allocinfo`).
+Linux keys it on code tags (`file:line func:name`); macOS has no code-tag
+allocation profiling, so the closest faithful source is the **zone allocator** —
+the same `mach_zone_info()` data `zprint` reports. Because `mach_zone_info`
+requires the privileged host port, the `procfsd` daemon gathers it and emits one
+row per zone — `<live bytes> <live count> zone:<name>`, where live bytes is the
+zone's element count times its element size and the zone name stands in for
+Linux's code tag — sorted by size descending, streamed over the same chunked
+transfer as `extensions`/`modules`/`devices`. Empty without a connected daemon.
 
 ### The `procfsd` daemon
 

@@ -156,6 +156,10 @@ procfs_structure_init(void)
         pfssnode_t *devices = add_node(root_node, "devices",
                         PFSdevices, next_node_id++, 0, 0, NULL, procfs_dodevices);
 
+        // Linux-style /proc/allocinfo (per-zone allocation stats via mach_zone_info in procfsd).
+        pfssnode_t *allocinfo = add_node(root_node, "allocinfo",
+                        PFSallocinfo, next_node_id++, 0, 0, NULL, procfs_doallocinfo);
+
         // Linux-style kernel boot command line (macOS boot-args / kern.bootargs).
         pfssnode_t *kcmdline = add_node(root_node, "cmdline",
                         PFSkcmdline, next_node_id++, 0, 0, NULL, procfs_dokcmdline);
