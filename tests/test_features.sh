@@ -71,6 +71,10 @@ tfile "$PROC/version"         "version"
 tfile "$PROC/stat"            "stat"
 tfile "$PROC/vmstat"          "vmstat"
 tfile "$PROC/buddyinfo"       "buddyinfo (free blocks by order)"
+# dma: legitimately empty on arm64 (no 8237 ISA DMA); "4: cascade" on x86
+if d=$(cat "$PROC/dma" 2>/dev/null); then
+    if [ -n "$d" ]; then ok "dma: $d"; else note "dma empty (no ISA DMA on arm64)"; fi
+else bad "dma unreadable"; fi
 tfile "$PROC/partitions"      "partitions"
 tfile "$PROC/diskstats"       "diskstats"
 tfile "$PROC/mtab"            "mtab"

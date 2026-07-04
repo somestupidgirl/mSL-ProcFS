@@ -39,6 +39,7 @@ Linux-compatible files and helpers:
 |`curproc/`     | Symbolic link to the calling process's directory (BSD name)         |
 |`devices`     | Linux-style char/block device major-number listing (driver families reconstructed from `/dev` by the `procfsd` daemon) |
 |`diskstats`   | Linux-style block-device I/O statistics (per whole disk, 14-field format; from IOKit `IOBlockStorageDriver`) |
+|`dma`         | Linux-style list of ISA DMA channels in use; an x86-only concept — shows the reserved `cascade` channel on x86, empty on Apple Silicon (no 8237 ISA DMA) |
 |`extensions`  | macOS-style list of loaded kernel extensions (kextstat-like: index, refs, address, size, name/version; via the `procfsd` daemon) |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
@@ -380,6 +381,14 @@ id (from the little-endian `vendor-id`/`device-id` properties) and the device
 name (from `IOName`), in the standard 18-field layout. IRQ, base addresses and
 region sizes are not read from IOKit and report 0. `/proc/bus` and `/proc/bus/pci`
 are plain directories; the `devices` listing is empty without a connected daemon.
+
+`dma` lists the ISA DMA channels in use (one `%2d: <owner>` line per busy channel
+of the legacy 8237 controller). This is an x86-only concept: on x86 the DMA
+subsystem always reserves channel 4 as the cascade wiring the two 8237
+controllers, so `/proc/dma` there is never empty. macOS/XNU uses no 8237 ISA DMA,
+and Apple Silicon has no such hardware at all, so the node shows only the
+reserved `cascade` channel on x86 and is empty on arm64 — matching Linux's own
+per-architecture behaviour.
 
 ### The `procfsd` daemon
 

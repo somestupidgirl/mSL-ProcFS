@@ -901,6 +901,34 @@ procfs_dobuddyinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ct
 }
 
 /*
+ * /proc/dma - Linux's list of ISA DMA channels in use (one "%2d: <owner>" line
+ * per busy channel of the legacy 8237 controller). This is an x86-only concept:
+ * on x86 the DMA subsystem always reserves channel 4 as the cascade between the
+ * two 8237 controllers, so /proc/dma there is never empty. macOS/XNU uses no
+ * 8237 ISA DMA, and Apple Silicon has no such hardware at all, so the node is
+ * empty on arm64 and shows only the reserved cascade channel on x86 - matching
+ * Linux's own per-architecture behaviour.
+ */
+int
+procfs_dodma(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 64, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+#if defined(__x86_64__)
+    /* Channel 4 cascades the two 8237 controllers; it is the one channel the
+     * x86 DMA init always reserves, so it is what /proc/dma always shows. */
+    sbuf_printf(&sb, "%2d: %s\n", 4, "cascade");
+#endif
+    /* arm64: no 8237 ISA DMA controller -> no channels in use (empty). */
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * Linux-compatible /proc/meminfo, modelled on FreeBSD's linprocfs_domeminfo()
  * (sys/compat/linux/linprocfs/linprocfs.c) - same field set and "%9lu kB"
  * layout, and the same "all memory that isn't wired down is free" estimate
