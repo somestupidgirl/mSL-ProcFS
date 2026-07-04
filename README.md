@@ -31,6 +31,7 @@ Linux-compatible files and helpers:
 |`allocinfo`   | Linux-style memory-allocation profiling; macOS has no code-tag profiling, so this is the zone allocator (`mach_zone_info`, via `procfsd`): one row per zone with live bytes, live count and the zone name in place of Linux's `file:line func:` tag |
 |`apm`         | Linux-style advanced-power-management line (AC status, battery charge %, time remaining) mapped from IOKit power sources via the `procfsd` daemon |
 |`bootconfig`  | Linux-style boot configuration; macOS has no bootconfig blob, so this is the boot loader's boot-args (`kern.bootargs`) with the Linux `# Parameters from bootloader:` note |
+|`buddyinfo`   | Linux-style buddy-allocator free-block counts; macOS is not a buddy allocator, so the free page count is decomposed into buddy orders (maximally coalesced) — one `Node 0, zone Normal` line |
 |`byname/`     | Directory of symbolic links, one per process, named by command name |
 |`cmdline`     | Kernel boot command line (macOS boot-args / `kern.bootargs`; Linux's root `/proc/cmdline`) |
 |`cpuinfo`     | Linux-style CPU information (text)                                   |
@@ -358,6 +359,17 @@ no such blob — its only boot configuration is the boot-args the boot loader
 macOS the kernel parameters come from the boot loader, repeated in the
 `# Parameters from bootloader:` form. Read in-kernel with the same `procfsd`
 sysctl-bridge fallback as `/proc/cmdline`; empty when no boot-args are set.
+
+`buddyinfo` is Linux's buddy-allocator free-block report (`/proc/buddyinfo`):
+one line per node and zone giving the number of free blocks of each order
+(`2^order` pages), orders 0 through `MAX_ORDER-1`. macOS is not a buddy allocator
+and exposes no per-order free lists, so there is no real fragmentation data.
+Instead the free page count (`host_statistics64`'s `free_count`, from the daemon
+via the same request as `vmstat`) is decomposed greedily into buddy orders,
+largest first — a valid buddyinfo whose blocks account for exactly the free pages
+(`Σ count[order] × 2^order = free_pages`), i.e. free memory presented as maximally
+coalesced. Apple Silicon is single-node UMA, so a single `Node 0, zone Normal`
+line; all-zero without a connected daemon.
 
 ### The `procfsd` daemon
 

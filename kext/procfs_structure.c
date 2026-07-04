@@ -168,6 +168,10 @@ procfs_structure_init(void)
         pfssnode_t *bootconfig = add_node(root_node, "bootconfig",
                         PFSbootconfig, next_node_id++, 0, 0, NULL, procfs_dobootconfig);
 
+        // Linux-style /proc/buddyinfo (free pages decomposed into buddy orders).
+        pfssnode_t *buddyinfo = add_node(root_node, "buddyinfo",
+                        PFSbuddyinfo, next_node_id++, 0, 0, NULL, procfs_dobuddyinfo);
+
         // Linux-style kernel boot command line (macOS boot-args / kern.bootargs).
         pfssnode_t *kcmdline = add_node(root_node, "cmdline",
                         PFSkcmdline, next_node_id++, 0, 0, NULL, procfs_dokcmdline);

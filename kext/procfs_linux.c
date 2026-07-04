@@ -856,6 +856,51 @@ procfs_dovmstat(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/buddyinfo - Linux buddy-allocator free-block counts, one line per node
+ * and zone: the number of free blocks of each order (2^order pages), orders 0
+ * through MAX_ORDER-1. macOS is not a buddy allocator and exposes no per-order
+ * free lists, so there is no real fragmentation data. Instead the free page
+ * count (host_statistics64's free_count, from the daemon via PROCFS_REQ_VMSTAT)
+ * is decomposed greedily into buddy orders, largest first, which yields a valid
+ * buddyinfo whose blocks account for exactly the free pages - i.e. free memory
+ * presented as maximally coalesced. Apple Silicon is single-node UMA, so one
+ * "Node 0, zone Normal" line. Zeros without a connected daemon.
+ */
+#define PROCFS_BUDDY_ORDERS 11          /* Linux MAX_ORDER: orders 0..10 */
+
+int
+procfs_dobuddyinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    vm_statistics64_data_t vm;
+    bzero(&vm, sizeof(vm));
+    uint32_t got = 0;
+    (void)procfs_ctl_request(PROCFS_REQ_VMSTAT, 0, 0, &vm, sizeof(vm), &got);
+
+    uint64_t remaining = (uint64_t)vm.free_count;
+    uint64_t count[PROCFS_BUDDY_ORDERS];
+    for (int order = PROCFS_BUDDY_ORDERS - 1; order >= 0; order--) {
+        uint64_t blk = (uint64_t)1 << order;
+        count[order] = remaining / blk;
+        remaining   %= blk;
+    }
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 256, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+    sbuf_printf(&sb, "Node 0, zone %8s ", "Normal");
+    for (int order = 0; order < PROCFS_BUDDY_ORDERS; order++) {
+        sbuf_printf(&sb, "%6llu ", (unsigned long long)count[order]);
+    }
+    sbuf_printf(&sb, "\n");
+
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * Linux-compatible /proc/meminfo, modelled on FreeBSD's linprocfs_domeminfo()
  * (sys/compat/linux/linprocfs/linprocfs.c) - same field set and "%9lu kB"
  * layout, and the same "all memory that isn't wired down is free" estimate

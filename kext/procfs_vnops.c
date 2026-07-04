@@ -596,6 +596,7 @@ procfs_vnop_readdir(struct vnop_readdir_args *ap)
             case PFSallocinfo:      /* FALLTHROUGH */
             case PFSapm:            /* FALLTHROUGH */
             case PFSbootconfig:     /* FALLTHROUGH */
+            case PFSbuddyinfo:      /* FALLTHROUGH */
             case PFSkcmdline:
                 type = DT_REG;
                 break;
@@ -940,7 +941,7 @@ procfs_vnop_getattr(struct vnop_getattr_args *ap)
      && node_type != PFSdiskstats && node_type != PFSdevices
      && node_type != PFSnetdev && node_type != PFSallocinfo
      && node_type != PFSapm && node_type != PFSbootconfig
-     && node_type != PFSkcmdline) {
+     && node_type != PFSbuddyinfo && node_type != PFSkcmdline) {
         // Get the process pid and proc_t for the target vnode.
         // Returns ENOENT if the process does not exist. For the
         // root vnode, p is zero and pid is PRNODE_NO_PID, but the
@@ -1024,6 +1025,7 @@ procfs_vnop_getattr(struct vnop_getattr_args *ap)
     case PFSallocinfo:      /* FALLTHROUGH */
     case PFSapm:            /* FALLTHROUGH */
     case PFSbootconfig:     /* FALLTHROUGH */
+    case PFSbuddyinfo:      /* FALLTHROUGH */
     case PFSkcmdline:
         VATTR_RETURN(vap, va_mode, READ_EXECUTE_ALL & modemask);
         break;
