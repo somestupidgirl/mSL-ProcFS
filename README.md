@@ -321,7 +321,10 @@ the custom handlers assume the sysctl lock is held and panic — so the daemon i
 the path to full coverage. Because every sysctl vnode shares one structure node,
 `..` traversal is resolved specially: from a nested `/proc/sys` directory it walks
 back to the enclosing sysctl oid (and from `/proc/sys` itself to the `/proc`
-root), so relative paths through the tree behave normally.
+root), so relative paths through the tree behave normally. As a Linux-compat
+convenience, `/proc/sys/kernel` is a lookup alias for the macOS `kern` MIB node
+(Linux groups these sysctls under `kernel`; macOS calls the node `kern`), so
+`/proc/sys/kernel/ostype` and friends resolve to the same `kern.*` oids.
 
 `extensions` lists the loaded kernel extensions, macOS's answer to the module
 list, in a `kextstat`-style format (load index, reference count, load address,
@@ -515,7 +518,7 @@ behaviour.
 makes procfs report a Linux *identity* instead of Darwin. `0` = None (native
 Darwin, the default); `1..N` select a preset Linux release. When set, `/proc/version`
 becomes a Linux banner, `/proc/execdomains` reads `0-0  Linux  [kernel]`, and the
-`/proc/sys/kernel/{ostype,osrelease,version}` mirror reports `Linux` / the release
+`/proc/sys/kern/{ostype,osrelease,version}` mirror reports `Linux` / the release
 / the banner:
 
     $ sudo sysctl -w procfs.linux_version=2
@@ -523,6 +526,12 @@ becomes a Linux banner, `/proc/execdomains` reads `0-0  Linux  [kernel]`, and th
     Linux version 6.6.0 (builder@linux-build-env) (gcc version 10.3.0 (Ubuntu 10.3.0-1ubuntu1)) #1 SMP PREEMPT_DYNAMIC Sat Dec 14 12:00:00 UTC 2024
     $ cat /proc/sys/kernel/ostype
     Linux
+
+The `/proc/sys` tree mirrors macOS's real sysctl MIB, whose top node is `kern`,
+but Linux groups these under `kernel`, so `/proc/sys/kernel` is provided as a
+lookup alias for `/proc/sys/kern` — Linux paths like `/proc/sys/kernel/ostype`
+resolve to the same `kern.*` oids (the alias is always available, independent of
+the spoof). `ls /proc/sys` still lists the real `kern` node.
 
 The presets (`6.12.0`, `6.6.0`, `6.1.0`, `5.15.0`, `5.10.0`) live in
 `procfs_linux_versions[]` in the kext and must stay in sync with the menu-bar app's

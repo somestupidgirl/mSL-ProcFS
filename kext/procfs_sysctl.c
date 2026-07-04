@@ -71,6 +71,19 @@ procfs_sysctl_is_node(uint64_t objectid)
 boolean_t
 procfs_sysctl_find(uint64_t dir_objectid, const char *name, uint64_t *out_objectid)
 {
+    /*
+     * Linux-compatibility alias: Linux groups these sysctls under /proc/sys/kernel
+     * while macOS names the top MIB node "kern". At the /proc/sys root (objectid 0)
+     * resolve "kernel" to the "kern" node so Linux paths like
+     * /proc/sys/kernel/ostype work. macOS has no real "kernel" top-level node, so
+     * this shadows nothing; it resolves to the same oid as "kern", so reads (and
+     * the version-spoof interception, which derives the MIB name from the oid)
+     * behave identically to the /proc/sys/kern path.
+     */
+    if (dir_objectid == 0 && strcmp(name, "kernel") == 0) {
+        name = "kern";
+    }
+
     struct sysctl_oid_list *list = procfs_sysctl_children(dir_objectid);
     if (list == NULL) {
         return FALSE;

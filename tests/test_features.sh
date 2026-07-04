@@ -134,6 +134,9 @@ case "$v" in Darwin|Linux) ok "sys/kern/ostype = $v";; *) bad "sys/kern/ostype =
 # Linux-version-spoof oid should exist while the kext is loaded
 sv=$(sysctl -n procfs.linux_version 2>/dev/null)
 [ -n "$sv" ] && ok "procfs.linux_version oid present (= $sv)" || note "procfs.linux_version oid absent (kext not loaded?)"
+# /proc/sys/kernel is a Linux-compat lookup alias for the macOS kern.* node
+ka=$(cat "$PROC/sys/kernel/ostype" 2>/dev/null)
+case "$ka" in Darwin|Linux) ok "sys/kernel/ostype alias = $ka";; *) bad "sys/kernel/ostype alias = '$ka'";; esac
 
 hdr "Per-process: identity (binary int32)"
 tdir "$P" "process dir readdir"
