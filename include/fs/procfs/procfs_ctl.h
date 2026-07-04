@@ -39,6 +39,9 @@ enum {
     PROCFS_REQ_FDLIST     = 10, /* pid; payload: struct proc_fdinfo[] (PROC_PIDLISTFDS) */
     PROCFS_REQ_FDINFO     = 11, /* pid + arg=fd; payload: struct vnode_fdinfowithpath */
     PROCFS_REQ_FDSOCKET   = 12, /* pid + arg=fd; payload: struct socket_fdinfo */
+    PROCFS_REQ_DEVICES    = 13, /* arg = byte offset; same chunked transfer as
+                                 * PROCFS_REQ_MODULES, Linux /proc/devices format
+                                 * (char/block major listing derived from /dev). */
 };
 
 /* kext -> daemon */

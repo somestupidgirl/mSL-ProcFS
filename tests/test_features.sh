@@ -79,7 +79,7 @@ tfile "$PROC/filesystems"     "filesystems"
 tfile "$PROC/cmdline"         "cmdline (kernel boot args)"
 
 hdr "Root: daemon-backed listings"
-for n in extensions modules; do
+for n in extensions modules devices; do
     if out=$(cat "$PROC/$n" 2>/dev/null) && [ -n "$out" ]; then ok "$n: $(printf '%s' "$out" | wc -l | tr -d ' ') lines"
     elif [ "$daemon" = no ]; then note "$n empty (procfsd not running)"; else bad "$n empty"; fi
 done

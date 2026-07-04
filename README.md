@@ -32,6 +32,7 @@ Linux-compatible files and helpers:
 |`cmdline`     | Kernel boot command line (macOS boot-args / `kern.bootargs`; Linux's root `/proc/cmdline`) |
 |`cpuinfo`     | Linux-style CPU information (text)                                   |
 |`curproc/`     | Symbolic link to the calling process's directory (BSD name)         |
+|`devices`     | Linux-style char/block device major-number listing (driver families reconstructed from `/dev` by the `procfsd` daemon) |
 |`diskstats`   | Linux-style block-device I/O statistics (per whole disk, 14-field format; from IOKit `IOBlockStorageDriver`) |
 |`extensions`  | macOS-style list of loaded kernel extensions (kextstat-like: index, refs, address, size, name/version; via the `procfsd` daemon) |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |

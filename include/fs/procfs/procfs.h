@@ -95,6 +95,7 @@ typedef enum {
     PFSextensions,  /* macOS-style loaded kernel-extension listing (root) */
     PFSmodules,     /* Linux-style loaded kernel-module listing (root) */
     PFSdiskstats,   /* Linux-style block-device I/O statistics (root) */
+    PFSdevices,     /* Linux-style char/block device major listing (root) */
     PFSkcmdline,    /* Linux-style kernel boot command line (root /proc/cmdline) */
 } pfstype;
 
@@ -364,7 +365,7 @@ procfs_is_directory_type(pfstype type)
         && type != PFSswaps && type != PFSfilesystems
         && type != PFSsysctl && type != PFSextensions
         && type != PFSmodules && type != PFSdiskstats
-        && type != PFSkcmdline;
+        && type != PFSdevices && type != PFSkcmdline;
 }
 
 /* Gets the pid_t for the process corresponding to a pfsnode_t. */
@@ -494,6 +495,7 @@ extern int           procfs_dokextlist(uint32_t type, uio_t uio);
 extern int           procfs_doextensions(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int           procfs_domodules(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int           procfs_dodiskstats(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int           procfs_dodevices(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int           procfs_dokcmdline(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);

@@ -1995,6 +1995,33 @@ procfs_domodules(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/devices - the Linux char/block device major-number listing. macOS keeps
+ * no named driver registry (cdevsw/bdevsw carry only function pointers), so the
+ * procfsd daemon reconstructs the mapping from /dev - each node's rdev gives its
+ * type and major, its name gives the driver family - and streams the formatted
+ * text back over the same chunked blob transfer used by /proc/modules.
+ */
+int
+procfs_dodevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_DEVICES, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/cmdline - the kernel boot command line (Linux's root /proc/cmdline,
  * distinct from the per-process /proc/<pid>/cmdline). On macOS this is the
  * boot-args string (sysctl kern.bootargs). Read in-kernel where permitted,

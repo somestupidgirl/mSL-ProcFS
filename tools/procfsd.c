@@ -25,7 +25,9 @@
 #include <sys/kern_control.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/mount.h>
+#include <dirent.h>
 #include <libproc.h>
 #include <sys/proc_info.h>
 #include <sys/sysctl.h>
@@ -210,6 +212,8 @@ static char  *g_ext_blob = NULL;   /* macOS/kextstat format (/proc/extensions) *
 static size_t g_ext_blob_len = 0;
 static char  *g_mod_blob = NULL;   /* Linux format (/proc/modules) */
 static size_t g_mod_blob_len = 0;
+static char  *g_dev_blob = NULL;   /* Linux format (/proc/devices) */
+static size_t g_dev_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -326,6 +330,145 @@ build_blob(int linux_fmt, char **blobp, size_t *lenp)
                 fprintf(f, "%5lld %4lld 0x%-16llx 0x%-8llx 0x%-8llx %s (%s)\n",
                         r->tag, r->refs, r->addr, r->size, r->wired,
                         r->name, r->vers);
+            }
+        }
+        fclose(f);
+        *blobp = buf;
+        *lenp = sz;
+    }
+    free(rows);
+}
+
+/*
+ * /proc/devices support. macOS has no named driver registry, so the char/block
+ * major->name mapping is reconstructed from /dev: each device node's rdev gives
+ * its type (char/block) and major number, and its name gives the driver family
+ * (the name truncated at its first digit, so disk0/disk0s1 -> "disk"). One row
+ * per major is kept, preferring the shortest family name.
+ */
+struct devrow {
+    int  major;
+    int  is_block;
+    char name[64];
+};
+
+/* Truncate `in` at its first digit to get the driver-family name (disk0s1 ->
+ * "disk", ttys003 -> "ttys", null -> "null"). Names starting with a digit keep
+ * the whole name. */
+static void
+dev_family(const char *in, char *out, size_t cap)
+{
+    size_t i = 0;
+    while (in[i] != '\0' && i + 1 < cap && !(in[i] >= '0' && in[i] <= '9')) {
+        out[i] = in[i];
+        i++;
+    }
+    out[i] = '\0';
+    if (i == 0) {
+        strlcpy(out, in, cap);      /* name began with a digit */
+        return;
+    }
+    /* Trim a trailing instance separator left by the digit cut (aes_0 -> "aes",
+     * apfs-raw-device.0 -> "apfs-raw-device"). */
+    while (i > 1 && (out[i - 1] == '.' || out[i - 1] == '_' || out[i - 1] == '-')) {
+        out[--i] = '\0';
+    }
+}
+
+/* Insert (major,is_block) keeping one row per (type,major), preferring the
+ * shortest family name. Linear scan - the device count is small. */
+static void
+dev_insert(struct devrow **rowsp, size_t *np, size_t *capp,
+    int major_, int is_block, const char *fam)
+{
+    for (size_t i = 0; i < *np; i++) {
+        struct devrow *r = &(*rowsp)[i];
+        if (r->major == major_ && r->is_block == is_block) {
+            if (strlen(fam) < strlen(r->name)) {
+                strlcpy(r->name, fam, sizeof(r->name));
+            }
+            return;
+        }
+    }
+    if (*np == *capp) {
+        size_t ncap = (*capp == 0) ? 32 : *capp * 2;
+        struct devrow *nr = realloc(*rowsp, ncap * sizeof(*nr));
+        if (nr == NULL) {
+            return;
+        }
+        *rowsp = nr;
+        *capp = ncap;
+    }
+    struct devrow *r = &(*rowsp)[(*np)++];
+    r->major = major_;
+    r->is_block = is_block;
+    strlcpy(r->name, fam, sizeof(r->name));
+}
+
+static int
+devrow_cmp(const void *a, const void *b)
+{
+    int ma = ((const struct devrow *)a)->major;
+    int mb = ((const struct devrow *)b)->major;
+    return (ma > mb) - (ma < mb);
+}
+
+/* (Re)build the /proc/devices listing into *blobp. */
+static void
+build_devices_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    DIR *dir = opendir("/dev");
+    if (dir == NULL) {
+        return;
+    }
+
+    struct devrow *rows = NULL;
+    size_t nrows = 0, cap = 0;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL) {
+        if (de->d_name[0] == '.') {
+            continue;
+        }
+        char path[1100];
+        snprintf(path, sizeof(path), "/dev/%s", de->d_name);
+        struct stat st;
+        if (lstat(path, &st) != 0) {
+            continue;
+        }
+        int is_block;
+        if (S_ISCHR(st.st_mode)) {
+            is_block = 0;
+        } else if (S_ISBLK(st.st_mode)) {
+            is_block = 1;
+        } else {
+            continue;
+        }
+        char fam[64];
+        dev_family(de->d_name, fam, sizeof(fam));
+        dev_insert(&rows, &nrows, &cap, major(st.st_rdev), is_block, fam);
+    }
+    closedir(dir);
+
+    qsort(rows, nrows, sizeof(*rows), devrow_cmp);
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f != NULL) {
+        fprintf(f, "Character devices:\n");
+        for (size_t i = 0; i < nrows; i++) {
+            if (!rows[i].is_block) {
+                fprintf(f, "%3d %s\n", rows[i].major, rows[i].name);
+            }
+        }
+        fprintf(f, "\nBlock devices:\n");
+        for (size_t i = 0; i < nrows; i++) {
+            if (rows[i].is_block) {
+                fprintf(f, "%3d %s\n", rows[i].major, rows[i].name);
             }
         }
         fclose(f);
@@ -587,6 +730,14 @@ main(int argc, char **argv)
                 build_blob(1, &g_mod_blob, &g_mod_blob_len);
             }
             blob_slice(g_mod_blob, g_mod_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_DEVICES: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_devices_blob(&g_dev_blob, &g_dev_blob_len);
+            }
+            blob_slice(g_dev_blob, g_dev_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_REGS:

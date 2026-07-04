@@ -152,6 +152,10 @@ procfs_structure_init(void)
         pfssnode_t *diskstats = add_node(root_node, "diskstats",
                         PFSdiskstats, next_node_id++, 0, 0, NULL, procfs_dodiskstats);
 
+        // Linux-style char/block device major listing (derived from /dev by procfsd).
+        pfssnode_t *devices = add_node(root_node, "devices",
+                        PFSdevices, next_node_id++, 0, 0, NULL, procfs_dodevices);
+
         // Linux-style kernel boot command line (macOS boot-args / kern.bootargs).
         pfssnode_t *kcmdline = add_node(root_node, "cmdline",
                         PFSkcmdline, next_node_id++, 0, 0, NULL, procfs_dokcmdline);
