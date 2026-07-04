@@ -26,9 +26,9 @@ CFLAGS?=    -target $(TARGET_TRIPLE)            \
             -fno-stack-protector                \
             $(ARCHFLAGS)                        \
             -Wall -Wextra -Wno-unused-function  \
-            -I../xnu/bsd                        \
-            -I../xnu/libkern                    \
-            -I../xnu/osfmk                      \
+            -I../include/xnu/bsd                \
+            -I../include/xnu/libkern            \
+            -I../include/xnu/osfmk              \
             -I../lib                            \
             -isystem $(KERNEL_HEADERS)          \
             -isystem $(KERNEL_HEADERS)/arm64    \

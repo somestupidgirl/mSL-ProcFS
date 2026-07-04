@@ -71,7 +71,10 @@ CFLAGS+= -DCONFIG_PERSONAS \
 # xnu/bsd is needed on all arches for headers not in the SDK (sys/exec.h etc.)
 # xnu/osfmk is only needed on ARM64 (x86_64 SDK has complete lock definitions)
 ifeq ($(findstring arm64,$(TARGET_TRIPLE)),arm64)
-XNU_INCLUDES := -I../xnu/bsd -I../xnu/libkern -I../xnu/osfmk -I../xnu/pexpert
+XNU_INCLUDES := -I../include/xnu/bsd \
+                -I../include/xnu/libkern \
+                -I../include/xnu/osfmk \
+                -I../include/xnu/pexpert
 ARCH_SYS_INCLUDES := -isystem $(KERNEL_HEADERS)/arm64 -isystem $(KERNEL_HEADERS)/arm
 # arm64/proc_reg.h picks its cache-line / MMU constants from a CPU-family macro
 # and #errors ("processor not supported") if none is set. The XNU build supplies
@@ -80,7 +83,10 @@ ARCH_SYS_INCLUDES := -isystem $(KERNEL_HEADERS)/arm64 -isystem $(KERNEL_HEADERS)
 # none of them directly, so this only satisfies the header's #if chain.
 CFLAGS += -DAPPLEFIRESTORM
 else
-XNU_INCLUDES := -I../xnu/bsd -I../xnu/libkern -I../xnu/osfmk -I../xnu/pexpert
+XNU_INCLUDES := -I../include/xnu/bsd \
+                -I../include/xnu/libkern \
+                -I../include/xnu/osfmk \
+                -I../include/xnu/pexpert
 ARCH_SYS_INCLUDES :=
 endif
 

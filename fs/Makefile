@@ -22,7 +22,7 @@ CFLAGS+= -target $(TARGET_TRIPLE) \
          -bundle \
          -I../lib \
          -I../include \
-         -idirafter ../xnu/bsd
+         -idirafter ../include/xnu/bsd
 
 CFLAGS+= -Wall -Wextra -Wno-vla -Wno-nullability-completeness
 

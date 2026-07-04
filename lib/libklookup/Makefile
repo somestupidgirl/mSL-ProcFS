@@ -32,17 +32,17 @@ CFLAGS?=    -target $(TARGET_TRIPLE)            \
 
 ifeq ($(findstring arm64,$(TARGET_TRIPLE)),arm64)
 CFLAGS+=    -I../libklookup                     \
-            -I../../xnu/bsd                     \
-            -I../../xnu/libkern                 \
-            -I../../xnu/osfmk                   \
-            -I../../xnu/pexpert                 \
+            -I../../include/xnu/bsd             \
+            -I../../include/xnu/libkern         \
+            -I../../include/xnu/osfmk           \
+            -I../../include/xnu/pexpert         \
             -isystem $(KERNEL_HEADERS)/arm64    \
             -isystem $(KERNEL_HEADERS)/arm
 else
-CFLAGS+=    -I../../xnu/bsd                     \
-            -I../../xnu/libkern                 \
-            -I../../xnu/osfmk                   \
-            -I../../xnu/pexpert
+CFLAGS+=    -I../../include/xnu/bsd             \
+            -I../../include/xnu/libkern         \
+            -I../../include/xnu/osfmk           \
+            -I../../include/xnu/pexpert
 endif
 
 CFLAGS+=    -I../../lib                         \
