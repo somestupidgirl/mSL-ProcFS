@@ -26,6 +26,7 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/resource.h>
 #include <sys/mount.h>
 #include <dirent.h>
 #include <libproc.h>
@@ -784,6 +785,20 @@ main(int argc, char **argv)
                 build_devices_blob(&g_dev_blob, &g_dev_blob_len);
             }
             blob_slice(g_dev_blob, g_dev_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_RUSAGE: {
+            /* Actual disk I/O bytes for the process (Linux /proc/<pid>/io
+             * read_bytes / write_bytes). macOS has no read()/write() char or
+             * syscall counters, so only these two are reported. */
+            rusage_info_current ri;
+            if (proc_pid_rusage(req->pid, RUSAGE_INFO_CURRENT, (rusage_info_t *)&ri) == 0) {
+                uint64_t io[2] = { ri.ri_diskio_bytesread, ri.ri_diskio_byteswritten };
+                memcpy(payload, io, sizeof(io));
+                resp->len = sizeof(io);
+            } else {
+                resp->error = errno ? errno : ESRCH;
+            }
             break;
         }
         case PROCFS_REQ_REGS:

@@ -245,6 +245,7 @@ procfs_structure_init(void)
         add_file(one_proc_dir, "comm", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_docomm);
         add_file(one_proc_dir, "stat", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doprocstat);
         add_file(one_proc_dir, "statm", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dostatm);
+        add_file(one_proc_dir, "io", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doio);
         add_file(one_proc_dir, "environ", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doenviron);
 
         // Native Mach register dumps for the process's representative thread.

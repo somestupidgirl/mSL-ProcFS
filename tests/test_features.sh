@@ -106,6 +106,7 @@ tfile "$P/comm"     "comm"
 tfile "$P/cmdline"  "cmdline (argv)"
 tfile "$P/stat"     "stat"
 tfile "$P/statm"    "statm"
+tfile "$P/io"       "io (disk read/write bytes)"
 tfile "$P/status"   "status"
 tfile "$P/limit"    "limit"
 # environ may legitimately be empty for some procs; accept readable

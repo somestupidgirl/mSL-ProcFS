@@ -77,6 +77,7 @@ Each directory named for a process id represents one process on the system. By d
 |`regs`     | Representative thread's general registers, native Mach `arm_thread_state64_t` (x86_64: `x86_thread_state64_t`) — served by the `procfsd` daemon | binary |
 |`root/`     | Symlink to the root directory | symlink |
 |`sid`      | Session id                       | `pid_t` (binary `int32`)         |
+|`io`       | Linux per-process I/O accounting; `read_bytes`/`write_bytes` are real disk I/O (via the `procfsd` daemon's `proc_pid_rusage`), the `rchar`/`wchar`/`syscr`/`syscw`/`cancelled_write_bytes` fields are 0 (untracked on macOS) | text |
 |`smaps`    | Linux `/proc/<pid>/smaps`: per-region memory detail (`Rss`/`Pss`/dirty/`Swap`/`VmFlags`) | text |
 |`smaps_rollup` | Linux `/proc/<pid>/smaps_rollup`: the `smaps` fields summed across all mappings (one `[rollup]` block) | text |
 |`stat`     | Linux single-line process stat (52 space-separated fields) | text |

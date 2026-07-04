@@ -42,6 +42,8 @@ enum {
     PROCFS_REQ_DEVICES    = 13, /* arg = byte offset; same chunked transfer as
                                  * PROCFS_REQ_MODULES, Linux /proc/devices format
                                  * (char/block major listing derived from /dev). */
+    PROCFS_REQ_RUSAGE     = 14, /* pid; payload: uint64_t[2] = { disk read_bytes,
+                                 * disk write_bytes } from proc_pid_rusage */
 };
 
 /* kext -> daemon */

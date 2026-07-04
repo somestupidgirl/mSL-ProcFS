@@ -1787,6 +1787,48 @@ procfs_dostatm(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/<pid>/io - Linux per-process I/O accounting. macOS tracks the process's
+ * actual disk I/O bytes (proc_pid_rusage's ri_diskio_*, served by the daemon),
+ * which map to read_bytes / write_bytes. It has no read()/write() character
+ * counts or syscall tallies, so rchar/wchar/syscr/syscw and cancelled_write_bytes
+ * are reported as 0. Owner-only, like the other permission-sensitive pid nodes.
+ */
+int
+procfs_doio(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+{
+    proc_t p = proc_find(pnp->node_id.nodeid_pid);
+    if (p == PROC_NULL) {
+        return ESRCH;
+    }
+    int error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
+    proc_rele(p);
+    if (error != 0) {
+        return error;
+    }
+
+    uint64_t read_bytes = 0, write_bytes = 0;
+    uint64_t io[2] = { 0, 0 };
+    uint32_t got = 0;
+    if (procfs_ctl_request(PROCFS_REQ_RUSAGE, pnp->node_id.nodeid_pid, 0,
+                           io, sizeof(io), &got) == 0 && got == sizeof(io)) {
+        read_bytes  = io[0];
+        write_bytes = io[1];
+    }   /* daemon absent/failed -> zeros (best-effort, like the other daemon nodes) */
+
+    char buf[256];
+    int len = snprintf(buf, sizeof(buf),
+        "rchar: 0\n"
+        "wchar: 0\n"
+        "syscr: 0\n"
+        "syscw: 0\n"
+        "read_bytes: %llu\n"
+        "write_bytes: %llu\n"
+        "cancelled_write_bytes: 0\n",
+        (unsigned long long)read_bytes, (unsigned long long)write_bytes);
+    return procfs_copy_data(buf, len, uio);
+}
+
+/*
  * /proc/<pid>/stat - the process's single-line stat (52 space-separated fields,
  * same layout as the per-thread stat). CPU time comes from the daemon's
  * proc_taskinfo; fields with no macOS source are 0/-1 (priority 20, policy 0).

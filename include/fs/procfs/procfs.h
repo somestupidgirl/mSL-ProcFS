@@ -536,6 +536,7 @@ extern int procfs_doprocstatus_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ct
 extern int procfs_docomm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dostatm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doprocstat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doio(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doenviron(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_douptime(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doswaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
