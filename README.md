@@ -47,6 +47,7 @@ Linux-compatible files and helpers:
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`fs/`         | Filesystem-parameters directory; currently `fs/nfs/exports`, the NFS export table (macOS `/etc/exports`, read by the `procfsd` daemon) |
 |`interrupts`  | Linux-style interrupt table (IRQ → controller → device); counts are 0 (macOS exposes no per-CPU interrupt counts), but the IRQ topology from IOKit is real (via the `procfsd` daemon) |
+|`irq/`        | IRQ-to-CPU affinity directory; `default_smp_affinity`/`_list` (all online CPUs). macOS routes IRQs via the AIC with no user-settable per-IRQ affinity, so per-IRQ subdirectories are omitted |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
 |`modules`     | Linux-style `/proc/modules` view of the same loaded kexts (`name size refcount deps state address`) |
@@ -429,6 +430,15 @@ has them), so the count columns are 0. The IRQ *topology*, though, is real: the
 IRQ → controller → device rows (e.g. `cpu0`, `spi2`, `i2c1`, `pci-bridge0`),
 sorted by IRQ. Streamed over the same chunked transfer as `/proc/bus/pci/devices`;
 empty without a connected daemon.
+
+`irq/` is Linux's IRQ-to-CPU affinity tree. On Linux each `/proc/irq/<N>/` holds
+an `smp_affinity` bitmask naming the CPUs that may service IRQ `<N>`, plus a
+`default_smp_affinity` for new IRQs. macOS routes interrupts through the AIC with
+no user-settable or per-IRQ-queryable CPU affinity — every IRQ may run on any
+CPU — so only the default masks are exposed and the per-IRQ subdirectories are
+omitted. The directory holds `default_smp_affinity` (hex cpumask of all online
+CPUs, e.g. `ff` for 8 CPUs, comma-grouped in 32-bit words for more) and
+`default_smp_affinity_list` (the CPU range, e.g. `0-7`). Fully in-kernel.
 
 `fs/` is Linux's directory of filesystem parameters; the classic entry is
 `fs/nfs/exports`, the NFS export table. Linux shows the kernel NFS server's

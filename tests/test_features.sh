@@ -105,6 +105,11 @@ tdir "$PROC/bus/pci" "bus/pci dir"
 if out=$(cat "$PROC/bus/pci/devices" 2>/dev/null) && [ -n "$out" ]; then ok "bus/pci/devices: $(printf '%s' "$out" | wc -l | tr -d ' ') devices"
 elif [ "$daemon" = no ]; then note "bus/pci/devices empty (procfsd not running)"; else note "bus/pci/devices empty"; fi
 
+hdr "Root: /proc/irq (SMP affinity)"
+tdir  "$PROC/irq"                            "irq dir"
+tfile "$PROC/irq/default_smp_affinity"       "irq/default_smp_affinity"
+tfile "$PROC/irq/default_smp_affinity_list"  "irq/default_smp_affinity_list"
+
 hdr "Root: /proc/fs (NFS exports)"
 tdir "$PROC/fs"     "fs dir"
 tdir "$PROC/fs/nfs" "fs/nfs dir"

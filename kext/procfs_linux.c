@@ -2298,6 +2298,56 @@ procfs_dointerrupts(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
 }
 
 /*
+ * /proc/irq/ - Linux's IRQ-to-CPU affinity masks. On Linux each /proc/irq/<N>/
+ * holds an smp_affinity bitmask naming the CPUs that may service IRQ <N>, plus a
+ * default_smp_affinity for new IRQs. macOS routes interrupts through the AIC with
+ * no user-settable or per-IRQ-queryable CPU affinity - every IRQ may run on any
+ * CPU - so only the default masks are exposed (all online CPUs), and the per-IRQ
+ * subdirectories are omitted. These two nodes are default_smp_affinity (hex
+ * cpumask) and default_smp_affinity_list (CPU range).
+ */
+static uint32_t
+procfs_online_cpus(void)
+{
+    uint32_t ncpu = 1;
+    size_t   sz = sizeof(ncpu);
+    if (sysctlbyname("hw.logicalcpu", &ncpu, &sz, NULL, 0) != 0 || ncpu < 1) {
+        ncpu = 1;
+    }
+    return (ncpu > 64) ? 64 : ncpu;
+}
+
+int
+procfs_doirq_affinity(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    uint32_t ncpu = procfs_online_cpus();
+
+    /* cpumask in hex, comma-separated 32-bit groups (high group first), all
+     * bits set for the online CPUs. */
+    char buf[64];
+    int  len;
+    if (ncpu <= 32) {
+        uint32_t mask = (ncpu == 32) ? 0xffffffffu : ((1u << ncpu) - 1u);
+        len = snprintf(buf, sizeof(buf), "%x\n", mask);
+    } else {
+        uint32_t hi = (ncpu == 64) ? 0xffffffffu : ((1u << (ncpu - 32)) - 1u);
+        len = snprintf(buf, sizeof(buf), "%x,ffffffff\n", hi);
+    }
+    return procfs_copy_data(buf, len, uio);
+}
+
+int
+procfs_doirq_affinity_list(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    uint32_t ncpu = procfs_online_cpus();
+
+    char buf[32];
+    int  len = (ncpu <= 1) ? snprintf(buf, sizeof(buf), "0\n")
+                           : snprintf(buf, sizeof(buf), "0-%u\n", ncpu - 1);
+    return procfs_copy_data(buf, len, uio);
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon

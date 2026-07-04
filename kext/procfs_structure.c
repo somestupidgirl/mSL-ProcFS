@@ -192,6 +192,16 @@ procfs_structure_init(void)
         pfssnode_t *interrupts = add_node(root_node, "interrupts",
                         PFSinterrupts, next_node_id++, 0, 0, NULL, procfs_dointerrupts);
 
+        // Linux-style /proc/irq/ - IRQ-to-CPU affinity. macOS routes interrupts via
+        // the AIC with no user-settable per-IRQ affinity, so only the default masks
+        // (all online CPUs) are exposed; per-IRQ subdirectories are omitted.
+        pfssnode_t *irq_dir = add_directory(root_node, "irq",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *irq_aff = add_node(irq_dir, "default_smp_affinity",
+                        PFSirq, next_node_id++, 0, 0, NULL, procfs_doirq_affinity);
+        pfssnode_t *irq_afl = add_node(irq_dir, "default_smp_affinity_list",
+                        PFSirq, next_node_id++, 0, 0, NULL, procfs_doirq_affinity_list);
+
         // Linux-style /proc/fs/ - filesystem parameters. Currently /proc/fs/nfs/exports,
         // the NFS export table (macOS /etc/exports, read by procfsd).
         pfssnode_t *fs_dir = add_directory(root_node, "fs",
