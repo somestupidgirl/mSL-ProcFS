@@ -46,6 +46,7 @@ Linux-compatible files and helpers:
 |`fb`          | Linux-style framebuffer device list (`<index> <name>`); macOS IOKit framebuffers (`IOFramebuffer`/`IOMobileFramebuffer`) via the `procfsd` daemon |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`fs/`         | Filesystem-parameters directory; currently `fs/nfs/exports`, the NFS export table (macOS `/etc/exports`, read by the `procfsd` daemon) |
+|`interrupts`  | Linux-style interrupt table (IRQ → controller → device); counts are 0 (macOS exposes no per-CPU interrupt counts), but the IRQ topology from IOKit is real (via the `procfsd` daemon) |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
 |`modules`     | Linux-style `/proc/modules` view of the same loaded kexts (`name size refcount deps state address`) |
@@ -418,6 +419,16 @@ macOS drives displays through IOKit framebuffers — `IOFramebuffer` on Intel,
 classes and formats a line per device, using the device's IORegistry name as the
 Linux `fix.id` (e.g. `0 AppleCLCD2`). Streamed over the same chunked transfer as
 `/proc/bus/pci/devices`; empty without a connected daemon.
+
+`interrupts` is the Linux per-CPU interrupt table (`/proc/interrupts`), one line
+per IRQ with the controller and owning device. macOS does not expose per-CPU
+interrupt counts to userspace or a kext (only the private IOReporting framework
+has them), so the count columns are 0. The IRQ *topology*, though, is real: the
+`procfsd` daemon walks the IORegistry for each device's `IOInterruptSpecifiers`
+(the IRQ numbers) and `IOInterruptControllers`, producing genuine
+IRQ → controller → device rows (e.g. `cpu0`, `spi2`, `i2c1`, `pci-bridge0`),
+sorted by IRQ. Streamed over the same chunked transfer as `/proc/bus/pci/devices`;
+empty without a connected daemon.
 
 `fs/` is Linux's directory of filesystem parameters; the classic entry is
 `fs/nfs/exports`, the NFS export table. Linux shows the kernel NFS server's

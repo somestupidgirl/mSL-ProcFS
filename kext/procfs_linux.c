@@ -2269,6 +2269,35 @@ procfs_dofb(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/interrupts - Linux's per-CPU interrupt counts, one line per IRQ with
+ * the controller and owning device. macOS does not expose per-CPU interrupt
+ * counts to userspace or a kext (only private IOReporting has them), so the
+ * counts are reported as 0. The IRQ topology, however, is real: the procfsd
+ * daemon walks the IORegistry for each device's IOInterruptSpecifiers (the IRQ
+ * numbers) and IOInterruptControllers, giving genuine IRQ -> controller ->
+ * device rows. Streamed in chunks like /proc/devices.
+ */
+int
+procfs_dointerrupts(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_INTERRUPTS, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon

@@ -229,6 +229,8 @@ static char  *g_fb_blob = NULL;    /* Linux format (/proc/fb) */
 static size_t g_fb_blob_len = 0;
 static char  *g_nfs_blob = NULL;   /* NFS exports (/proc/fs/nfs/exports) */
 static size_t g_nfs_blob_len = 0;
+static char  *g_intr_blob = NULL;  /* Linux format (/proc/interrupts) */
+static size_t g_intr_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -739,6 +741,136 @@ build_fb_blob(char **blobp, size_t *lenp)
 }
 
 /*
+ * /proc/interrupts support. macOS exposes no per-CPU interrupt counts (only
+ * private IOReporting), so the count columns are 0; the IRQ topology is real,
+ * though - each device in the IORegistry carries IOInterruptSpecifiers (the IRQ
+ * numbers) and IOInterruptControllers. Walk the registry, collect one row per
+ * (irq, controller, device), sort by IRQ, and format the Linux table.
+ */
+struct irqrow {
+    long irq;
+    char ctrl[80];
+    char dev[80];
+};
+
+static int
+irqrow_cmp(const void *a, const void *b)
+{
+    long ia = ((const struct irqrow *)a)->irq;
+    long ib = ((const struct irqrow *)b)->irq;
+    return (ia > ib) - (ia < ib);
+}
+
+static void
+build_interrupts_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    int    ncpu = 1;
+    size_t nlen = sizeof(ncpu);
+    if (sysctlbyname("hw.logicalcpu", &ncpu, &nlen, NULL, 0) != 0 || ncpu < 1) {
+        ncpu = 1;
+    }
+    if (ncpu > 64) {
+        ncpu = 64;
+    }
+
+    struct irqrow *rows = NULL;
+    size_t nrows = 0, cap = 0;
+
+    io_registry_entry_t root = IORegistryGetRootEntry(kIOMainPortDefault);
+    io_iterator_t it = MACH_PORT_NULL;
+    if (root != MACH_PORT_NULL &&
+        IORegistryEntryCreateIterator(root, kIOServicePlane,
+            kIORegistryIterateRecursively, &it) == KERN_SUCCESS) {
+        io_registry_entry_t e;
+        while ((e = IOIteratorNext(it)) != MACH_PORT_NULL) {
+            CFArrayRef specs = IORegistryEntryCreateCFProperty(e,
+                CFSTR("IOInterruptSpecifiers"), kCFAllocatorDefault, 0);
+            if (specs != NULL && CFGetTypeID(specs) == CFArrayGetTypeID()) {
+                CFArrayRef ctrls = IORegistryEntryCreateCFProperty(e,
+                    CFSTR("IOInterruptControllers"), kCFAllocatorDefault, 0);
+                io_name_t name = "";
+                IORegistryEntryGetName(e, name);
+
+                CFIndex n = CFArrayGetCount(specs);
+                for (CFIndex i = 0; i < n; i++) {
+                    CFTypeRef d = CFArrayGetValueAtIndex(specs, i);
+                    long irq = -1;
+                    if (d != NULL && CFGetTypeID(d) == CFDataGetTypeID() &&
+                        CFDataGetLength((CFDataRef)d) >= 4) {
+                        const UInt8 *b = CFDataGetBytePtr((CFDataRef)d);
+                        irq = (long)(uint32_t)(b[0] | (b[1] << 8) |
+                            (b[2] << 16) | ((uint32_t)b[3] << 24));
+                    }
+                    if (irq < 0) {
+                        continue;
+                    }
+                    if (nrows == cap) {
+                        size_t nc = (cap == 0) ? 128 : cap * 2;
+                        struct irqrow *nr = realloc(rows, nc * sizeof(*nr));
+                        if (nr == NULL) {
+                            break;
+                        }
+                        rows = nr;
+                        cap = nc;
+                    }
+                    struct irqrow *r = &rows[nrows++];
+                    r->irq = irq;
+                    r->ctrl[0] = '\0';
+                    if (ctrls != NULL && CFGetTypeID(ctrls) == CFArrayGetTypeID() &&
+                        i < CFArrayGetCount(ctrls)) {
+                        CFTypeRef cs = CFArrayGetValueAtIndex(ctrls, i);
+                        if (cs != NULL && CFGetTypeID(cs) == CFStringGetTypeID()) {
+                            CFStringGetCString((CFStringRef)cs, r->ctrl,
+                                sizeof(r->ctrl), kCFStringEncodingUTF8);
+                        }
+                    }
+                    strlcpy(r->dev, name, sizeof(r->dev));
+                }
+                if (ctrls != NULL) {
+                    CFRelease(ctrls);
+                }
+            }
+            if (specs != NULL) {
+                CFRelease(specs);
+            }
+            IOObjectRelease(e);
+        }
+        IOObjectRelease(it);
+    }
+    if (root != MACH_PORT_NULL) {
+        IOObjectRelease(root);
+    }
+
+    qsort(rows, nrows, sizeof(*rows), irqrow_cmp);
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f != NULL) {
+        fprintf(f, "     ");                        /* pad over the IRQ column */
+        for (int c = 0; c < ncpu; c++) {
+            fprintf(f, "CPU%-8d", c);
+        }
+        fprintf(f, "\n");
+        for (size_t i = 0; i < nrows; i++) {
+            fprintf(f, "%4ld:", rows[i].irq);
+            for (int c = 0; c < ncpu; c++) {
+                fprintf(f, " %10u", 0u);            /* per-CPU count unavailable */
+            }
+            fprintf(f, "  %s  %s\n", rows[i].ctrl, rows[i].dev);
+        }
+        fclose(f);
+        *blobp = buf;
+        *lenp = sz;
+    }
+    free(rows);
+}
+
+/*
  * /proc/fs/nfs/exports support. macOS keeps the NFS export configuration in
  * /etc/exports, which nfsd registers with the kernel, so serve that file's
  * contents. A machine with no NFS server configured has no /etc/exports, which
@@ -1178,6 +1310,14 @@ main(int argc, char **argv)
                 build_nfsexports_blob(&g_nfs_blob, &g_nfs_blob_len);
             }
             blob_slice(g_nfs_blob, g_nfs_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_INTERRUPTS: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_interrupts_blob(&g_intr_blob, &g_intr_blob_len);
+            }
+            blob_slice(g_intr_blob, g_intr_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_RUSAGE: {

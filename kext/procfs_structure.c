@@ -188,6 +188,10 @@ procfs_structure_init(void)
         pfssnode_t *fb = add_node(root_node, "fb",
                         PFSfb, next_node_id++, 0, 0, NULL, procfs_dofb);
 
+        // Linux-style /proc/interrupts (IRQ topology via IOKit, from procfsd).
+        pfssnode_t *interrupts = add_node(root_node, "interrupts",
+                        PFSinterrupts, next_node_id++, 0, 0, NULL, procfs_dointerrupts);
+
         // Linux-style /proc/fs/ - filesystem parameters. Currently /proc/fs/nfs/exports,
         // the NFS export table (macOS /etc/exports, read by procfsd).
         pfssnode_t *fs_dir = add_directory(root_node, "fs",

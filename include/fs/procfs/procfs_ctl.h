@@ -58,6 +58,9 @@ enum {
     PROCFS_REQ_NFSEXPORTS = 19, /* arg = byte offset; same chunked transfer as
                                  * PROCFS_REQ_DEVICES, the NFS export table for
                                  * /proc/fs/nfs/exports (macOS /etc/exports). */
+    PROCFS_REQ_INTERRUPTS = 20, /* arg = byte offset; same chunked transfer as
+                                 * PROCFS_REQ_DEVICES, Linux /proc/interrupts
+                                 * (IRQ topology via IOKit IOInterruptSpecifiers). */
 };
 
 /*

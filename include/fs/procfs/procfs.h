@@ -119,6 +119,7 @@ typedef enum {
     PFSexecdomains, /* Linux-style /proc/execdomains (execution personalities) */
     PFSfb,          /* Linux-style /proc/fb (framebuffer devices) */
     PFSnfsexports,  /* Linux-style /proc/fs/nfs/exports (NFS export table) */
+    PFSinterrupts,  /* Linux-style /proc/interrupts (IRQ topology) */
     PFSkcmdline,    /* Linux-style kernel boot command line (root /proc/cmdline) */
 } pfstype;
 
@@ -464,7 +465,7 @@ procfs_is_directory_type(pfstype type)
         && type != PFSpcidevices && type != PFSdma
         && type != PFSrtc && type != PFSexecdomains
         && type != PFSfb && type != PFSnfsexports
-        && type != PFSkcmdline;
+        && type != PFSinterrupts && type != PFSkcmdline;
 }
 
 /* Gets the pid_t for the process corresponding to a pfsnode_t. */
@@ -650,6 +651,7 @@ extern int procfs_dortc(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doexecdomains(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dofb(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_donfsexports(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dointerrupts(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dokcmdline(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
