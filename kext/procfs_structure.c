@@ -188,6 +188,15 @@ procfs_structure_init(void)
         pfssnode_t *fb = add_node(root_node, "fb",
                         PFSfb, next_node_id++, 0, 0, NULL, procfs_dofb);
 
+        // Linux-style /proc/fs/ - filesystem parameters. Currently /proc/fs/nfs/exports,
+        // the NFS export table (macOS /etc/exports, read by procfsd).
+        pfssnode_t *fs_dir = add_directory(root_node, "fs",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *nfs_dir = add_directory(fs_dir, "nfs",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *nfs_exports = add_node(nfs_dir, "exports",
+                        PFSnfsexports, next_node_id++, 0, 0, NULL, procfs_donfsexports);
+
         // Linux-style /proc/driver/ - driver-specific files grouped here. Currently
         // just /proc/driver/rtc, the same RTC state as /proc/rtc (reuses PFSrtc).
         pfssnode_t *driver_dir = add_directory(root_node, "driver",

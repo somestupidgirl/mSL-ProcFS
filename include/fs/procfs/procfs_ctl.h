@@ -55,6 +55,9 @@ enum {
     PROCFS_REQ_FBDEVICES  = 18, /* arg = byte offset; same chunked transfer as
                                  * PROCFS_REQ_DEVICES, Linux /proc/fb format
                                  * (framebuffers via IOKit IO[Mobile]Framebuffer). */
+    PROCFS_REQ_NFSEXPORTS = 19, /* arg = byte offset; same chunked transfer as
+                                 * PROCFS_REQ_DEVICES, the NFS export table for
+                                 * /proc/fs/nfs/exports (macOS /etc/exports). */
 };
 
 /*

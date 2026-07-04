@@ -105,6 +105,15 @@ tdir "$PROC/bus/pci" "bus/pci dir"
 if out=$(cat "$PROC/bus/pci/devices" 2>/dev/null) && [ -n "$out" ]; then ok "bus/pci/devices: $(printf '%s' "$out" | wc -l | tr -d ' ') devices"
 elif [ "$daemon" = no ]; then note "bus/pci/devices empty (procfsd not running)"; else note "bus/pci/devices empty"; fi
 
+hdr "Root: /proc/fs (NFS exports)"
+tdir "$PROC/fs"     "fs dir"
+tdir "$PROC/fs/nfs" "fs/nfs dir"
+# exports: empty when no /etc/exports (no NFS server) or no daemon
+if e=$(cat "$PROC/fs/nfs/exports" 2>/dev/null); then
+    if [ -n "$e" ]; then ok "fs/nfs/exports: $(printf '%s' "$e" | wc -l | tr -d ' ') lines"
+    else note "fs/nfs/exports empty (no /etc/exports or no daemon)"; fi
+else bad "fs/nfs/exports unreadable"; fi
+
 hdr "Root: symlinks + dirs"
 tlink "$PROC/self"    "self"
 tlink "$PROC/curproc" "curproc"

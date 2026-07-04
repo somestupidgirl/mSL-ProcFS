@@ -45,6 +45,7 @@ Linux-compatible files and helpers:
 |`extensions`  | macOS-style list of loaded kernel extensions (kextstat-like: index, refs, address, size, name/version; via the `procfsd` daemon) |
 |`fb`          | Linux-style framebuffer device list (`<index> <name>`); macOS IOKit framebuffers (`IOFramebuffer`/`IOMobileFramebuffer`) via the `procfsd` daemon |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
+|`fs/`         | Filesystem-parameters directory; currently `fs/nfs/exports`, the NFS export table (macOS `/etc/exports`, read by the `procfsd` daemon) |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
 |`modules`     | Linux-style `/proc/modules` view of the same loaded kexts (`name size refcount deps state address`) |
@@ -417,6 +418,14 @@ macOS drives displays through IOKit framebuffers — `IOFramebuffer` on Intel,
 classes and formats a line per device, using the device's IORegistry name as the
 Linux `fix.id` (e.g. `0 AppleCLCD2`). Streamed over the same chunked transfer as
 `/proc/bus/pci/devices`; empty without a connected daemon.
+
+`fs/` is Linux's directory of filesystem parameters; the classic entry is
+`fs/nfs/exports`, the NFS export table. Linux shows the kernel NFS server's
+active exports there; macOS keeps the export configuration in `/etc/exports`
+(which `nfsd` registers with the kernel), so the `procfsd` daemon serves that
+file's contents. `/proc/fs` and `/proc/fs/nfs` are plain directories; the
+`exports` listing is empty when no NFS server is configured (no `/etc/exports`)
+or when no daemon is connected.
 
 ### The `procfsd` daemon
 

@@ -227,6 +227,8 @@ static char  *g_pci_blob = NULL;   /* Linux format (/proc/bus/pci/devices) */
 static size_t g_pci_blob_len = 0;
 static char  *g_fb_blob = NULL;    /* Linux format (/proc/fb) */
 static size_t g_fb_blob_len = 0;
+static char  *g_nfs_blob = NULL;   /* NFS exports (/proc/fs/nfs/exports) */
+static size_t g_nfs_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -737,6 +739,39 @@ build_fb_blob(char **blobp, size_t *lenp)
 }
 
 /*
+ * /proc/fs/nfs/exports support. macOS keeps the NFS export configuration in
+ * /etc/exports, which nfsd registers with the kernel, so serve that file's
+ * contents. A machine with no NFS server configured has no /etc/exports, which
+ * leaves the node empty.
+ */
+static void
+build_nfsexports_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    FILE *in = fopen("/etc/exports", "r");
+    if (in == NULL) {
+        return;                     /* no NFS exports configured -> empty */
+    }
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f != NULL) {
+        char line[1024];
+        while (fgets(line, sizeof(line), in) != NULL) {
+            fputs(line, f);
+        }
+        fclose(f);
+        *blobp = buf;
+        *lenp = sz;
+    }
+    fclose(in);
+}
+
+/*
  * Snapshot the system's power state for /proc/apm from IOKit power sources
  * (the data `pmset -g batt` reports). The kext turns these raw values into the
  * Linux APM line. Everything defaults to "unknown"; a machine with no power
@@ -1135,6 +1170,14 @@ main(int argc, char **argv)
                 build_fb_blob(&g_fb_blob, &g_fb_blob_len);
             }
             blob_slice(g_fb_blob, g_fb_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_NFSEXPORTS: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_nfsexports_blob(&g_nfs_blob, &g_nfs_blob_len);
+            }
+            blob_slice(g_nfs_blob, g_nfs_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_RUSAGE: {

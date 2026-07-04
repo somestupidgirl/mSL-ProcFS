@@ -2269,6 +2269,33 @@ procfs_dofb(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
+ * server's active exports here; macOS keeps the export configuration in
+ * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon
+ * reads that file and streams it. A machine with no NFS server configured has no
+ * /etc/exports, so the node is empty. Chunked transfer like /proc/devices.
+ */
+int
+procfs_donfsexports(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 1024, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_NFSEXPORTS, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/allocinfo - Linux memory-allocation profiling. Linux keys this on code
  * tags (file:line func:name); macOS has no code-tag profiling, so the closest
  * faithful source is the zone allocator (mach_zone_info, what zprint reports):
