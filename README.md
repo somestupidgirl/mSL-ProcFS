@@ -41,6 +41,7 @@ Linux-compatible files and helpers:
 |`modules`     | Linux-style `/proc/modules` view of the same loaded kexts (`name size refcount deps state address`) |
 |`mounts`      | The Linux name for the same mounted-filesystem table as `mtab`       |
 |`mtab`        | Linux-style mounted-filesystem table (`/etc/mtab` format: `device mountpoint fstype options 0 0`) |
+|`net/dev`     | Linux-style per-interface network statistics (in-kernel via the `ifnet` KPIs; fifo/frame/compressed/carrier columns are 0 — macOS keeps no such counters) |
 |`partitions`  | Linux-style partition table (text; all block devices via IOKit — see below) |
 |`self/`        | Symbolic link to the calling process's directory (Linux name)       |
 |`stat`        | Linux-style kernel/system statistics (`cpu`/`cpuN` ticks, `btime`, `processes`; see below) |

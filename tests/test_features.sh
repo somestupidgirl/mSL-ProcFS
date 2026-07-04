@@ -77,6 +77,7 @@ tfile "$PROC/mounts"          "mounts"
 tfile "$PROC/swaps"           "swaps"
 tfile "$PROC/filesystems"     "filesystems"
 tfile "$PROC/cmdline"         "cmdline (kernel boot args)"
+tfile "$PROC/net/dev"         "net/dev (interface stats)"
 
 hdr "Root: daemon-backed listings"
 for n in extensions modules devices; do

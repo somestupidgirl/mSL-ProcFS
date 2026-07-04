@@ -165,6 +165,12 @@ procfs_structure_init(void)
         pfssnode_t *self = add_node(root_node, "self",
                         PFScurproc, next_node_id++, 0, 0, NULL, NULL);
 
+        // Linux-style /proc/net/ subdirectory and its network-interface stats file.
+        pfssnode_t *net_dir = add_directory(root_node, "net",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *netdev = add_node(net_dir, "dev",
+                        PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetdev);
+
         // A pseudo-entry below "byname" that is replaced by nodes for all of the visible processes.
         // NOTE: this must be the last child entry for the "byname" node.
         pfssnode_t *proc_name_dir = add_directory(proc_by_name_dir, "__Process_N__",

@@ -61,6 +61,8 @@
 #include <sys/proc.h>
 #include <sys/proc_info.h>
 
+#include <net/kpi_interface.h>
+
 #include <bsdcompat/sys/malloc.h>
 
 #include <fs/procfs/procfs.h>
@@ -2017,6 +2019,66 @@ procfs_dodevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
+ * /proc/net/dev - Linux per-interface network statistics. The interface list
+ * and counters come from the public ifnet KPIs (ifnet_list_get / ifnet_stat),
+ * so this runs entirely in-kernel. macOS keeps a single dropped counter and no
+ * fifo/frame/compressed/carrier counters, so those Linux columns are reported
+ * as 0 and the drop count is attributed to the receive side (as FreeBSD's
+ * linprocfs does with if_iqdrops).
+ */
+int
+procfs_donetdev(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    ifnet_t  *iflist = NULL;
+    uint32_t  count  = 0;
+    errno_t   kerr   = ifnet_list_get(IFNET_FAMILY_ANY, &iflist, &count);
+    if (kerr != 0) {
+        return (int)kerr;
+    }
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 1024, SBUF_AUTOEXTEND) == NULL) {
+        ifnet_list_free(iflist);
+        return ENOMEM;
+    }
+
+    sbuf_printf(&sb, "Inter-|   Receive                                                |"
+                     "  Transmit\n");
+    sbuf_printf(&sb, " face |bytes    packets errs drop fifo frame compressed multicast|"
+                     "bytes    packets errs drop fifo colls carrier compressed\n");
+
+    for (uint32_t i = 0; i < count; i++) {
+        ifnet_t ifp = iflist[i];
+        struct ifnet_stats_param st;
+        bzero(&st, sizeof(st));
+        (void)ifnet_stat(ifp, &st);
+
+        char name[32];
+        snprintf(name, sizeof(name), "%s%u", ifnet_name(ifp), ifnet_unit(ifp));
+
+        sbuf_printf(&sb,
+            "%6s:%8llu %7llu %4llu %4llu %4llu %4llu %10llu %9llu "
+            "%8llu %7llu %4llu %4llu %4llu %5llu %7llu %10llu\n",
+            name,
+            /* Receive: bytes packets errs drop fifo frame compressed multicast */
+            (unsigned long long)st.bytes_in,   (unsigned long long)st.packets_in,
+            (unsigned long long)st.errors_in,  (unsigned long long)st.dropped,
+            0ULL, 0ULL, 0ULL,                  (unsigned long long)st.multicasts_in,
+            /* Transmit: bytes packets errs drop fifo colls carrier compressed */
+            (unsigned long long)st.bytes_out,  (unsigned long long)st.packets_out,
+            (unsigned long long)st.errors_out, 0ULL,
+            0ULL, (unsigned long long)st.collisions, 0ULL, 0ULL);
+    }
+
+    ifnet_list_free(iflist);
+
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
     return error;
 }
