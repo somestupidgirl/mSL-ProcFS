@@ -13,10 +13,14 @@
 #pragma mark -
 #pragma mark Definitions for both user-level and kernel components
 
-/* Lock group name */
+/*
+ * Lock group name
+ */
 #define PROCFS_LCKGRP_NAME      BUNDLEID_S ".lckgrp"
 
-/* Mount option flags. */
+/*
+ * Mount option flags.
+ */
 #define PROCFS_MOPT_NOPROCPERMS (1 << 0) // Do not apply process permissions to the pid entries in /proc.
 #define MOPT_PROCFS             { "procperms", 1, PROCFS_MOPT_NOPROCPERMS, 0 }
 
@@ -48,18 +52,26 @@ typedef struct pfsmount_args {
 #pragma mark -
 #pragma mark External References
 
-// Lock used to protect the hash table.
+/*
+ * Lock used to protect the hash table.
+ */
 extern lck_grp_t *pfsnode_lck_grp;
 extern lck_mtx_t *pfsnode_hash_mutex;
 
-// Tag used for memory allocation.
+/*
+ * Tag used for memory allocation.
+ */
 extern OSMallocTag procfs_osmalloc_tag;
 
-// The buckets for the pfsnode hash table. The number of buckets
-// is always a power of two.
+/*
+ * The buckets for the pfsnode hash table. The number of buckets
+ * is always a power of two.
+ */
 extern LIST_HEAD(procfs_hash_head, pfsnode) *pfsnode_hash_buckets;
 
-// The mask used to get the bucket number from a pfsnode hash.
+/*
+ * The mask used to get the bucket number from a pfsnode hash.
+ */
 extern u_long pfsnode_hash_to_bucket_mask;
 
 #pragma mark -
@@ -116,28 +128,38 @@ typedef struct pfsmount pfsmount_t;
 typedef struct pfssnode pfssnode_t;
 typedef struct procfs_hash_head procfs_hash_head;
 
-// Callback function used to create vnodes, called from within the
-// procfsnode_find() function. "params" is used to pass the details that
-// the function needs in order to create the correct vnode. It is obtained
-// from the "create_vnode_params" argument passed to procfsnode_find(),
-// "pnp" is a pointer to the pfsnode_t that the vnode should be linked to
-// and "vpp" is where the created vnode will be stored, if the call was successful.
-// Returns 0 on success or an error code (from errno.h) if not.
+/*
+ * Callback function used to create vnodes, called from within the
+ * procfsnode_find() function. "params" is used to pass the details that
+ * the function needs in order to create the correct vnode. It is obtained
+ * from the "create_vnode_params" argument passed to procfsnode_find(),
+ * "pnp" is a pointer to the pfsnode_t that the vnode should be linked to
+ * and "vpp" is where the created vnode will be stored, if the call was successful.
+ * Returns 0 on success or an error code (from errno.h) if not.
+ */
 typedef int (*create_vnode_func)(void *params, pfsnode_t *pnp, vnode_t *vpp);
 
-// Type for the base node id field of a structure node.
+/*
+ * Type for the base node id field of a structure node.
+ */
 typedef uint16_t pfsbaseid_t;
 
-// Type of a function that reports the size for a procfs node.
+/*
+ * Type of a function that reports the size for a procfs node.
+ */
 typedef size_t (*procfs_node_size_fn)(pfsnode_t *pnp, kauth_cred_t creds);
 
-// Type of a function that reads the data for a procfs node.
+/*
+ * Type of a function that reads the data for a procfs node.
+ */
 typedef int (*procfs_read_data_fn)(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 
 #pragma mark -
 #pragma mark Common Definitions
 
-// VFS flags
+/*
+ * VFS flags
+ */
 #define PROCFS_VFS_FLAGS  ( \
         VFS_TBL64BITREADY       | \
         VFS_TBLFSNODELOCK       | \
@@ -148,18 +170,26 @@ typedef int (*procfs_read_data_fn)(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
         0                         \
 )
 
-// Bit values for the psn_flags field.
+/*
+ * Bit values for the psn_flags field.
+ */
 #define PSN_FLAG_PROCESS    (1 << 0)
 #define PSN_FLAG_THREAD     (1 << 1)
 
-// Special values for the nodeid_pid and nodeid_objectid fields.
+/*
+ * Special values for the nodeid_pid and nodeid_objectid fields.
+ */
 #define PRNODE_NO_PID       ((int)-1)
 #define PRNODE_NO_OBJECTID  ((uint64_t)0)
 
-// Root node id value.
+/*
+ * Root node id value.
+ */
 #define PROCFS_ROOT_NODE_BASE_ID ((pfsbaseid_t)1)
 
-// Largest name of a structure node.
+/*
+ * Largest name of a structure node.
+ */
 #define MAX_STRUCT_NODE_NAME_LEN 16
 
 #pragma mark -
@@ -202,23 +232,31 @@ struct pfssnode {
     pfsbaseid_t                       psn_base_node_id;   // Base node id - unique.
     uint16_t                          psn_flags;          // Flags - PSN_XXX (see below)
 
-    // Structure linkage. Immutable once set.
-    struct pfssnode                  *psn_parent;                          // The parent node in the structure
-    TAILQ_ENTRY(pfssnode)             psn_next;                            // Next sibling node within structure parent.
+    /*
+     * Structure linkage. Immutable once set.
+     */
+    struct pfssnode                  *psn_parent;   // The parent node in the structure
+    TAILQ_ENTRY(pfssnode)             psn_next;     // Next sibling node within structure parent.
     TAILQ_HEAD(pfschildren, pfssnode) psn_children; // Children of this structure node.
 
-    // --- Function hooks. Set to null to use the defaults.
-    // The node's size value. This is the size value for the node itself.
-    // For directory nodes, the sum of the size values of all of its children is
-    // used as the actual size, so this value has meaning only for nodes of type
-    // PFSfile. It is not used if the procfs_node_size_fn field is set.
+    /*
+     * Function hooks. Set to null to use the defaults.
+     * The node's size value. This is the size value for the node itself.
+     * For directory nodes, the sum of the size values of all of its children is
+     * used as the actual size, so this value has meaning only for nodes of type
+     * PFSfile. It is not used if the procfs_node_size_fn field is set.
+     */
     size_t                            psn_node_size;
 
-    // Gets the value for the node's size attribute. If NULL, psn_node_size
-    // is used instead.
+    /*
+     * Gets the value for the node's size attribute. If NULL, psn_node_size
+     * is used instead.
+     */
     procfs_node_size_fn               psn_getsize_fn;
 
-    // Reads the file content.
+    /* 
+     * Reads the file content.
+     */
     procfs_read_data_fn               psn_read_data_fn;
 };
 
@@ -250,33 +288,44 @@ struct pfsmount {
  * There is one insance of this structure for each active node.
  */
 struct pfsnode {
-    // Linkage for the node hash. Protected by the node hash lock.
+    /*
+     * Linkage for the node hash. Protected by the node hash lock.
+     */
     LIST_ENTRY(pfsnode) node_hash;
 
-    // Pointer to the associated vnode. Protected by the node hash lock.
+    /*
+     * Pointer to the associated vnode. Protected by the node hash lock.
+     */
     vnode_t             node_vnode;
 
-    // Records whether this node is currently being attached to a vnode.
-    // Only one thread can be allowed to link the node to a vnode. If a
-    // thread that wants to create a pfsnode and link it to a vnode
-    // finds this field set to true, it must release the node hash lock
-    // and wait until the field is reset to false, then check again whether
-    // some or all of the work that it needed to do has been completed.
-    // Protected by the node hash lock.
+    /* Records whether this node is currently being attached to a vnode.
+     * Only one thread can be allowed to link the node to a vnode. If a
+     * thread that wants to create a pfsnode and link it to a vnode
+     * finds this field set to true, it must release the node hash lock
+     * and wait until the field is reset to false, then check again whether
+     * some or all of the work that it needed to do has been completed.
+     * Protected by the node hash lock.
+     */
     boolean_t           node_attaching_vnode;
 
-    // Records whether a thread is awaiting the outcome of vnode attachment.
-    // Protected by the node hash lock.
+    /*
+     * Records whether a thread is awaiting the outcome of vnode attachment.
+     * Protected by the node hash lock.
+     */
     boolean_t           node_thread_waiting_attach;
 
-    // node_mnt_id and node_id taken together uniquely identify a node. There
-    // must only ever be one procnfsnode instance (and hence one vnode) for each
-    // (node_mnt_id, node_id) combination. The node_mnt_id value can be obtained
-    // from the pmnt_id field of the pfsmount structure for the owning mount.
+    /*
+     * node_mnt_id and node_id taken together uniquely identify a node. There
+     * must only ever be one procnfsnode instance (and hence one vnode) for each
+     * (node_mnt_id, node_id) combination. The node_mnt_id value can be obtained
+     * from the pmnt_id field of the pfsmount structure for the owning mount.
+     */
     int32_t             node_mnt_id;            // Identifier of the owning mount.
     pfsid_t             node_id;                // The identifer of this node.
 
-    // Pointer to the pfssnode_t for this node.
+    /*
+     * Pointer to the pfssnode_t for this node.
+     */
     pfssnode_t         *node_structure_node;    // Set when allocated, never changes.
 };
 
@@ -290,6 +339,39 @@ struct procfs_pidlist_data
     kauth_cred_t    creds;     // Credential to use for access check, or NULL
     int            *pids;
 };
+
+/*
+ * A VM region with the VM_REGION_EXTENDED_INFO detail the smaps-family Linux
+ * nodes need. `shared`/`anonymous` are precomputed from the region's share mode
+ * and pager so the Linux formatters (procfs_linux.c) need no Mach VM headers.
+ */
+struct procfs_ext_region {
+    uint64_t start;
+    uint64_t end;
+    int      prot;                 /* current protection (VM_PROT_* bits) */
+    uint32_t resident_pages;
+    uint32_t dirty_pages;
+    uint32_t swapped_pages;
+    int      shared;               /* region shared with other tasks */
+    int      anonymous;            /* no external pager (anonymous memory) */
+};
+typedef void (*procfs_ext_region_fn)(const struct procfs_ext_region *r, void *arg);
+
+/*
+ * One VM region, as handed to a map formatter. Plain scalars so formatters in
+ * either file need no Mach VM headers; `prot`/`max_prot` carry VM_PROT_* bits.
+ */
+struct sbuf;
+struct procfs_region {
+    uint64_t     start;
+    uint64_t     end;
+    uint64_t     offset;
+    int          prot;
+    int          max_prot;
+    int          shared;
+    unsigned int wired;
+};
+typedef void (*procfs_region_fmt_fn)(struct sbuf *sb, const struct procfs_region *r);
 
 #pragma mark -
 #pragma mark Macros
@@ -395,16 +477,22 @@ procfsnode_to_pid(pfsnode_t *pfsnode)
 #pragma mark -
 #pragma mark Global Definitions
 
-/* Identifier for the root node of the file system. */
+/*
+ * Identifier for the root node of the file system.
+ */
 extern const pfsid_t PROCFS_ROOT_NODE_ID;
 
-/* Public API */
+/*
+ * Public API
+ */
 extern int procfsnode_find(pfsmount_t *pmp, pfsid_t node_id, pfssnode_t *snode, pfsnode_t **pnpp,
                            vnode_t *vnpp, create_vnode_func create_vnode_func, void *create_vnode_params);
 extern void procfsnode_free_node(pfsnode_t *pfsnode);
 extern void procfs_get_parent_node_id(pfsnode_t *pnp, pfsid_t *idp);
 
-/* Gets the root node of the file system structure. */
+/*
+ * Gets the root node of the file system structure.
+ */
 extern pfssnode_t *procfs_structure_root_node(void);
 
 /*
@@ -434,71 +522,30 @@ extern enum vtype procfs_allocvp(pfstype);
  */
 extern int procfs_copy_data(const char *data, int data_len, uio_t uio);
 
-/* Functions that copy pfsnode_t data to a buffer described by a uio_t structure. */
-extern int procfs_dopid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_doppid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dopgid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dosid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dotty(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dostatus(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dotaskinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dothreadinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dofd(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dosocket(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_doprocargs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-/* Shared reader of the flattened argument region: buffer + argv/env/apple offsets
- * (used by cmdline, environ and the native auxv node). Caller holds proc_find. */
-extern int procfs_read_procargs(proc_t p, uint8_t **bufp, size_t *lenp,
-        size_t *argv_off, size_t *env_off, size_t *apple_off);
-extern int procfs_domem(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-
 /*
- * One VM region, as handed to a map formatter. Plain scalars so formatters in
- * either file need no Mach VM headers; `prot`/`max_prot` carry VM_PROT_* bits.
- */
-struct sbuf;
-struct procfs_region {
-    uint64_t     start;
-    uint64_t     end;
-    uint64_t     offset;
-    int          prot;
-    int          max_prot;
-    int          shared;
-    unsigned int wired;
-};
-typedef void (*procfs_region_fmt_fn)(struct sbuf *sb, const struct procfs_region *r);
-
-/* Shared VM-region walk (procfs_map.c): enumerates the process's regions and
+ * Shared VM-region walk (procfs_map.c): enumerates the process's regions and
  * calls `fmt` per region. procfs_domap formats NetBSD-style here; procfs_domaps
- * (Linux-style) lives in procfs_linux.c and reuses this. */
+ * (Linux-style) lives in procfs_linux.c and reuses this.
+ */
 extern int procfs_map_render(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx,
                              procfs_region_fmt_fn fmt);
 
-/* A VM region with the VM_REGION_EXTENDED_INFO detail the smaps-family Linux
- * nodes need. `shared`/`anonymous` are precomputed from the region's share mode
- * and pager so the Linux formatters (procfs_linux.c) need no Mach VM headers. */
-struct procfs_ext_region {
-    uint64_t start;
-    uint64_t end;
-    int      prot;                 /* current protection (VM_PROT_* bits) */
-    uint32_t resident_pages;
-    uint32_t dirty_pages;
-    uint32_t swapped_pages;
-    int      shared;               /* region shared with other tasks */
-    int      anonymous;            /* no external pager (anonymous memory) */
-};
-typedef void (*procfs_ext_region_fn)(const struct procfs_ext_region *r, void *arg);
-
-/* Shared VM-region walk using VM_REGION_EXTENDED_INFO (procfs_map.c): invokes
+/*
+ * Shared VM-region walk using VM_REGION_EXTENDED_INFO (procfs_map.c): invokes
  * `cb(&region, arg)` per region (no output of its own). The Linux smaps /
- * smaps_rollup / numa_maps nodes in procfs_linux.c build their text from this. */
+ * smaps_rollup / numa_maps nodes in procfs_linux.c build their text from this.
+ */
 extern int procfs_map_foreach_ext(pfsnode_t *pnp, vfs_context_t ctx,
                                   procfs_ext_region_fn cb, void *arg);
-/* Sum a task's virtual and resident sizes via the VM-region walk (procfs_map.c);
- * the offset-free source for proc_taskinfo's size fields on arm64. */
+/*
+ * Sum a task's virtual and resident sizes via the VM-region walk (procfs_map.c);
+ * the offset-free source for proc_taskinfo's size fields on arm64.
+ */
 extern int procfs_task_vm_sizes(proc_t p, uint64_t *vsize, uint64_t *rsize);
 
-/* Kernel-control bridge to the procfsd daemon (procfs_ctl.c). */
+/*
+ * Kernel-control bridge to the procfsd daemon (procfs_ctl.c).
+ */
 extern kern_return_t procfs_ctl_register(void);
 extern void          procfs_ctl_deregister(void);
 extern int           procfs_ctl_request(uint32_t type, int pid, uint64_t arg,
@@ -506,40 +553,14 @@ extern int           procfs_ctl_request(uint32_t type, int pid, uint64_t arg,
 extern int           procfs_ctl_request_named(uint32_t type, int pid, uint64_t arg,
                                          const char *name, void *out, uint32_t outcap,
                                          uint32_t *outlen);
-struct sbuf;
 extern int           procfs_ctl_request_blob(uint32_t type, struct sbuf *sb);
-extern int           procfs_dokextlist(uint32_t type, uio_t uio);
-extern int           procfs_doextensions(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_domodules(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_dodiskstats(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_dodevices(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_donetdev(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_doallocinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_doapm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_dobootconfig(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_dobuddyinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_dopcidevices(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_dodma(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_dortc(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_doexecdomains(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_dofb(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_donfsexports(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int           procfs_dokcmdline(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_domaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dosmaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_donuma_maps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 
-/* Process machine state (NetBSD-style binary register dumps) and the auxiliary
- * vector (XNU's apple[] array). */
-extern int procfs_doregs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dofpregs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_doauxv(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-/* Linux-compat-mode text variants, selected at runtime by procfs_linux_mode. */
-extern int procfs_doregs_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dofpregs_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_doauxv_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+/*
+ * Shared reader of the flattened argument region: buffer + argv/env/apple offsets
+ * (used by cmdline, environ and the native auxv node). Caller holds proc_find.
+ */
+extern int procfs_read_procargs(proc_t p, uint8_t **bufp, size_t *lenp,
+        size_t *argv_off, size_t *env_off, size_t *apple_off);
 
 /*
  * Presentation mode: 0 = native (BSD/XNU), 1 = Linux-compatible. Toggled live
@@ -550,44 +571,23 @@ extern int  procfs_linux_mode;
 extern void procfs_sysctl_register(void);
 extern void procfs_sysctl_unregister(void);
 
-/* Linux-compatible per-thread files (/proc/<pid>/task/<tid>/). */
-extern int procfs_dothreadcomm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dothreadstat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dothreadstatus(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dothreadsched(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-
-/* Linux-compatible per-process text nodes. */
-extern int procfs_doprocstatus_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_docomm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dostatm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_doprocstat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_doio(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_doenviron(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_douptime(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_doswaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dofilesystems(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-
-/* BSD/Linux-compatible features */
-extern int procfs_docpuinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dolimit(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_doloadavg(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_domeminfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_domtab(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dostat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_dovmstat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+/*
+ * Helper functions for loadavg.
+ */
 extern void procfs_loadavg_start(void);
 extern void procfs_loadavg_stop(void);
-extern int procfs_dopartitions(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_doversion(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
-extern int procfs_donote(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 
-/* Functions that return the data size for a node. */
+/*
+ * Functions that return the data size for a node.
+ */
 extern size_t procfs_get_node_size_attr(pfsnode_t *pnp, kauth_cred_t creds);
 extern size_t procfs_process_node_size(pfsnode_t *pnp, kauth_cred_t creds);
 extern size_t procfs_thread_node_size(pfsnode_t *pnp, kauth_cred_t creds);
 extern size_t procfs_fd_node_size(pfsnode_t *pnp, kauth_cred_t creds);
 
-/* Subroutine functions. */
+/*
+ * Subroutine functions.
+ */
 extern boolean_t procfs_node_type_has_pid(pfstype node_type);
 extern int procfs_get_process_info(vnode_t vp, pid_t *pidp, proc_t *procp);
 extern uint64_t procfs_get_node_fileid(pfsnode_t *pnp);
@@ -601,20 +601,100 @@ struct proc_fdinfo;
 extern int procfs_get_fd_list(proc_t p, struct proc_fdinfo **fdlist, size_t *count);
 extern int procfs_proclink_path(int pid, const char *name, char *buf, int buflen);
 
-/* Dynamic /proc/sys sysctl mirror (procfs_sysctl.c). objectid is a
- * struct sysctl_oid * (0 = the tree root). */
+/*
+ * Dynamic /proc/sys sysctl mirror (procfs_sysctl.c). objectid is a
+ * struct sysctl_oid * (0 = the tree root).
+ */
 extern boolean_t procfs_sysctl_is_node(uint64_t objectid);
 extern boolean_t procfs_sysctl_find(uint64_t dir_objectid, const char *name, uint64_t *out_objectid);
 extern int       procfs_sysctl_child_at(uint64_t dir_objectid, int index,
                      const char **name, boolean_t *is_node, uint64_t *objectid);
 extern int       procfs_sysctl_read(uint64_t objectid, uio_t uio);
 extern boolean_t procfs_sysctl_parent(uint64_t objectid, uint64_t *parent_objectid);
+
 extern void procfs_release_fd_list(struct proc_fdinfo *fdlist);
 extern int procfs_check_can_access_process(kauth_cred_t creds, proc_t p);
 extern int procfs_check_can_access_proc_pid(kauth_cred_t creds, pid_t pid);
 extern int procfs_issuser(kauth_cred_t creds);
 extern int procfs_get_process_count(kauth_cred_t creds);
 extern int procfs_get_task_thread_count(proc_t p);
+
+/*
+ * Functions that copy pfsnode_t data to a buffer described by a uio_t structure.
+ */
+extern int procfs_dopid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doppid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dopgid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dosid(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dotty(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dostatus(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dotaskinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dothreadinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dofd(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dosocket(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doprocargs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_domem(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dokextlist(uint32_t type, uio_t uio);
+extern int procfs_doextensions(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_domodules(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dodiskstats(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dodevices(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_donetdev(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doallocinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doapm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dobootconfig(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dobuddyinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dopcidevices(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dodma(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dortc(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doexecdomains(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dofb(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_donfsexports(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dokcmdline(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_domaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dosmaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_donuma_maps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+/*
+ * Linux-compatible per-thread files (/proc/<pid>/task/<tid>/).
+ */
+extern int procfs_dothreadcomm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dothreadstat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dothreadstatus(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dothreadsched(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doprocstatus_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_docomm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dostatm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doprocstat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doio(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doenviron(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_douptime(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doswaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dofilesystems(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_docpuinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dolimit(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doloadavg(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_domeminfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_domtab(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dostat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dovmstat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dopartitions(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doversion(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_donote(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+/* 
+ *Process machine state (NetBSD-style binary register dumps) and the auxiliary
+ * vector (XNU's apple[] array).
+ */
+extern int procfs_doregs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dofpregs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doauxv(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+/*
+ * Linux-compat-mode text variants, selected at runtime by procfs_linux_mode.
+ */
+extern int procfs_doregs_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dofpregs_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doauxv_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 
 #endif /* __FSBUNDLE__ */
 
