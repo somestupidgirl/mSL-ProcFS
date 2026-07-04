@@ -41,6 +41,7 @@ Linux-compatible files and helpers:
 |`diskstats`   | Linux-style block-device I/O statistics (per whole disk, 14-field format; from IOKit `IOBlockStorageDriver`) |
 |`dma`         | Linux-style list of ISA DMA channels in use; an x86-only concept — shows the reserved `cascade` channel on x86, empty on Apple Silicon (no 8237 ISA DMA) |
 |`driver/`     | Directory grouping driver-specific files; currently `driver/rtc`, the same real-time-clock state as `/proc/rtc` |
+|`execdomains` | Linux-style registered execution personalities; macOS has no exec-domain subsystem, so the single native personality is reported (`0-0  Darwin  [kernel]`) |
 |`extensions`  | macOS-style list of loaded kernel extensions (kextstat-like: index, refs, address, size, name/version; via the `procfsd` daemon) |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
@@ -400,6 +401,14 @@ time (epoch seconds converted to a civil date in-kernel, since the kernel has no
 kext, so the `alrm_*`/`*IRQ*` fields report their inactive defaults (no alarm,
 IRQs off, 24-hour mode, `batt_status: okay`). Fully in-kernel. The same content
 is also served at `/proc/driver/rtc`, where Linux groups driver-specific files.
+
+`execdomains` lists the kernel's registered execution personalities (the legacy
+`personality(2)` / `exec_domain` mechanism for running foreign-OS binaries).
+Modern Linux keeps only the native personality and emits a single fixed line,
+`0-0\tLinux\t[kernel]`. macOS has no exec-domain subsystem; its native
+personality is Darwin/Mach-O, so — as `/proc/version` reports Darwin rather than
+Linux — the sole domain is reported with the native name: `0-0  Darwin  [kernel]`.
+Fully in-kernel.
 
 ### The `procfsd` daemon
 

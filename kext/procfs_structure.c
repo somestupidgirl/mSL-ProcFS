@@ -180,6 +180,10 @@ procfs_structure_init(void)
         pfssnode_t *rtc = add_node(root_node, "rtc",
                         PFSrtc, next_node_id++, 0, 0, NULL, procfs_dortc);
 
+        // Linux-style /proc/execdomains (registered execution personalities).
+        pfssnode_t *execdomains = add_node(root_node, "execdomains",
+                        PFSexecdomains, next_node_id++, 0, 0, NULL, procfs_doexecdomains);
+
         // Linux-style /proc/driver/ - driver-specific files grouped here. Currently
         // just /proc/driver/rtc, the same RTC state as /proc/rtc (reuses PFSrtc).
         pfssnode_t *driver_dir = add_directory(root_node, "driver",

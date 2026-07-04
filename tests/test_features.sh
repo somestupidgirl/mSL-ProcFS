@@ -72,6 +72,7 @@ tfile "$PROC/stat"            "stat"
 tfile "$PROC/vmstat"          "vmstat"
 tfile "$PROC/buddyinfo"       "buddyinfo (free blocks by order)"
 tfile "$PROC/rtc"             "rtc (real-time clock)"
+tfile "$PROC/execdomains"     "execdomains (personalities)"
 tdir  "$PROC/driver"          "driver dir"
 tfile "$PROC/driver/rtc"      "driver/rtc (grouped rtc)"
 # dma: legitimately empty on arm64 (no 8237 ISA DMA); "4: cascade" on x86

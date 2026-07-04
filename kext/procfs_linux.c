@@ -987,6 +987,23 @@ procfs_dortc(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/execdomains - Linux's registered execution personalities (personality(2)
+ * / the legacy exec_domain mechanism for running foreign-OS binaries). Modern
+ * Linux keeps only the native personality and emits a single fixed line
+ * "0-0\tLinux\t[kernel]". macOS has no exec-domain subsystem; its native
+ * personality is Darwin/Mach-O, so - like /proc/version reporting Darwin rather
+ * than Linux - the sole domain is reported with the native name.
+ */
+int
+procfs_doexecdomains(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    /* pers_low-pers_high  name(left-justified)  [module]  - the classic
+     * exec_domain print format, with macOS's single native personality. */
+    static const char text[] = "0-0\t" "Darwin          " "\t[kernel]\n";
+    return procfs_copy_data(text, sizeof(text) - 1, uio);
+}
+
+/*
  * Linux-compatible /proc/meminfo, modelled on FreeBSD's linprocfs_domeminfo()
  * (sys/compat/linux/linprocfs/linprocfs.c) - same field set and "%9lu kB"
  * layout, and the same "all memory that isn't wired down is free" estimate
