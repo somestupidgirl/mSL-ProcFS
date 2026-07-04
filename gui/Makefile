@@ -7,16 +7,28 @@ BUNDLE   := $(APP).app
 CONTENTS := $(BUNDLE)/Contents
 MACOS    := $(CONTENTS)/MacOS
 BIN      := $(MACOS)/$(APP)
+ICONSET  := AppIcon.iconset
 
 SWIFTFLAGS := -O -framework Cocoa
 SIGNCERT   ?= -
 
 all: $(BUNDLE)
 
-$(BUNDLE): ProcFSMenu.swift Info.plist.in ../VERSION icon_light.png icon_dark.png
+$(BUNDLE): ProcFSMenu.swift Info.plist.in ../VERSION icon_light.png icon_dark.png appicon.png
 	mkdir -p $(MACOS) $(CONTENTS)/Resources
 	swiftc $(SWIFTFLAGS) -o $(BIN) ProcFSMenu.swift
 	cp icon_light.png icon_dark.png $(CONTENTS)/Resources/
+	@# Finder/Dock app icon: render the standard iconset sizes from appicon.png
+	@# and pack them into AppIcon.icns (referenced by CFBundleIconFile).
+	rm -rf $(ICONSET)
+	mkdir -p $(ICONSET)
+	@for spec in 16:16x16 32:16x16@2x 32:32x32 64:32x32@2x 128:128x128 \
+	             256:128x128@2x 256:256x256 512:256x256@2x 512:512x512 1024:512x512@2x; do \
+	    px=$${spec%%:*}; nm=$${spec#*:}; \
+	    sips -z $$px $$px appicon.png --out $(ICONSET)/icon_$$nm.png >/dev/null; \
+	done
+	iconutil -c icns $(ICONSET) -o $(CONTENTS)/Resources/AppIcon.icns
+	rm -rf $(ICONSET)
 	sed -e 's/__KEXTVERSION__/$(KEXTVERSION)/g' Info.plist.in > $(CONTENTS)/Info.plist
 	@# Strip Finder info / quarantine xattrs; codesign rejects "resource fork,
 	@# Finder information, or similar detritus" (the icon PNGs carry them).
@@ -24,6 +36,6 @@ $(BUNDLE): ProcFSMenu.swift Info.plist.in ../VERSION icon_light.png icon_dark.pn
 	codesign -s "$(SIGNCERT)" --force --timestamp=none $(BUNDLE)
 
 clean:
-	rm -rf $(BUNDLE)
+	rm -rf $(BUNDLE) $(ICONSET)
 
 .PHONY: all clean
