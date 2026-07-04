@@ -103,6 +103,7 @@ typedef enum {
     PFSbuddyinfo,   /* Linux-style /proc/buddyinfo (buddy-allocator free blocks) */
     PFSpcidevices,  /* Linux-style /proc/bus/pci/devices (PCI device table) */
     PFSdma,         /* Linux-style /proc/dma (ISA DMA channels in use) */
+    PFSrtc,         /* Linux-style /proc/rtc (real-time-clock state) */
     PFSkcmdline,    /* Linux-style kernel boot command line (root /proc/cmdline) */
 } pfstype;
 
@@ -376,7 +377,7 @@ procfs_is_directory_type(pfstype type)
         && type != PFSallocinfo && type != PFSapm
         && type != PFSbootconfig && type != PFSbuddyinfo
         && type != PFSpcidevices && type != PFSdma
-        && type != PFSkcmdline;
+        && type != PFSrtc && type != PFSkcmdline;
 }
 
 /* Gets the pid_t for the process corresponding to a pfsnode_t. */
@@ -514,6 +515,7 @@ extern int           procfs_dobootconfig(pfsnode_t *pnp, uio_t uio, vfs_context_
 extern int           procfs_dobuddyinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int           procfs_dopcidevices(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int           procfs_dodma(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int           procfs_dortc(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int           procfs_dokcmdline(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);

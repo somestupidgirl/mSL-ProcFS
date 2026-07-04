@@ -929,6 +929,64 @@ procfs_dodma(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/rtc - Linux's real-time-clock state (drivers/rtc/proc.c). The core is
+ * the current RTC time and date; macOS keeps its hardware RTC in UTC, exposed
+ * via clock_get_calendar_microtime(), so rtc_time/rtc_date are the UTC calendar
+ * time. macOS does not expose the RTC's alarm or periodic-interrupt state to a
+ * kext, so those fields report their inactive defaults (no alarm, IRQs off,
+ * 24-hour mode). Epoch seconds are converted to a civil date in-kernel (the
+ * kernel has no gmtime), using Howard Hinnant's days->y/m/d algorithm.
+ */
+int
+procfs_dortc(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    clock_sec_t  secs = 0;
+    clock_usec_t usecs = 0;
+    clock_get_calendar_microtime(&secs, &usecs);
+
+    uint64_t sod  = (uint64_t)secs % 86400;      /* seconds within the day */
+    int hour = (int)(sod / 3600);
+    int min  = (int)((sod % 3600) / 60);
+    int sec  = (int)(sod % 60);
+
+    /* Days since the Unix epoch -> civil (year, month, day). */
+    int64_t z = (int64_t)((uint64_t)secs / 86400) + 719468;
+    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    uint64_t doe = (uint64_t)(z - era * 146097);                 /* [0, 146096] */
+    uint64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; /* [0,399] */
+    int64_t  year = (int64_t)yoe + era * 400;
+    uint64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);      /* [0, 365] */
+    uint64_t mp  = (5 * doy + 2) / 153;                          /* [0, 11] */
+    int day   = (int)(doy - (153 * mp + 2) / 5 + 1);            /* [1, 31] */
+    int month = (int)(mp < 10 ? mp + 3 : mp - 9);              /* [1, 12] */
+    year += (month <= 2);
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+    sbuf_printf(&sb,
+        "rtc_time\t: %02d:%02d:%02d\n"
+        "rtc_date\t: %04lld-%02d-%02d\n"
+        "alrm_time\t: **:**:**\n"
+        "alrm_date\t: ****-**-**\n"
+        "alarm_IRQ\t: no\n"
+        "alrm_pending\t: no\n"
+        "update IRQ enabled\t: no\n"
+        "periodic IRQ enabled\t: no\n"
+        "periodic IRQ frequency\t: 0\n"
+        "max user IRQ frequency\t: 64\n"
+        "24hr\t\t: yes\n"
+        "batt_status\t: okay\n",
+        hour, min, sec, (long long)year, month, day);
+
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * Linux-compatible /proc/meminfo, modelled on FreeBSD's linprocfs_domeminfo()
  * (sys/compat/linux/linprocfs/linprocfs.c) - same field set and "%9lu kB"
  * layout, and the same "all memory that isn't wired down is free" estimate

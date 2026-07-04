@@ -49,6 +49,7 @@ Linux-compatible files and helpers:
 |`mtab`        | Linux-style mounted-filesystem table (`/etc/mtab` format: `device mountpoint fstype options 0 0`) |
 |`net/dev`     | Linux-style per-interface network statistics (in-kernel via the `ifnet` KPIs; fifo/frame/compressed/carrier columns are 0 — macOS keeps no such counters) |
 |`partitions`  | Linux-style partition table (text; all block devices via IOKit — see below) |
+|`rtc`         | Linux-style real-time-clock state; `rtc_time`/`rtc_date` are the UTC calendar time (`clock_get_calendar_microtime`), alarm/IRQ fields report their inactive defaults |
 |`self/`        | Symbolic link to the calling process's directory (Linux name)       |
 |`stat`        | Linux-style kernel/system statistics (`cpu`/`cpuN` ticks, `btime`, `processes`; see below) |
 |`swaps`       | Linux-style swap-area table (aggregate `vm.swapusage`; macOS swaps dynamically under `/private/var/vm`) |
@@ -389,6 +390,14 @@ controllers, so `/proc/dma` there is never empty. macOS/XNU uses no 8237 ISA DMA
 and Apple Silicon has no such hardware at all, so the node shows only the
 reserved `cascade` channel on x86 and is empty on arm64 — matching Linux's own
 per-architecture behaviour.
+
+`rtc` reports the real-time-clock state (Linux `drivers/rtc/proc.c`). The core is
+the current RTC time and date; macOS keeps its hardware RTC in UTC, exposed via
+`clock_get_calendar_microtime()`, so `rtc_time`/`rtc_date` are the UTC calendar
+time (epoch seconds converted to a civil date in-kernel, since the kernel has no
+`gmtime`). macOS does not expose the RTC's alarm or periodic-interrupt state to a
+kext, so the `alrm_*`/`*IRQ*` fields report their inactive defaults (no alarm,
+IRQs off, 24-hour mode, `batt_status: okay`). Fully in-kernel.
 
 ### The `procfsd` daemon
 
