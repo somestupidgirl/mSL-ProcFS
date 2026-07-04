@@ -40,6 +40,7 @@ Linux-compatible files and helpers:
 |`devices`     | Linux-style char/block device major-number listing (driver families reconstructed from `/dev` by the `procfsd` daemon) |
 |`diskstats`   | Linux-style block-device I/O statistics (per whole disk, 14-field format; from IOKit `IOBlockStorageDriver`) |
 |`dma`         | Linux-style list of ISA DMA channels in use; an x86-only concept — shows the reserved `cascade` channel on x86, empty on Apple Silicon (no 8237 ISA DMA) |
+|`driver/`     | Directory grouping driver-specific files; currently `driver/rtc`, the same real-time-clock state as `/proc/rtc` |
 |`extensions`  | macOS-style list of loaded kernel extensions (kextstat-like: index, refs, address, size, name/version; via the `procfsd` daemon) |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
@@ -397,7 +398,8 @@ the current RTC time and date; macOS keeps its hardware RTC in UTC, exposed via
 time (epoch seconds converted to a civil date in-kernel, since the kernel has no
 `gmtime`). macOS does not expose the RTC's alarm or periodic-interrupt state to a
 kext, so the `alrm_*`/`*IRQ*` fields report their inactive defaults (no alarm,
-IRQs off, 24-hour mode, `batt_status: okay`). Fully in-kernel.
+IRQs off, 24-hour mode, `batt_status: okay`). Fully in-kernel. The same content
+is also served at `/proc/driver/rtc`, where Linux groups driver-specific files.
 
 ### The `procfsd` daemon
 

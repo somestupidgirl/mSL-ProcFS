@@ -180,6 +180,13 @@ procfs_structure_init(void)
         pfssnode_t *rtc = add_node(root_node, "rtc",
                         PFSrtc, next_node_id++, 0, 0, NULL, procfs_dortc);
 
+        // Linux-style /proc/driver/ - driver-specific files grouped here. Currently
+        // just /proc/driver/rtc, the same RTC state as /proc/rtc (reuses PFSrtc).
+        pfssnode_t *driver_dir = add_directory(root_node, "driver",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *driver_rtc = add_node(driver_dir, "rtc",
+                        PFSrtc, next_node_id++, 0, 0, NULL, procfs_dortc);
+
         // Linux-style /proc/bus/ - bus-specific info. macOS provides PCI via IOKit:
         // /proc/bus/pci/devices (the classic PCI device table).
         pfssnode_t *bus_dir = add_directory(root_node, "bus",
