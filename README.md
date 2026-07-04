@@ -43,6 +43,7 @@ Linux-compatible files and helpers:
 |`driver/`     | Directory grouping driver-specific files; currently `driver/rtc`, the same real-time-clock state as `/proc/rtc` |
 |`execdomains` | Linux-style registered execution personalities; macOS has no exec-domain subsystem, so the single native personality is reported (`0-0  Darwin  [kernel]`) |
 |`extensions`  | macOS-style list of loaded kernel extensions (kextstat-like: index, refs, address, size, name/version; via the `procfsd` daemon) |
+|`fb`          | Linux-style framebuffer device list (`<index> <name>`); macOS IOKit framebuffers (`IOFramebuffer`/`IOMobileFramebuffer`) via the `procfsd` daemon |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
@@ -409,6 +410,13 @@ Modern Linux keeps only the native personality and emits a single fixed line,
 personality is Darwin/Mach-O, so — as `/proc/version` reports Darwin rather than
 Linux — the sole domain is reported with the native name: `0-0  Darwin  [kernel]`.
 Fully in-kernel.
+
+`fb` lists the registered framebuffer devices, one `<index> <name>` line each.
+macOS drives displays through IOKit framebuffers — `IOFramebuffer` on Intel,
+`IOMobileFramebuffer` on Apple Silicon — so the `procfsd` daemon enumerates both
+classes and formats a line per device, using the device's IORegistry name as the
+Linux `fix.id` (e.g. `0 AppleCLCD2`). Streamed over the same chunked transfer as
+`/proc/bus/pci/devices`; empty without a connected daemon.
 
 ### The `procfsd` daemon
 

@@ -52,6 +52,9 @@ enum {
     PROCFS_REQ_PCIDEVICES = 17, /* arg = byte offset; same chunked transfer as
                                  * PROCFS_REQ_DEVICES, Linux /proc/bus/pci/devices
                                  * format (PCI devices via IOKit IOPCIDevice). */
+    PROCFS_REQ_FBDEVICES  = 18, /* arg = byte offset; same chunked transfer as
+                                 * PROCFS_REQ_DEVICES, Linux /proc/fb format
+                                 * (framebuffers via IOKit IO[Mobile]Framebuffer). */
 };
 
 /*

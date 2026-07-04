@@ -225,6 +225,8 @@ static char  *g_alloc_blob = NULL; /* Linux format (/proc/allocinfo) */
 static size_t g_alloc_blob_len = 0;
 static char  *g_pci_blob = NULL;   /* Linux format (/proc/bus/pci/devices) */
 static size_t g_pci_blob_len = 0;
+static char  *g_fb_blob = NULL;    /* Linux format (/proc/fb) */
+static size_t g_fb_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -689,6 +691,52 @@ build_pci_blob(char **blobp, size_t *lenp)
 }
 
 /*
+ * /proc/fb support. macOS drives displays through IOKit framebuffers -
+ * IOFramebuffer on Intel, IOMobileFramebuffer on Apple Silicon - so enumerate
+ * both classes and emit one Linux "<index> <name>" line per device, using the
+ * device's IORegistry name as the fix.id. Only one class matches on a given
+ * machine, so a running index over both is contiguous.
+ */
+static void
+build_fb_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f == NULL) {
+        return;
+    }
+
+    static const char *classes[] = { "IOFramebuffer", "IOMobileFramebuffer" };
+    int idx = 0;
+    for (int c = 0; c < 2; c++) {
+        io_iterator_t it = MACH_PORT_NULL;
+        if (IOServiceGetMatchingServices(kIOMainPortDefault,
+                IOServiceMatching(classes[c]), &it) != KERN_SUCCESS) {
+            continue;
+        }
+        io_registry_entry_t e;
+        while ((e = IOIteratorNext(it)) != MACH_PORT_NULL) {
+            io_name_t name = "";
+            if (IORegistryEntryGetName(e, name) != KERN_SUCCESS || name[0] == '\0') {
+                strlcpy(name, classes[c], sizeof(name));
+            }
+            fprintf(f, "%d %s\n", idx++, name);
+            IOObjectRelease(e);
+        }
+        IOObjectRelease(it);
+    }
+
+    fclose(f);
+    *blobp = buf;
+    *lenp = sz;
+}
+
+/*
  * Snapshot the system's power state for /proc/apm from IOKit power sources
  * (the data `pmset -g batt` reports). The kext turns these raw values into the
  * Linux APM line. Everything defaults to "unknown"; a machine with no power
@@ -1079,6 +1127,14 @@ main(int argc, char **argv)
                 build_pci_blob(&g_pci_blob, &g_pci_blob_len);
             }
             blob_slice(g_pci_blob, g_pci_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_FBDEVICES: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_fb_blob(&g_fb_blob, &g_fb_blob_len);
+            }
+            blob_slice(g_fb_blob, g_fb_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_RUSAGE: {

@@ -2242,6 +2242,33 @@ procfs_dopcidevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
 }
 
 /*
+ * /proc/fb - Linux framebuffer device list, one "<index> <name>" line per
+ * registered framebuffer. macOS drives displays through IOKit framebuffers
+ * (IOFramebuffer on Intel, IOMobileFramebuffer on Apple Silicon), so the procfsd
+ * daemon enumerates those and formats a line per device using the device's
+ * IORegistry name as the Linux fix.id. Streamed in chunks like /proc/devices.
+ */
+int
+procfs_dofb(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_FBDEVICES, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/allocinfo - Linux memory-allocation profiling. Linux keys this on code
  * tags (file:line func:name); macOS has no code-tag profiling, so the closest
  * faithful source is the zone allocator (mach_zone_info, what zprint reports):
