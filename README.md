@@ -550,9 +550,37 @@ compatibility on/off, start/stop daemon), plus the current version. When Linux
 compatibility is on, a *Spoof Linux Kernel Version* submenu appears with a few
 preset Linux releases and a *None (Darwin)* entry at the bottom (the default).
 The mutating actions need root, so they go through the standard macOS
-administrator-authorization prompt; status is read unprivileged. It is built as
-part of `make` (into `bin/ProcFS.app`, version stamped from `VERSION`) and
-installed to `/Applications` by `sudo make install`.
+administrator-authorization prompt; status is read unprivileged. A *Preferences…*
+item at the top opens the preference pane (below). It is built as part of `make`
+(into `out/ProcFS.app`, version stamped from `VERSION`) and installed to
+`/Applications` by `sudo make install`.
+
+## Preference pane
+
+`ProcFS.prefPane` is a System Settings preference pane (`NSPreferencePane`),
+opened from the menu-bar app's *Preferences…* item (or directly from System
+Settings). It shows the ProcFS icon, name and description, followed by a
+**Settings** section:
+
+  - **Run on System Startup** — launches the menu-bar app at login (a per-user
+    `LaunchAgent`, `~/Library/LaunchAgents/com.beako.procfs.gui.plist`)
+  - **Daemon** — a *Start*/*Stop* button (reads *Stop* while `procfsd` is running)
+  - **Linux Compatibility Mode** — the `procfs.linux` toggle
+  - **Spoof Linux Kernel Version** — the `procfs.linux_version` preset dropdown
+    (enabled while Linux compatibility is on)
+  - **Check for Updates on Startup** — when on, the menu-bar app checks GitHub
+    Releases at launch and prompts if a newer version exists
+  - **Check for Updates** — a button that checks GitHub Releases now
+
+and a footer with the repository link and copyright. Update checking queries
+`https://api.github.com/repos/somestupidgirl/procfs_kext/releases/latest`,
+compares the tag with the running version, and (if newer) offers to open the
+releases page. The privileged actions use the same administrator-auth prompt as
+the menu-bar app. The pane's principal binary is a loadable Mach-O bundle
+(`swiftc -emit-library -Xlinker -bundle`); it is built by `make` and installed
+to `/Library/PreferencePanes` by `sudo make install` (removed by
+`sudo make uninstall`). The *Check for Updates on Startup* setting is shared with
+the menu-bar app through the `com.beako.filesystems.procfs` preferences domain.
 
 ## How to build procfs
 `make` builds the kext, the `procfs.fs` mount bundle, the userspace tools

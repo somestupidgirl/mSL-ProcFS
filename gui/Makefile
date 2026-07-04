@@ -9,14 +9,17 @@ MACOS    := $(CONTENTS)/MacOS
 BIN      := $(MACOS)/$(APP)
 ICONSET  := AppIcon.iconset
 
+PREFPANE := ProcFS.prefPane
+PPCONT   := $(PREFPANE)/Contents
+
 SWIFTFLAGS := -O -framework Cocoa
 SIGNCERT   ?= -
 
-all: $(BUNDLE)
+all: $(BUNDLE) $(PREFPANE)
 
-$(BUNDLE): ProcFSMenu.swift Info.plist.in ../VERSION icon_light.png icon_dark.png appicon.png
+$(BUNDLE): ProcFSMenu.swift main.swift Updater.swift Info.plist.in ../VERSION icon_light.png icon_dark.png appicon.png
 	mkdir -p $(MACOS) $(CONTENTS)/Resources
-	swiftc $(SWIFTFLAGS) -o $(BIN) ProcFSMenu.swift
+	swiftc $(SWIFTFLAGS) -o $(BIN) ProcFSMenu.swift main.swift Updater.swift
 	cp icon_light.png icon_dark.png $(CONTENTS)/Resources/
 	@# Finder/Dock app icon: render the standard iconset sizes from appicon.png
 	@# and pack them into AppIcon.icns (referenced by CFBundleIconFile).
@@ -35,7 +38,20 @@ $(BUNDLE): ProcFSMenu.swift Info.plist.in ../VERSION icon_light.png icon_dark.pn
 	xattr -cr $(BUNDLE)
 	codesign -s "$(SIGNCERT)" --force --timestamp=none $(BUNDLE)
 
+# System Settings preference pane (ProcFS.prefPane). Its principal binary is a
+# loadable Mach-O bundle (-emit-library + -bundle) loaded by System Settings.
+$(PREFPANE): ProcFSPref.swift Updater.swift prefpane-Info.plist.in ../VERSION appicon.png
+	mkdir -p $(PPCONT)/MacOS $(PPCONT)/Resources
+	swiftc -O -emit-library -Xlinker -bundle \
+	    -framework AppKit -framework PreferencePanes -framework ServiceManagement \
+	    -module-name ProcFSPref \
+	    -o $(PPCONT)/MacOS/$(APP) ProcFSPref.swift Updater.swift
+	cp appicon.png $(PPCONT)/Resources/
+	sed -e 's/__KEXTVERSION__/$(KEXTVERSION)/g' prefpane-Info.plist.in > $(PPCONT)/Info.plist
+	xattr -cr $(PREFPANE)
+	codesign -s "$(SIGNCERT)" --force --timestamp=none $(PREFPANE)
+
 clean:
-	rm -rf $(BUNDLE) $(ICONSET)
+	rm -rf $(BUNDLE) $(PREFPANE) $(ICONSET)
 
 .PHONY: all clean

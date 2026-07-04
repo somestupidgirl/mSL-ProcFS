@@ -28,6 +28,7 @@ FS_DIR         := /Library/Filesystems
 SBIN_DIR       := /usr/local/sbin
 DAEMON_DIR     := /Library/LaunchDaemons
 APP_DIR        := /Applications
+PREFPANE_DIR   := /Library/PreferencePanes
 SYNTHETIC_CONF := /etc/synthetic.conf
 
 # Identifiers / runtime files.
@@ -157,12 +158,13 @@ plists:
 	@mkdir -p $(OUT)
 	cp tools/$(DAEMON_PLIST) $(OUT)/
 
-# Menu-bar GUI app (ProcFS.app). Its version is stamped from the VERSION file.
+# Menu-bar GUI app (ProcFS.app) and the System Settings pane (ProcFS.prefPane).
+# Their versions are stamped from the VERSION file.
 gui:
 	@mkdir -p $(OUT)
 	$(MAKE) -C gui
-	rm -rf $(OUT)/ProcFS.app
-	mv gui/ProcFS.app $(OUT)/
+	rm -rf $(OUT)/ProcFS.app $(OUT)/ProcFS.prefPane
+	mv gui/ProcFS.app gui/ProcFS.prefPane $(OUT)/
 
 # ---------------------------------------------------------------------------
 # Distribution: a double-clickable installer (.pkg) and disk image (.dmg).
@@ -177,12 +179,13 @@ pkg: all
 	rm -rf $(OUT)/pkgroot $(OUT)/pkgres
 	install -d $(OUT)/pkgroot/Library/Extensions $(OUT)/pkgroot/Library/Filesystems \
 	           $(OUT)/pkgroot/usr/local/sbin $(OUT)/pkgroot/Library/LaunchDaemons \
-	           $(OUT)/pkgroot/Applications
+	           $(OUT)/pkgroot/Applications $(OUT)/pkgroot/Library/PreferencePanes
 	cp -R $(OUT)/procfs.kext          $(OUT)/pkgroot/Library/Extensions/
 	cp -R $(OUT)/procfs.fs            $(OUT)/pkgroot/Library/Filesystems/
 	cp    $(OUT)/procfsd $(OUT)/procfs_ksyms $(OUT)/pkgroot/usr/local/sbin/
 	cp    $(OUT)/$(DAEMON_PLIST)      $(OUT)/pkgroot/Library/LaunchDaemons/
 	cp -R $(OUT)/ProcFS.app           $(OUT)/pkgroot/Applications/
+	cp -R $(OUT)/ProcFS.prefPane      $(OUT)/pkgroot/Library/PreferencePanes/
 	@# codesign/pkgbuild reject Finder-info and similar xattrs.
 	xattr -cr $(OUT)/pkgroot
 	@echo "==> Building component package"
@@ -279,6 +282,10 @@ install-gui:
 	cp -R $(OUT)/ProcFS.app $(APP_DIR)/ProcFS.app
 	chown -R root:wheel $(APP_DIR)/ProcFS.app
 	chmod -R 755 $(APP_DIR)/ProcFS.app
+	rm -rf $(PREFPANE_DIR)/ProcFS.prefPane
+	cp -R $(OUT)/ProcFS.prefPane $(PREFPANE_DIR)/ProcFS.prefPane
+	chown -R root:wheel $(PREFPANE_DIR)/ProcFS.prefPane
+	chmod -R 755 $(PREFPANE_DIR)/ProcFS.prefPane
 
 install-plists:
 	install -m 644 -o root -g wheel $(OUT)/$(DAEMON_PLIST) $(DAEMON_DIR)/$(DAEMON_PLIST)
@@ -320,6 +327,7 @@ uninstall: require-root
 	rm -rf $(EXT_DIR)/procfs.kext
 	rm -rf $(FS_DIR)/procfs.fs
 	rm -rf $(APP_DIR)/ProcFS.app
+	rm -rf $(PREFPANE_DIR)/ProcFS.prefPane
 	rm -f  $(SBIN_DIR)/procfsd $(SBIN_DIR)/procfs_ksyms
 	rm -f  $(ARM_FLAG) $(KSYMS_FILE) $(LINUX_CONF) $(LINUX_VER_CONF)
 	@echo "==> Removing 'proc' from $(SYNTHETIC_CONF)"

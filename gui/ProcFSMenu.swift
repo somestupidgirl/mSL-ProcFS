@@ -90,6 +90,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+
+        // Automatic update check on launch, when enabled in the preference pane.
+        if ProcFSUpdater.checkOnStartup {
+            let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+            ProcFSUpdater.check(currentVersion: v, silent: true)
+        }
     }
 
     private func loadIcon(_ name: String) -> NSImage? {
@@ -115,6 +121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Rebuild the menu each time it opens so the status is always current.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+
+        // Preferences (opens the System Settings pane) - at the very top.
+        addAction(menu, "Preferences…", #selector(openPreferences))
+        menu.addItem(.separator())
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         addDisabled(menu, "ProcFS \(version)")
@@ -195,6 +205,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: actions
 
+    // Open the ProcFS preference pane in System Settings.
+    @objc private func openPreferences() {
+        let path = "/Library/PreferencePanes/ProcFS.prefPane"
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
     @objc private func toggleMount() {
         if isMounted() {
             runPrivileged("/sbin/umount \(kMountPoint)")
@@ -252,9 +268,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 }
-
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)      // menu-bar only, no Dock icon
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()
