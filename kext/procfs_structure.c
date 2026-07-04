@@ -172,6 +172,15 @@ procfs_structure_init(void)
         pfssnode_t *buddyinfo = add_node(root_node, "buddyinfo",
                         PFSbuddyinfo, next_node_id++, 0, 0, NULL, procfs_dobuddyinfo);
 
+        // Linux-style /proc/bus/ - bus-specific info. macOS provides PCI via IOKit:
+        // /proc/bus/pci/devices (the classic PCI device table).
+        pfssnode_t *bus_dir = add_directory(root_node, "bus",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *pci_dir = add_directory(bus_dir, "pci",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *pci_devices = add_node(pci_dir, "devices",
+                        PFSpcidevices, next_node_id++, 0, 0, NULL, procfs_dopcidevices);
+
         // Linux-style kernel boot command line (macOS boot-args / kern.bootargs).
         pfssnode_t *kcmdline = add_node(root_node, "cmdline",
                         PFSkcmdline, next_node_id++, 0, 0, NULL, procfs_dokcmdline);

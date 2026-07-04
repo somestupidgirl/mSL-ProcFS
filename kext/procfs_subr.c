@@ -68,6 +68,7 @@ procfs_allocvp(pfstype pfs_type)
     case PFSapm:            /* FALLTHROUGH */
     case PFSbootconfig:     /* FALLTHROUGH */
     case PFSbuddyinfo:      /* FALLTHROUGH */
+    case PFSpcidevices:     /* FALLTHROUGH */
     case PFSkcmdline:       /* FALLTHROUGH */
         return VREG;
 
@@ -125,7 +126,7 @@ procfs_node_type_has_pid(pfstype node_type)
         && node_type != PFSdevices && node_type != PFSnetdev
         && node_type != PFSallocinfo && node_type != PFSapm
         && node_type != PFSbootconfig && node_type != PFSbuddyinfo
-        && node_type != PFSkcmdline;
+        && node_type != PFSpcidevices && node_type != PFSkcmdline;
 }
 
 /*

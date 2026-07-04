@@ -32,6 +32,7 @@ Linux-compatible files and helpers:
 |`apm`         | Linux-style advanced-power-management line (AC status, battery charge %, time remaining) mapped from IOKit power sources via the `procfsd` daemon |
 |`bootconfig`  | Linux-style boot configuration; macOS has no bootconfig blob, so this is the boot loader's boot-args (`kern.bootargs`) with the Linux `# Parameters from bootloader:` note |
 |`buddyinfo`   | Linux-style buddy-allocator free-block counts; macOS is not a buddy allocator, so the free page count is decomposed into buddy orders (maximally coalesced) — one `Node 0, zone Normal` line |
+|`bus/`        | Bus-specific info directory; macOS provides PCI via IOKit — `bus/pci/devices` is the Linux PCI device table (bus/devfn, vendor:device, name from `IOPCIDevice`; via the `procfsd` daemon) |
 |`byname/`     | Directory of symbolic links, one per process, named by command name |
 |`cmdline`     | Kernel boot command line (macOS boot-args / `kern.bootargs`; Linux's root `/proc/cmdline`) |
 |`cpuinfo`     | Linux-style CPU information (text)                                   |
@@ -370,6 +371,15 @@ largest first — a valid buddyinfo whose blocks account for exactly the free pa
 (`Σ count[order] × 2^order = free_pages`), i.e. free memory presented as maximally
 coalesced. Apple Silicon is single-node UMA, so a single `Node 0, zone Normal`
 line; all-zero without a connected daemon.
+
+`bus/` is Linux's directory of bus-specific information. The classic content is
+`bus/pci/devices`, the PCI device table. macOS exposes PCI through the IORegistry
+(`IOPCIDevice`) rather than a `/proc` table, so the `procfsd` daemon enumerates
+those devices and formats the Linux line for each: `bus/devfn`, `vendor/device`
+id (from the little-endian `vendor-id`/`device-id` properties) and the device
+name (from `IOName`), in the standard 18-field layout. IRQ, base addresses and
+region sizes are not read from IOKit and report 0. `/proc/bus` and `/proc/bus/pci`
+are plain directories; the `devices` listing is empty without a connected daemon.
 
 ### The `procfsd` daemon
 

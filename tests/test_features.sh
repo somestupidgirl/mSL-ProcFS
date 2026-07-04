@@ -91,6 +91,12 @@ for n in extensions modules devices allocinfo apm; do
     elif [ "$daemon" = no ]; then note "$n empty (procfsd not running)"; else bad "$n empty"; fi
 done
 
+hdr "Root: /proc/bus (PCI)"
+tdir "$PROC/bus"     "bus dir"
+tdir "$PROC/bus/pci" "bus/pci dir"
+if out=$(cat "$PROC/bus/pci/devices" 2>/dev/null) && [ -n "$out" ]; then ok "bus/pci/devices: $(printf '%s' "$out" | wc -l | tr -d ' ') devices"
+elif [ "$daemon" = no ]; then note "bus/pci/devices empty (procfsd not running)"; else note "bus/pci/devices empty"; fi
+
 hdr "Root: symlinks + dirs"
 tlink "$PROC/self"    "self"
 tlink "$PROC/curproc" "curproc"

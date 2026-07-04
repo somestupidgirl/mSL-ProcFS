@@ -2111,6 +2111,34 @@ procfs_dodevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/bus/pci/devices - Linux PCI device table. macOS exposes PCI through the
+ * IORegistry (IOPCIDevice), not a /proc-style table, so the procfsd daemon
+ * enumerates those devices and formats the Linux line for each - bus/devfn,
+ * vendor/device id and the device name from IOKit. IRQ, base addresses and
+ * region sizes are not read from IOKit here and report 0. Streamed in chunks
+ * like /proc/devices.
+ */
+int
+procfs_dopcidevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_PCIDEVICES, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/allocinfo - Linux memory-allocation profiling. Linux keys this on code
  * tags (file:line func:name); macOS has no code-tag profiling, so the closest
  * faithful source is the zone allocator (mach_zone_info, what zprint reports):

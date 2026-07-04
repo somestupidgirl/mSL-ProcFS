@@ -33,6 +33,7 @@
 #include <sys/proc_info.h>
 #include <sys/sysctl.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOKitLib.h>
 #include <IOKit/kext/KextManager.h>
 #include <IOKit/ps/IOPowerSources.h>
 #include <IOKit/ps/IOPSKeys.h>
@@ -222,6 +223,8 @@ static char  *g_dev_blob = NULL;   /* Linux format (/proc/devices) */
 static size_t g_dev_blob_len = 0;
 static char  *g_alloc_blob = NULL; /* Linux format (/proc/allocinfo) */
 static size_t g_alloc_blob_len = 0;
+static char  *g_pci_blob = NULL;   /* Linux format (/proc/bus/pci/devices) */
+static size_t g_pci_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -560,6 +563,129 @@ build_allocinfo_blob(char **blobp, size_t *lenp)
         namesCnt * sizeof(*names));
     vm_deallocate(mach_task_self(), (vm_address_t)info,
         infoCnt * sizeof(*info));
+}
+
+/*
+ * /proc/bus/pci/devices support. macOS exposes PCI devices through the
+ * IORegistry (IOPCIDevice), not a /proc table, so enumerate them and format the
+ * Linux line for each. bus/dev/func come from the "pcidebug" property, the ids
+ * from the little-endian "vendor-id"/"device-id" CFData, and the name from
+ * "IOName". IRQ, base addresses and sizes are not read here and report 0.
+ */
+struct pcirow {
+    uint32_t bus;       /* PCI bus number */
+    uint32_t devfn;     /* (device << 3) | function */
+    uint32_t vendor;
+    uint32_t device;
+    char     name[64];
+};
+
+/* Read a little-endian CFData registry property (vendor-id etc.) as a u32. */
+static uint32_t
+pci_cfdata_le32(io_registry_entry_t e, CFStringRef key)
+{
+    uint32_t v = 0;
+    CFTypeRef p = IORegistryEntryCreateCFProperty(e, key, kCFAllocatorDefault, 0);
+    if (p != NULL) {
+        if (CFGetTypeID(p) == CFDataGetTypeID()) {
+            CFDataRef d = (CFDataRef)p;
+            CFIndex n = CFDataGetLength(d);
+            const UInt8 *b = CFDataGetBytePtr(d);
+            for (CFIndex i = 0; i < n && i < 4; i++) {
+                v |= ((uint32_t)b[i]) << (8 * i);
+            }
+        }
+        CFRelease(p);
+    }
+    return v;
+}
+
+/* Copy a CFString registry property into out (empty on failure). */
+static void
+pci_cfstr(io_registry_entry_t e, CFStringRef key, char *out, size_t cap)
+{
+    out[0] = '\0';
+    CFTypeRef p = IORegistryEntryCreateCFProperty(e, key, kCFAllocatorDefault, 0);
+    if (p != NULL) {
+        if (CFGetTypeID(p) == CFStringGetTypeID()) {
+            CFStringGetCString((CFStringRef)p, out, (CFIndex)cap, kCFStringEncodingUTF8);
+        }
+        CFRelease(p);
+    }
+}
+
+static int
+pcirow_cmp(const void *a, const void *b)
+{
+    const struct pcirow *ra = a, *rb = b;
+    if (ra->bus != rb->bus) {
+        return (ra->bus > rb->bus) - (ra->bus < rb->bus);
+    }
+    return (ra->devfn > rb->devfn) - (ra->devfn < rb->devfn);
+}
+
+static void
+build_pci_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    io_iterator_t it = MACH_PORT_NULL;
+    if (IOServiceGetMatchingServices(kIOMainPortDefault,
+            IOServiceMatching("IOPCIDevice"), &it) != KERN_SUCCESS) {
+        return;
+    }
+
+    struct pcirow *rows = NULL;
+    size_t nrows = 0, cap = 0;
+    io_registry_entry_t e;
+    while ((e = IOIteratorNext(it)) != MACH_PORT_NULL) {
+        uint32_t bus = 0, dev = 0, func = 0;
+        char dbg[64];
+        pci_cfstr(e, CFSTR("pcidebug"), dbg, sizeof(dbg));   /* "bus:dev:func" */
+        sscanf(dbg, "%u:%u:%u", &bus, &dev, &func);
+
+        if (nrows == cap) {
+            size_t ncap = (cap == 0) ? 32 : cap * 2;
+            struct pcirow *nr = realloc(rows, ncap * sizeof(*nr));
+            if (nr == NULL) {
+                IOObjectRelease(e);
+                break;
+            }
+            rows = nr;
+            cap = ncap;
+        }
+        struct pcirow *r = &rows[nrows++];
+        r->bus    = bus & 0xff;
+        r->devfn  = ((dev & 0x1f) << 3) | (func & 0x07);
+        r->vendor = pci_cfdata_le32(e, CFSTR("vendor-id")) & 0xffff;
+        r->device = pci_cfdata_le32(e, CFSTR("device-id")) & 0xffff;
+        pci_cfstr(e, CFSTR("IOName"), r->name, sizeof(r->name));
+
+        IOObjectRelease(e);
+    }
+    IOObjectRelease(it);
+
+    qsort(rows, nrows, sizeof(*rows), pcirow_cmp);
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f != NULL) {
+        for (size_t i = 0; i < nrows; i++) {
+            struct pcirow *r = &rows[i];
+            fprintf(f, "%02x%02x\t%04x%04x\t%x",
+                r->bus, r->devfn, r->vendor, r->device, 0 /* irq */);
+            for (int j = 0; j < 7; j++) { fprintf(f, "\t%16llx", 0ULL); }  /* base addrs */
+            for (int j = 0; j < 7; j++) { fprintf(f, "\t%16llx", 0ULL); }  /* sizes */
+            fprintf(f, "\t%s\n", r->name);
+        }
+        fclose(f);
+        *blobp = buf;
+        *lenp = sz;
+    }
+    free(rows);
 }
 
 /*
@@ -945,6 +1071,14 @@ main(int argc, char **argv)
             fill_apm_info(&ai);
             memcpy(payload, &ai, sizeof(ai));
             resp->len = sizeof(ai);
+            break;
+        }
+        case PROCFS_REQ_PCIDEVICES: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_pci_blob(&g_pci_blob, &g_pci_blob_len);
+            }
+            blob_slice(g_pci_blob, g_pci_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_RUSAGE: {
