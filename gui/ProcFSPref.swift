@@ -129,29 +129,28 @@ final class ProcFSPref: NSPreferencePane {
 
     // MARK: sections
 
-    // Card fill roughly matching System Settings' grouped boxes: a white card on
-    // the light-grey window in Aqua, a subtle raised overlay in Dark Aqua. Uses a
-    // dynamic NSColor so NSBox re-renders on an appearance change.
-    private let cardFill = NSColor(name: nil) { ap in
-        ap.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(white: 1.0, alpha: 0.09)
-            : NSColor.white
-    }
-
-    /// Wrap `content` in a rounded System-Settings-style card with inset padding.
+    /// Wrap `content` in a rounded System-Settings-style card. The card's size is
+    /// driven by the content pinned to its edges with `padding`, so it never
+    /// collapses; the rounded background is drawn by the layer-backed CardBox.
     private func card(_ content: NSView, padding: CGFloat = 16) -> NSView {
-        let box = NSBox()
-        box.boxType = .custom
-        box.titlePosition = .noTitle
-        box.borderWidth = 0
-        box.cornerRadius = 10
-        box.fillColor = cardFill
-        box.contentView = content
-        box.contentViewMargins = NSSize(width: padding, height: padding)
+        let box = CardBox()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: padding),
+            content.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -padding),
+            content.topAnchor.constraint(equalTo: box.topAnchor, constant: padding),
+            content.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -padding),
+        ])
         return box
     }
 
     private func makeHeader() -> NSView {
+        // Laid out with explicit constraints (not a stack) so the wrapping
+        // description has a defined width - pinned leading (past the icon) and
+        // trailing - and therefore wraps and sizes correctly.
+        let container = NSView()
+
         // App-style rounded (squircle-ish) icon, like the stock panes.
         let icon = NSImageView()
         icon.imageScaling = .scaleProportionallyUpOrDown
@@ -161,9 +160,6 @@ final class ProcFSPref: NSPreferencePane {
         icon.wantsLayer = true
         icon.layer?.cornerRadius = 10
         icon.layer?.masksToBounds = true
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.widthAnchor.constraint(equalToConstant: 48).isActive = true
-        icon.heightAnchor.constraint(equalToConstant: 48).isActive = true
 
         let title = NSTextField(labelWithString: "ProcFS")
         title.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
@@ -171,19 +167,28 @@ final class ProcFSPref: NSPreferencePane {
         let desc = NSTextField(wrappingLabelWithString: kDescription)
         desc.font = NSFont.systemFont(ofSize: 12)
         desc.textColor = .secondaryLabelColor
-        desc.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let text = NSStackView(views: [title, desc])
-        text.orientation = .vertical
-        text.alignment = .leading
-        text.spacing = 4
-        text.setHuggingPriority(.defaultLow, for: .horizontal)
+        for v in [icon, title, desc] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            icon.topAnchor.constraint(equalTo: container.topAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 48),
+            icon.heightAnchor.constraint(equalToConstant: 48),
+            icon.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor),
 
-        let header = NSStackView(views: [icon, text])
-        header.orientation = .horizontal
-        header.alignment = .top
-        header.spacing = 14
-        return header
+            title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 14),
+            title.topAnchor.constraint(equalTo: container.topAnchor, constant: 1),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
+
+            desc.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 14),
+            desc.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
+            desc.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            desc.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
     }
 
     private func makeSettings() -> NSView {
@@ -349,5 +354,27 @@ final class ProcFSPref: NSPreferencePane {
 
     @objc private func openRepo(_ sender: NSButton) {
         if let u = URL(string: ProcFSUpdater.repoURL) { NSWorkspace.shared.open(u) }
+    }
+}
+
+// MARK: - Rounded card background
+
+/// A layer-backed rounded rectangle used as the background of a settings group,
+/// approximating System Settings' grouped boxes: a white card in Aqua, a subtle
+/// raised overlay in Dark Aqua. Redraws on an appearance change.
+private final class CardBox: NSView {
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        wantsLayer = true
+        layer?.cornerRadius = 10
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        layer?.backgroundColor = (dark ? NSColor(white: 1.0, alpha: 0.09)
+                                        : NSColor.white).cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 }
