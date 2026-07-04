@@ -411,8 +411,9 @@ is also served at `/proc/driver/rtc`, where Linux groups driver-specific files.
 Modern Linux keeps only the native personality and emits a single fixed line,
 `0-0\tLinux\t[kernel]`. macOS has no exec-domain subsystem; its native
 personality is Darwin/Mach-O, so — as `/proc/version` reports Darwin rather than
-Linux — the sole domain is reported with the native name: `0-0  Darwin  [kernel]`.
-Fully in-kernel.
+Linux — the sole domain is reported with the native name: `0-0  Darwin  [kernel]`,
+becoming `0-0  Linux  [kernel]` when a Linux kernel version is spoofed (see
+*Spoofing the Linux kernel version*). Fully in-kernel.
 
 `fb` lists the registered framebuffer devices, one `<index> <name>` line each.
 macOS drives displays through IOKit framebuffers — `IOFramebuffer` on Intel,
@@ -510,14 +511,36 @@ the command line, write the file yourself, e.g. `echo 1 | sudo tee
 /var/db/procfs.linux`. Removing the file reverts to the native-by-default
 behaviour.
 
+**Spoofing the Linux kernel version:** a companion sysctl, `procfs.linux_version`,
+makes procfs report a Linux *identity* instead of Darwin. `0` = None (native
+Darwin, the default); `1..N` select a preset Linux release. When set, `/proc/version`
+becomes a Linux banner, `/proc/execdomains` reads `0-0  Linux  [kernel]`, and the
+`/proc/sys/kernel/{ostype,osrelease,version}` mirror reports `Linux` / the release
+/ the banner:
+
+    $ sudo sysctl -w procfs.linux_version=2
+    $ cat /proc/version
+    Linux version 6.6.0 (builder@linux-build-env) (gcc version 10.3.0 (Ubuntu 10.3.0-1ubuntu1)) #1 SMP PREEMPT_DYNAMIC Sat Dec 14 12:00:00 UTC 2024
+    $ cat /proc/sys/kernel/ostype
+    Linux
+
+The presets (`6.12.0`, `6.6.0`, `6.1.0`, `5.15.0`, `5.10.0`) live in
+`procfs_linux_versions[]` in the kext and must stay in sync with the menu-bar app's
+version menu. Like the presentation mode, the choice persists across reboots via
+`/var/db/procfs.linux_version` (the preset index), restored by `procfsd`. This is
+independent of `procfs.linux` (which only changes binary-vs-text rendering); the
+menu-bar app just presents the version dropdown underneath *Linux compatibility*.
+
 ## Menu-bar app
 
 `ProcFS.app` is a lightweight menu-bar (status-bar) app for controlling procfs
 without the command line. Its menu shows live status — whether `/proc` is
 mounted, whether the `procfsd` daemon is running, and whether Linux presentation
 mode is on — and offers one-click toggles for each (mount/unmount, Linux
-compatibility on/off, start/stop daemon), plus the current version. The
-mutating actions need root, so they go through the standard macOS
+compatibility on/off, start/stop daemon), plus the current version. When Linux
+compatibility is on, a *Spoof Linux Kernel Version* submenu appears with a few
+preset Linux releases and a *None (Darwin)* entry at the bottom (the default).
+The mutating actions need root, so they go through the standard macOS
 administrator-authorization prompt; status is read unprivileged. It is built as
 part of `make` (into `bin/ProcFS.app`, version stamped from `VERSION`) and
 installed to `/Applications` by `sudo make install`.

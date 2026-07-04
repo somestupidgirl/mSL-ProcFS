@@ -213,6 +213,27 @@ procfs_sysctl_read(uint64_t objectid, uio_t uio)
         return ENOENT;
     }
 
+    /*
+     * When a Linux kernel version is being spoofed, the OS-identity sysctls
+     * report a Linux identity so /proc/sys/kernel/{ostype,osrelease,version}
+     * agree with /proc/version.
+     */
+    const char *rel = procfs_spoofed_release();
+    if (rel != NULL) {
+        char sbuf[512];
+        if (strcmp(name, "kern.ostype") == 0) {
+            return procfs_copy_data("Linux\n", 6, uio);
+        }
+        if (strcmp(name, "kern.osrelease") == 0) {
+            int n = snprintf(sbuf, sizeof(sbuf), "%s\n", rel);
+            return procfs_copy_data(sbuf, n, uio);
+        }
+        if (strcmp(name, "kern.version") == 0) {
+            int n = procfs_build_linux_version(sbuf, sizeof(sbuf));
+            return procfs_copy_data(sbuf, n, uio);
+        }
+    }
+
     uint8_t raw[1024];
     size_t  rawlen = 0;
 

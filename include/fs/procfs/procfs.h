@@ -575,6 +575,16 @@ extern void procfs_sysctl_register(void);
 extern void procfs_sysctl_unregister(void);
 
 /*
+ * Spoofed Linux kernel version, set via the `procfs.linux_version` sysctl:
+ * 0 = None (native Darwin identity), 1..N select a preset release. When active,
+ * /proc/version, /proc/execdomains and the kern.ostype/osrelease/version sysctl
+ * mirror report a Linux identity.
+ */
+extern int         procfs_linux_version;
+extern const char *procfs_spoofed_release(void);          /* release str or NULL */
+extern int         procfs_build_linux_version(char *buf, size_t sz); /* len, or 0 */
+
+/*
  * Helper functions for loadavg.
  */
 extern void procfs_loadavg_start(void);

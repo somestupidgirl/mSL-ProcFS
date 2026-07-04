@@ -58,6 +58,7 @@ extern char **environ;
 #define PROCFS_STAGER     "/usr/local/sbin/procfs_ksyms"   /* symbol-staging helper */
 #define PROCFS_ARM_FLAG   "/var/db/procfs.enabled"         /* gate for auto-loading the kext */
 #define PROCFS_LINUX_CONF "/var/db/procfs.linux"           /* persisted procfs.linux mode */
+#define PROCFS_LINUX_VER_CONF "/var/db/procfs.linux_version" /* persisted spoof-version idx */
 
 /* Run a program to completion (best-effort). */
 static void
@@ -1042,37 +1043,32 @@ procfsd_handle_regs(const struct procfs_ctl_req *req, struct procfs_ctl_resp *re
 }
 
 /*
- * Restore the persisted native/Linux presentation mode. The `procfs.linux`
- * sysctl lives in the kext and resets to its default (0, native) every time the
- * kext loads, so the GUI's choice is saved to PROCFS_LINUX_CONF and re-applied
- * here whenever the kext (re)appears - at boot and after any reload. Absent file
- * means "never set" and leaves the kext default untouched.
+ * Restore one persisted integer setting: read `path` and write the value to the
+ * `oid` sysctl. wait_connect() returns as soon as the kext registers its kernel
+ * control, which the start routine does just before registering these oids - so
+ * an oid may not exist for a few microseconds yet; retry while it is still
+ * absent (ENOENT), up to ~1s. When clamp01 is set the value is forced to 0/1.
  */
 static void
-apply_persisted_linux_mode(void)
+apply_persisted_int(const char *path, const char *oid, int clamp01)
 {
-    FILE *f = fopen(PROCFS_LINUX_CONF, "r");
+    FILE *f = fopen(path, "r");
     if (f == NULL) {
-        return;
+        return;                 /* never set -> leave the kext default */
     }
-    int mode = 0;
-    int got  = fscanf(f, "%d", &mode);
+    int val = 0;
+    int got = fscanf(f, "%d", &val);
     fclose(f);
     if (got != 1) {
         return;
     }
-    mode = (mode != 0) ? 1 : 0;
+    if (clamp01) {
+        val = (val != 0) ? 1 : 0;
+    }
 
-    /*
-     * wait_connect() returns as soon as the kext registers its kernel control,
-     * which the start routine does just before registering the procfs.linux
-     * sysctl - so the oid may not exist for a few microseconds yet. Retry while
-     * it is still absent (ENOENT), up to ~1s, rather than lose the restore to
-     * that window.
-     */
     for (int tries = 0; tries < 50; tries++) {
-        if (sysctlbyname("procfs.linux", NULL, NULL, &mode, sizeof(mode)) == 0) {
-            fprintf(stderr, "procfsd: restored procfs.linux=%d\n", mode);
+        if (sysctlbyname(oid, NULL, NULL, &val, sizeof(val)) == 0) {
+            fprintf(stderr, "procfsd: restored %s=%d\n", oid, val);
             return;
         }
         if (errno != ENOENT) {
@@ -1080,8 +1076,21 @@ apply_persisted_linux_mode(void)
         }
         usleep(20000);          /* 20 ms */
     }
-    fprintf(stderr, "procfsd: could not restore procfs.linux=%d: %s\n",
-        mode, strerror(errno));
+    fprintf(stderr, "procfsd: could not restore %s=%d: %s\n",
+        oid, val, strerror(errno));
+}
+
+/*
+ * Restore the persisted procfs state - the native/Linux presentation mode and
+ * the spoofed Linux kernel version. Both sysctls live in the kext and reset to
+ * their defaults every time it loads, so the GUI's choices are saved to
+ * /var/db/procfs.linux[_version] and re-applied whenever the kext (re)appears.
+ */
+static void
+apply_persisted_linux_mode(void)
+{
+    apply_persisted_int(PROCFS_LINUX_CONF,     "procfs.linux",         1);
+    apply_persisted_int(PROCFS_LINUX_VER_CONF, "procfs.linux_version", 0);
 }
 
 int

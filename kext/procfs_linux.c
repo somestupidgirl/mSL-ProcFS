@@ -998,9 +998,12 @@ int
 procfs_doexecdomains(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     /* pers_low-pers_high  name(left-justified)  [module]  - the classic
-     * exec_domain print format, with macOS's single native personality. */
-    static const char text[] = "0-0\t" "Darwin          " "\t[kernel]\n";
-    return procfs_copy_data(text, sizeof(text) - 1, uio);
+     * exec_domain print format. The personality is "Linux" when a Linux kernel
+     * version is being spoofed, otherwise macOS's native "Darwin". */
+    const char *name = (procfs_spoofed_release() != NULL) ? "Linux" : "Darwin";
+    char buf[64];
+    int  len = snprintf(buf, sizeof(buf), "0-0\t%-16s\t[kernel]\n", name);
+    return procfs_copy_data(buf, len, uio);
 }
 
 /*
@@ -1689,13 +1692,61 @@ procfs_dothreadsched(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
- * Linux-compatible /proc/version
+ * Spoofed Linux kernel version. procfs_linux_version indexes procfs_linux_versions[]
+ * (0 = None). When non-zero, the OS identity nodes report Linux instead of Darwin.
+ * The preset list here MUST stay in sync with the menu-bar app's version menu.
+ */
+int procfs_linux_version = 0;
+
+static const char *const procfs_linux_versions[] = {
+    NULL,           /* 0 = None (native Darwin) */
+    "6.12.0",
+    "6.6.0",
+    "6.1.0",
+    "5.15.0",
+    "5.10.0",
+};
+#define PROCFS_LINUX_NVERSIONS \
+    (int)(sizeof(procfs_linux_versions) / sizeof(procfs_linux_versions[0]))
+
+const char *
+procfs_spoofed_release(void)
+{
+    int v = procfs_linux_version;
+    if (v > 0 && v < PROCFS_LINUX_NVERSIONS) {
+        return procfs_linux_versions[v];
+    }
+    return NULL;
+}
+
+int
+procfs_build_linux_version(char *buf, size_t sz)
+{
+    const char *rel = procfs_spoofed_release();
+    if (rel == NULL) {
+        return 0;
+    }
+    return snprintf(buf, sz,
+        "Linux version %s (builder@linux-build-env) "
+        "(gcc version 10.3.0 (Ubuntu 10.3.0-1ubuntu1)) "
+        "#1 SMP PREEMPT_DYNAMIC Sat Dec 14 12:00:00 UTC 2024\n", rel);
+}
+
+/*
+ * Linux-compatible /proc/version. Reports the spoofed Linux version string when
+ * procfs.linux_version is set, otherwise the native Darwin kernel version.
  */
 int
 procfs_doversion(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     int error = 0;
     int len = 0, xlen = 0;
+
+    char vb[LBFSZ];
+    int vlen = procfs_build_linux_version(vb, sizeof(vb));
+    if (vlen > 0) {
+        return procfs_copy_data(vb, (size_t)vlen, uio);
+    }
 
     vm_offset_t off = uio_offset(uio);
     vm_offset_t pgno = trunc_page(off);
@@ -2643,16 +2694,31 @@ static struct sysctl_oid procfs_sysctl_linux = {
     .oid_version = SYSCTL_OID_VERSION,
 };
 
+static struct sysctl_oid procfs_sysctl_linux_version = {
+    .oid_parent  = &procfs_sysctl_children,
+    .oid_number  = OID_AUTO,
+    .oid_kind    = CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_OID2,
+    .oid_arg1    = &procfs_linux_version,
+    .oid_arg2    = 0,
+    .oid_name    = "linux_version",
+    .oid_handler = sysctl_handle_int,
+    .oid_fmt     = "I",
+    .oid_descr   = "spoofed Linux kernel version: 0 = none (Darwin), 1..N = preset release",
+    .oid_version = SYSCTL_OID_VERSION,
+};
+
 void
 procfs_sysctl_register(void)
 {
     sysctl_register_oid(&procfs_sysctl_node);   /* parent first */
     sysctl_register_oid(&procfs_sysctl_linux);
+    sysctl_register_oid(&procfs_sysctl_linux_version);
 }
 
 void
 procfs_sysctl_unregister(void)
 {
+    sysctl_unregister_oid(&procfs_sysctl_linux_version);
     sysctl_unregister_oid(&procfs_sysctl_linux);
     sysctl_unregister_oid(&procfs_sysctl_node);
 }

@@ -17,6 +17,11 @@ private let kMountPoint  = "/proc"
 private let kDaemonLabel = "com.beako.procfsd"
 private let kDaemonPlist = "/Library/LaunchDaemons/com.beako.procfsd.plist"
 private let kLinuxConf   = "/var/db/procfs.linux"   // persisted procfs.linux mode (procfsd restores it)
+private let kLinuxVerConf = "/var/db/procfs.linux_version"  // persisted spoof-version index
+
+// Spoofable Linux kernel releases. Order MUST match procfs_linux_versions[] in
+// the kext (index here + 1 == the procfs.linux_version sysctl value; 0 = None).
+private let kLinuxVersions = ["6.12.0", "6.6.0", "6.1.0", "5.15.0", "5.10.0"]
 
 // MARK: - Shell helpers
 
@@ -60,6 +65,12 @@ private func linuxModeOn() -> Bool {
     // The oid exists only while the kext is loaded; absent -> off.
     return shell("/usr/sbin/sysctl", ["-n", "procfs.linux"])
         .trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+}
+
+// Selected spoof-version index (0 = None/Darwin, 1..N = kLinuxVersions[idx-1]).
+private func linuxVersionIndex() -> Int {
+    return Int(shell("/usr/sbin/sysctl", ["-n", "procfs.linux_version"])
+        .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
 }
 
 // MARK: - App
@@ -116,6 +127,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addDisabled(menu, "Mount: " + (mounted ? "mounted at \(kMountPoint)" : "not mounted"))
         addDisabled(menu, "Daemon: " + (daemon ? "running" : "stopped"))
         addDisabled(menu, "Linux mode: " + (linux ? "on" : "off"))
+        if linux {
+            let vi = linuxVersionIndex()
+            let vlabel = (vi >= 1 && vi <= kLinuxVersions.count)
+                ? "Linux \(kLinuxVersions[vi - 1])" : "Darwin (native)"
+            addDisabled(menu, "Kernel version: " + vlabel)
+        }
         menu.addItem(.separator())
 
         addAction(menu, mounted ? "Unmount \(kMountPoint)" : "Mount \(kMountPoint)",
@@ -123,6 +140,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let linuxItem = addAction(menu, "Linux compatibility", #selector(toggleLinux))
         linuxItem.state = linux ? .on : .off
+
+        // The version-spoof dropdown is only offered while Linux compatibility is on.
+        if linux {
+            let verItem = NSMenuItem(title: "Spoof Linux Kernel Version",
+                                     action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            let cur = linuxVersionIndex()
+            for (i, v) in kLinuxVersions.enumerated() {
+                let it = NSMenuItem(title: "Linux \(v)",
+                                    action: #selector(setLinuxVersion(_:)), keyEquivalent: "")
+                it.target = self
+                it.tag = i + 1
+                it.state = (cur == i + 1) ? .on : .off
+                submenu.addItem(it)
+            }
+            submenu.addItem(.separator())
+            let none = NSMenuItem(title: "None (Darwin)",
+                                  action: #selector(setLinuxVersion(_:)), keyEquivalent: "")
+            none.target = self
+            none.tag = 0
+            none.state = (cur == 0) ? .on : .off
+            submenu.addItem(none)
+            verItem.submenu = submenu
+            menu.addItem(verItem)
+        }
 
         addAction(menu, daemon ? "Stop daemon" : "Start daemon", #selector(toggleDaemon))
 
@@ -168,6 +210,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let want = linuxModeOn() ? "0" : "1"
         _ = runPrivileged("/usr/sbin/sysctl -w procfs.linux=\(want) && "
                         + "/bin/echo \(want) > \(kLinuxConf)")
+    }
+
+    // Set the spoofed Linux kernel version (tag: 0 = None, 1..N = preset). Applied
+    // live and persisted like Linux mode, so procfsd restores it across reboots.
+    @objc private func setLinuxVersion(_ sender: NSMenuItem) {
+        let idx = sender.tag
+        _ = runPrivileged("/usr/sbin/sysctl -w procfs.linux_version=\(idx) && "
+                        + "/bin/echo \(idx) > \(kLinuxVerConf)")
     }
 
     @objc private func toggleDaemon() {

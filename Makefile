@@ -37,6 +37,7 @@ DAEMON_LABEL   := com.beako.procfsd
 ARM_FLAG       := /var/db/procfs.enabled
 KSYMS_FILE     := /var/db/procfs.ksyms
 LINUX_CONF     := /var/db/procfs.linux
+LINUX_VER_CONF := /var/db/procfs.linux_version
 
 # Version (single source of truth: the repo VERSION file), used for the
 # installer package / disk image names and metadata.
@@ -320,7 +321,7 @@ uninstall: require-root
 	rm -rf $(FS_DIR)/procfs.fs
 	rm -rf $(APP_DIR)/ProcFS.app
 	rm -f  $(SBIN_DIR)/procfsd $(SBIN_DIR)/procfs_ksyms
-	rm -f  $(ARM_FLAG) $(KSYMS_FILE) $(LINUX_CONF)
+	rm -f  $(ARM_FLAG) $(KSYMS_FILE) $(LINUX_CONF) $(LINUX_VER_CONF)
 	@echo "==> Removing 'proc' from $(SYNTHETIC_CONF)"
 	-@if [ -f $(SYNTHETIC_CONF) ]; then \
 		grep -vxF 'proc' $(SYNTHETIC_CONF) > $(SYNTHETIC_CONF).tmp 2>/dev/null && \

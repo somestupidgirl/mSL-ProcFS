@@ -128,7 +128,12 @@ fl=$(ls "$PROC/byname" 2>/dev/null | head -1); [ -n "$fl" ] && tlink "$PROC/byna
 hdr "Root: /proc/sys sysctl mirror"
 tdir  "$PROC/sys"                "sys readdir"
 tdir  "$PROC/sys/kern"           "sys/kern readdir"
-v=$(cat "$PROC/sys/kern/ostype" 2>/dev/null); [ "$v" = "Darwin" ] && ok "sys/kern/ostype = Darwin" || bad "sys/kern/ostype = '$v'"
+v=$(cat "$PROC/sys/kern/ostype" 2>/dev/null)
+# "Linux" when a kernel version is being spoofed (procfs.linux_version), else Darwin
+case "$v" in Darwin|Linux) ok "sys/kern/ostype = $v";; *) bad "sys/kern/ostype = '$v'";; esac
+# Linux-version-spoof oid should exist while the kext is loaded
+sv=$(sysctl -n procfs.linux_version 2>/dev/null)
+[ -n "$sv" ] && ok "procfs.linux_version oid present (= $sv)" || note "procfs.linux_version oid absent (kext not loaded?)"
 
 hdr "Per-process: identity (binary int32)"
 tdir "$P" "process dir readdir"
