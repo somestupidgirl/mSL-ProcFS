@@ -160,6 +160,10 @@ procfs_structure_init(void)
         pfssnode_t *allocinfo = add_node(root_node, "allocinfo",
                         PFSallocinfo, next_node_id++, 0, 0, NULL, procfs_doallocinfo);
 
+        // Linux-style /proc/apm (power/battery state via IOKit power sources in procfsd).
+        pfssnode_t *apm = add_node(root_node, "apm",
+                        PFSapm, next_node_id++, 0, 0, NULL, procfs_doapm);
+
         // Linux-style kernel boot command line (macOS boot-args / kern.bootargs).
         pfssnode_t *kcmdline = add_node(root_node, "cmdline",
                         PFSkcmdline, next_node_id++, 0, 0, NULL, procfs_dokcmdline);

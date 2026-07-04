@@ -29,6 +29,7 @@ Linux-compatible files and helpers:
 | Entry        | Summary                                                              |
 |--------------|---------------------------------------------------------------------|
 |`allocinfo`   | Linux-style memory-allocation profiling; macOS has no code-tag profiling, so this is the zone allocator (`mach_zone_info`, via `procfsd`): one row per zone with live bytes, live count and the zone name in place of Linux's `file:line func:` tag |
+|`apm`         | Linux-style advanced-power-management line (AC status, battery charge %, time remaining) mapped from IOKit power sources via the `procfsd` daemon |
 |`byname/`     | Directory of symbolic links, one per process, named by command name |
 |`cmdline`     | Kernel boot command line (macOS boot-args / `kern.bootargs`; Linux's root `/proc/cmdline`) |
 |`cpuinfo`     | Linux-style CPU information (text)                                   |
@@ -336,6 +337,16 @@ row per zone — `<live bytes> <live count> zone:<name>`, where live bytes is th
 zone's element count times its element size and the zone name stands in for
 Linux's code tag — sorted by size descending, streamed over the same chunked
 transfer as `extensions`/`modules`/`devices`. Empty without a connected daemon.
+
+`apm` is the Linux advanced-power-management line (`/proc/apm`). macOS has no APM,
+so the power state comes from IOKit power sources (the data `pmset -g batt`
+reports): the `procfsd` daemon reads the AC/battery state, charge percentage,
+charging flag and time remaining, and the kext maps them onto the classic APM
+format — `driver_ver bios_ver bios_flags ac_status battery_status battery_flag
+percentage% time units` — using the Linux apm-emulation status/flag byte
+encoding (e.g. `0x01`/`0x00` AC on/off; battery status high/low/critical/charging;
+time in minutes). A machine with no battery reports the no-battery flag `0x80`;
+the node is empty without a connected daemon.
 
 ### The `procfsd` daemon
 

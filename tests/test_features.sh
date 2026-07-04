@@ -80,7 +80,7 @@ tfile "$PROC/cmdline"         "cmdline (kernel boot args)"
 tfile "$PROC/net/dev"         "net/dev (interface stats)"
 
 hdr "Root: daemon-backed listings"
-for n in extensions modules devices allocinfo; do
+for n in extensions modules devices allocinfo apm; do
     if out=$(cat "$PROC/$n" 2>/dev/null) && [ -n "$out" ]; then ok "$n: $(printf '%s' "$out" | wc -l | tr -d ' ') lines"
     elif [ "$daemon" = no ]; then note "$n empty (procfsd not running)"; else bad "$n empty"; fi
 done

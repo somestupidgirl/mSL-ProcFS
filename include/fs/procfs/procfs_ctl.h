@@ -47,6 +47,21 @@ enum {
     PROCFS_REQ_ALLOCINFO  = 15, /* arg = byte offset; same chunked transfer as
                                  * PROCFS_REQ_DEVICES, Linux /proc/allocinfo format
                                  * (per-zone allocation stats via mach_zone_info). */
+    PROCFS_REQ_APM        = 16, /* payload: struct procfs_apm_info (IOKit power
+                                 * sources), for Linux /proc/apm */
+};
+
+/*
+ * Power-source snapshot for /proc/apm (PROCFS_REQ_APM). The daemon fills the raw
+ * macOS values from IOKit power sources; the kext maps them to the Linux APM
+ * status/flag byte encoding and formats the line. Fields use -1 for "unknown".
+ */
+struct procfs_apm_info {
+    int32_t ac_online;          /* 1 = AC, 0 = battery, -1 = unknown */
+    int32_t battery_present;    /* 1 = a battery exists, 0 = none */
+    int32_t charging;           /* 1 = charging */
+    int32_t percentage;         /* 0-100, -1 = unknown */
+    int32_t time_minutes;       /* remaining minutes (to empty/full), -1 = unknown */
 };
 
 /* kext -> daemon */

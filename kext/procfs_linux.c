@@ -2094,6 +2094,51 @@ procfs_doallocinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ct
 }
 
 /*
+ * /proc/apm - Linux advanced-power-management line. macOS has no APM, so the
+ * power/battery state comes from IOKit power sources (via the daemon) and is
+ * mapped onto the classic single-line APM format:
+ *   driver_ver bios_ver bios_flags ac_status batt_status batt_flag pct% time units
+ * The AC/battery status and flag bytes follow the Linux apm-emulation encoding.
+ */
+int
+procfs_doapm(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct procfs_apm_info info = { -1, 0, 0, -1, -1 };
+    struct procfs_apm_info tmp;
+    uint32_t got = 0;
+    int error = procfs_ctl_request(PROCFS_REQ_APM, 0, 0, &tmp, sizeof(tmp), &got);
+    if (error != 0) {
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+    if (got == sizeof(tmp)) {
+        info = tmp;
+    }
+
+    int ac = (info.ac_online == 1) ? 0x01 : (info.ac_online == 0) ? 0x00 : 0xff;
+    int pct = info.percentage, tmin = info.time_minutes;
+    int bstatus, bflag;
+    if (!info.battery_present) {
+        bstatus = 0xff; bflag = 0x80;               /* no battery */
+        pct = -1; tmin = -1;
+    } else if (info.charging) {
+        bstatus = 0x03; bflag = 0x08;               /* charging */
+    } else if (pct > 50) {
+        bstatus = 0x00; bflag = 0x01;               /* high */
+    } else if (pct > 5) {
+        bstatus = 0x01; bflag = 0x02;               /* low */
+    } else {
+        bstatus = 0x02; bflag = 0x04;               /* critical */
+    }
+    const char *units = (tmin >= 0) ? "min" : "?";
+
+    char buf[128];
+    int len = snprintf(buf, sizeof(buf),
+        "1.16 1.2 0x02 0x%02x 0x%02x 0x%02x %d%% %d %s\n",
+        ac, bstatus, bflag, pct, tmin, units);
+    return procfs_copy_data(buf, len, uio);
+}
+
+/*
  * /proc/net/dev - Linux per-interface network statistics. The interface list
  * and counters come from the public ifnet KPIs (ifnet_list_get / ifnet_stat),
  * so this runs entirely in-kernel. macOS keeps a single dropped counter and no

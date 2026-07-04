@@ -34,6 +34,8 @@
 #include <sys/sysctl.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/kext/KextManager.h>
+#include <IOKit/ps/IOPowerSources.h>
+#include <IOKit/ps/IOPSKeys.h>
 #include <mach/mach.h>
 #include <mach/mach_host.h>
 #include <mach/task.h>
@@ -560,6 +562,69 @@ build_allocinfo_blob(char **blobp, size_t *lenp)
         infoCnt * sizeof(*info));
 }
 
+/*
+ * Snapshot the system's power state for /proc/apm from IOKit power sources
+ * (the data `pmset -g batt` reports). The kext turns these raw values into the
+ * Linux APM line. Everything defaults to "unknown"; a machine with no power
+ * source (a desktop) reports no battery and AC online.
+ */
+static void
+fill_apm_info(struct procfs_apm_info *out)
+{
+    out->ac_online       = -1;
+    out->battery_present = 0;
+    out->charging        = 0;
+    out->percentage      = -1;
+    out->time_minutes    = -1;
+
+    CFTypeRef blob = IOPSCopyPowerSourcesInfo();
+    if (blob == NULL) {
+        return;
+    }
+    CFArrayRef list = IOPSCopyPowerSourcesList(blob);
+    if (list != NULL) {
+        CFIndex n = CFArrayGetCount(list);
+        if (n == 0) {
+            out->ac_online = 1;         /* no power source -> desktop on AC */
+        }
+        for (CFIndex i = 0; i < n; i++) {
+            CFDictionaryRef d = IOPSGetPowerSourceDescription(blob,
+                CFArrayGetValueAtIndex(list, i));
+            if (d == NULL) {
+                continue;
+            }
+            out->battery_present = 1;
+
+            CFStringRef state = CFDictionaryGetValue(d, CFSTR(kIOPSPowerSourceStateKey));
+            if (state != NULL) {
+                out->ac_online = CFEqual(state, CFSTR(kIOPSACPowerValue)) ? 1 : 0;
+            }
+            CFBooleanRef chg = CFDictionaryGetValue(d, CFSTR(kIOPSIsChargingKey));
+            if (chg != NULL) {
+                out->charging = CFBooleanGetValue(chg) ? 1 : 0;
+            }
+            int cur = 0, max = 0;
+            CFNumberRef c = CFDictionaryGetValue(d, CFSTR(kIOPSCurrentCapacityKey));
+            CFNumberRef m = CFDictionaryGetValue(d, CFSTR(kIOPSMaxCapacityKey));
+            if (c != NULL) { CFNumberGetValue(c, kCFNumberIntType, &cur); }
+            if (m != NULL) { CFNumberGetValue(m, kCFNumberIntType, &max); }
+            if (max > 0) {
+                out->percentage = (cur * 100) / max;
+            }
+            /* Time to empty when discharging, time to full when charging;
+             * either is -1 while the estimate is still settling. */
+            int t = -1;
+            CFNumberRef te = CFDictionaryGetValue(d, out->charging ?
+                CFSTR(kIOPSTimeToFullChargeKey) : CFSTR(kIOPSTimeToEmptyKey));
+            if (te != NULL) { CFNumberGetValue(te, kCFNumberIntType, &t); }
+            out->time_minutes = t;
+            break;                      /* first (internal) battery */
+        }
+        CFRelease(list);
+    }
+    CFRelease(blob);
+}
+
 /* Copy the slice of `blob` at `off` into a response payload (chunked transfer). */
 static void
 blob_slice(const char *blob, size_t len, size_t off,
@@ -873,6 +938,13 @@ main(int argc, char **argv)
                 build_allocinfo_blob(&g_alloc_blob, &g_alloc_blob_len);
             }
             blob_slice(g_alloc_blob, g_alloc_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_APM: {
+            struct procfs_apm_info ai;
+            fill_apm_info(&ai);
+            memcpy(payload, &ai, sizeof(ai));
+            resp->len = sizeof(ai);
             break;
         }
         case PROCFS_REQ_RUSAGE: {
