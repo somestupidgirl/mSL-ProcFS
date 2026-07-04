@@ -30,6 +30,7 @@ Linux-compatible files and helpers:
 |--------------|---------------------------------------------------------------------|
 |`allocinfo`   | Linux-style memory-allocation profiling; macOS has no code-tag profiling, so this is the zone allocator (`mach_zone_info`, via `procfsd`): one row per zone with live bytes, live count and the zone name in place of Linux's `file:line func:` tag |
 |`apm`         | Linux-style advanced-power-management line (AC status, battery charge %, time remaining) mapped from IOKit power sources via the `procfsd` daemon |
+|`bootconfig`  | Linux-style boot configuration; macOS has no bootconfig blob, so this is the boot loader's boot-args (`kern.bootargs`) with the Linux `# Parameters from bootloader:` note |
 |`byname/`     | Directory of symbolic links, one per process, named by command name |
 |`cmdline`     | Kernel boot command line (macOS boot-args / `kern.bootargs`; Linux's root `/proc/cmdline`) |
 |`cpuinfo`     | Linux-style CPU information (text)                                   |
@@ -347,6 +348,16 @@ percentage% time units` — using the Linux apm-emulation status/flag byte
 encoding (e.g. `0x01`/`0x00` AC on/off; battery status high/low/critical/charging;
 time in minutes). A machine with no battery reports the no-battery flag `0x80`;
 the node is empty without a connected daemon.
+
+`bootconfig` is Linux's boot-configuration node (`/proc/bootconfig`). Linux fills
+it from a bootconfig blob appended to the initrd, followed by a `# Parameters
+from bootloader:` note carrying the original bootloader command line. macOS has
+no such blob — its only boot configuration is the boot-args the boot loader
+(iBoot / NVRAM) passes to the kernel (`kern.bootargs`, the same source as
+`/proc/cmdline`). So the boot-args are emitted as the boot config and, because on
+macOS the kernel parameters come from the boot loader, repeated in the
+`# Parameters from bootloader:` form. Read in-kernel with the same `procfsd`
+sysctl-bridge fallback as `/proc/cmdline`; empty when no boot-args are set.
 
 ### The `procfsd` daemon
 

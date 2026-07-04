@@ -2236,6 +2236,52 @@ procfs_dokcmdline(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
     return error;
 }
 
+/*
+ * /proc/bootconfig - Linux's boot-configuration view. Linux fills this from a
+ * bootconfig blob appended to the initrd, plus a "# Parameters from bootloader:"
+ * note carrying the original bootloader command line. macOS has no such blob:
+ * its only boot configuration is the boot-args the boot loader (iBoot / NVRAM)
+ * passes to the kernel (sysctl kern.bootargs, the same source as /proc/cmdline).
+ * So the boot-args are emitted as the boot config, and - since on macOS the
+ * kernel parameters come from the boot loader - repeated in the Linux
+ * "# Parameters from bootloader:" form when present.
+ */
+int
+procfs_dobootconfig(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    char   raw[1024];
+    size_t rawlen = sizeof(raw);
+
+    if (sysctlbyname("kern.bootargs", raw, &rawlen, NULL, 0) != 0 || rawlen == 0) {
+        uint32_t dlen = 0;
+        if (procfs_ctl_request_named(PROCFS_REQ_SYSCTL, 0, 0, "kern.bootargs",
+                raw, sizeof(raw), &dlen) == 0) {
+            rawlen = dlen;
+        } else {
+            rawlen = 0;
+        }
+    }
+    if (rawlen > 0 && raw[rawlen - 1] == '\0') {
+        rawlen--;                        /* drop the trailing NUL */
+    }
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 256, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+    if (rawlen > 0) {
+        /* Boot config (the kernel command line), then the bootloader-parameters
+         * note - on macOS both are the boot loader's boot-args. */
+        sbuf_printf(&sb, "%.*s\n", (int)rawlen, raw);
+        sbuf_printf(&sb, "# Parameters from bootloader:\n# %.*s\n",
+            (int)rawlen, raw);
+    }
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
 #pragma mark -
 #pragma mark Presentation-mode switch (native vs Linux)
 

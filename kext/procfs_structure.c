@@ -164,6 +164,10 @@ procfs_structure_init(void)
         pfssnode_t *apm = add_node(root_node, "apm",
                         PFSapm, next_node_id++, 0, 0, NULL, procfs_doapm);
 
+        // Linux-style /proc/bootconfig (macOS boot-args as the boot config + bootloader note).
+        pfssnode_t *bootconfig = add_node(root_node, "bootconfig",
+                        PFSbootconfig, next_node_id++, 0, 0, NULL, procfs_dobootconfig);
+
         // Linux-style kernel boot command line (macOS boot-args / kern.bootargs).
         pfssnode_t *kcmdline = add_node(root_node, "cmdline",
                         PFSkcmdline, next_node_id++, 0, 0, NULL, procfs_dokcmdline);

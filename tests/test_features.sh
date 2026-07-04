@@ -78,6 +78,11 @@ tfile "$PROC/swaps"           "swaps"
 tfile "$PROC/filesystems"     "filesystems"
 tfile "$PROC/cmdline"         "cmdline (kernel boot args)"
 tfile "$PROC/net/dev"         "net/dev (interface stats)"
+# bootconfig mirrors the boot-args; legitimately empty on a Mac with none set
+if out=$(cat "$PROC/bootconfig" 2>/dev/null); then
+    if [ -n "$out" ]; then ok "bootconfig: $(printf '%s' "$out" | head -1 | cut -c1-48)"
+    else note "bootconfig empty (no boot-args set)"; fi
+else bad "bootconfig unreadable"; fi
 
 hdr "Root: daemon-backed listings"
 for n in extensions modules devices allocinfo apm; do
