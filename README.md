@@ -10,7 +10,7 @@ In addition to letting you visualize running processes, *procfs* also allows som
 
 Tested on:
 
-    - macOS 26 (Tahoe), Darwin 25.5.0, Apple Silicon (arm64e) — primary target
+    - macOS 26.5.2 (Tahoe), Darwin 25.5.0, Apple Silicon (arm64e) — primary target
     - Builds as a universal binary (arm64e + x86_64)
 
 > **Note on Apple Silicon:** under Pointer Authentication (PAC) the kernel's
