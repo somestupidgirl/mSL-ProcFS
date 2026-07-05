@@ -1002,6 +1002,47 @@ procfs_doiomem(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     return error;
 }
 
+static uint32_t procfs_online_cpus(void);   /* defined with the /proc/irq nodes */
+
+/*
+ * /proc/softirqs - Linux's per-CPU softirq counts, one line per softirq type.
+ * Softirqs are a Linux-specific bottom-half mechanism; macOS/XNU has no softirq
+ * concept and tracks no such counters, so the standard Linux type list is
+ * reported with all-zero counts (as /proc/interrupts does for its counts), with
+ * one CPU column per online processor.
+ */
+int
+procfs_dosoftirqs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char *const names[] = {
+        "HI", "TIMER", "NET_TX", "NET_RX", "BLOCK", "IRQ_POLL",
+        "TASKLET", "SCHED", "HRTIMER", "RCU",
+    };
+    const int ntypes = (int)(sizeof(names) / sizeof(names[0]));
+    uint32_t ncpu = procfs_online_cpus();
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+    sbuf_printf(&sb, "                    ");            /* pad over the name column */
+    for (uint32_t c = 0; c < ncpu; c++) {
+        sbuf_printf(&sb, "CPU%-8u", c);
+    }
+    sbuf_printf(&sb, "\n");
+    for (int t = 0; t < ntypes; t++) {
+        sbuf_printf(&sb, "%12s:", names[t]);
+        for (uint32_t c = 0; c < ncpu; c++) {
+            sbuf_printf(&sb, " %10u", 0u);              /* macOS has no softirqs */
+        }
+        sbuf_printf(&sb, "\n");
+    }
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
 /*
  * /proc/rtc - Linux's real-time-clock state (drivers/rtc/proc.c). The core is
  * the current RTC time and date; macOS keeps its hardware RTC in UTC, exposed

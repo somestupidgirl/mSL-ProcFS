@@ -186,6 +186,11 @@ procfs_structure_init(void)
         pfssnode_t *iomem = add_node(root_node, "iomem",
                         PFSiomem, next_node_id++, 0, 0, NULL, procfs_doiomem);
 
+        // Linux-style /proc/softirqs (per-CPU softirq counts; macOS has no softirqs,
+        // so the standard type list is reported with all-zero counts).
+        pfssnode_t *softirqs = add_node(root_node, "softirqs",
+                        PFSsoftirqs, next_node_id++, 0, 0, NULL, procfs_dosoftirqs);
+
         // Linux-style /proc/rtc (real-time-clock state; UTC calendar time + status fields).
         pfssnode_t *rtc = add_node(root_node, "rtc",
                         PFSrtc, next_node_id++, 0, 0, NULL, procfs_dortc);

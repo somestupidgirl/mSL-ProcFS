@@ -59,6 +59,7 @@ Linux-compatible files and helpers:
 |`partitions`  | Linux-style partition table (text; all block devices via IOKit — see below) |
 |`rtc`         | Linux-style real-time-clock state; `rtc_time`/`rtc_date` are the UTC calendar time (`clock_get_calendar_microtime`), alarm/IRQ fields report their inactive defaults |
 |`self/`        | Symbolic link to the calling process's directory (Linux name)       |
+|`softirqs`    | Linux-style per-CPU softirq counts; softirqs are Linux-only, so the standard type list is reported with all-zero counts (one CPU column per processor) |
 |`stat`        | Linux-style kernel/system statistics (`cpu`/`cpuN` ticks, `btime`, `processes`; see below) |
 |`swaps`       | Linux-style swap-area table (aggregate `vm.swapusage`; macOS swaps dynamically under `/private/var/vm`) |
 |`sys/`        | Dynamic mirror of the kernel sysctl MIB tree (Linux `/proc/sys`); directories are sysctl nodes, leaves read their value as text |
@@ -453,6 +454,13 @@ has them), so the count columns are 0. The IRQ *topology*, though, is real: the
 IRQ → controller → device rows (e.g. `cpu0`, `spi2`, `i2c1`, `pci-bridge0`),
 sorted by IRQ. Streamed over the same chunked transfer as `/proc/bus/pci/devices`;
 empty without a connected daemon.
+
+`softirqs` is Linux's per-CPU softirq-count table, one line per softirq type
+(`HI`, `TIMER`, `NET_TX`, `NET_RX`, `BLOCK`, `IRQ_POLL`, `TASKLET`, `SCHED`,
+`HRTIMER`, `RCU`). Softirqs are a Linux-specific bottom-half mechanism; macOS/XNU
+has no softirq concept and tracks no such counters, so the standard type list is
+reported with all-zero counts (as `/proc/interrupts` does for its counts), one
+CPU column per online processor. Fully in-kernel.
 
 `tty/` is Linux's TTY-information directory. `tty/drivers` is the tty driver
 table; Linux lists registered `tty_driver` structs, but macOS has no such
