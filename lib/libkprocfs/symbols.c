@@ -66,10 +66,9 @@ SYM_INIT(cpuid_info);
  *
  * On arm64 the fill_taskinfo/fill_taskthreadinfo symbols are stripped from the
  * kernel entirely (see reference memory), so taskinfo/threadinfo cannot use
- * them. cpu_to_processor (loadavg) and proc_task survive in the symtab.
+ * them. proc_task and the VM-region accessors survive in the symtab.
  */
 task_t (*procfs_kl_proc_task)(proc_t p) = NULL;            /* PAC-signed */
-void *procfs_kl_cpu_to_processor = NULL;
 void *procfs_kl_get_task_map = NULL;
 void *procfs_kl_mach_vm_region = NULL;
 
@@ -82,11 +81,9 @@ resolve_symbols(void)
      * additionally validates against "_kernel_pmap", so a non-matching staged
      * file yields NULLs and we leave the features disabled.
      */
-    enum { I_VERSION, I_CPU_TO_PROCESSOR,
-           I_GET_TASK_MAP, I_MACH_VM_REGION, I_PROC_TASK, N_SYMS };
+    enum { I_VERSION, I_GET_TASK_MAP, I_MACH_VM_REGION, I_PROC_TASK, N_SYMS };
     static const char *const names[N_SYMS] = {
         [I_VERSION]             = "_version",
-        [I_CPU_TO_PROCESSOR]    = "_cpu_to_processor",
         [I_GET_TASK_MAP]        = "_get_task_map",
         [I_MACH_VM_REGION]      = "_mach_vm_region",
         [I_PROC_TASK]           = "_proc_task",
@@ -107,16 +104,13 @@ resolve_symbols(void)
     if (addr[I_PROC_TASK] != NULL) {
         procfs_kl_proc_task = KL_SIGN_FN(addr[I_PROC_TASK]);
     }
-    procfs_kl_cpu_to_processor = addr[I_CPU_TO_PROCESSOR];
 
     /* mach_vm_region + get_task_map are called directly (PAC-signed at the use
      * site in procfs_map.c) to enumerate a task's VM regions. */
     procfs_kl_get_task_map   = addr[I_GET_TASK_MAP];
     procfs_kl_mach_vm_region = addr[I_MACH_VM_REGION];
 
-    printf("procfs: libklookup OK (cpu_to_processor=%d "
-           "get_task_map=%d mach_vm_region=%d proc_task=%d)\n",
-           procfs_kl_cpu_to_processor != NULL,
+    printf("procfs: libklookup OK (get_task_map=%d mach_vm_region=%d proc_task=%d)\n",
            procfs_kl_get_task_map != NULL,
            procfs_kl_mach_vm_region != NULL, procfs_kl_proc_task != NULL);
 

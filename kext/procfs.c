@@ -128,9 +128,6 @@ procfs_start(kmod_info_t *ki, __unused void *d)
     /* Register the `procfs.linux` sysctl (native vs Linux presentation mode). */
     procfs_sysctl_register();
 
-    /* Begin sampling CPU utilisation for the loadavg node (no-op without klookup). */
-    procfs_loadavg_start();
-
     os_log(OS_LOG_DEFAULT, "loaded %s version %s build %s (%s) \n",
         BUNDLEID_S, KEXTVERSION_S, KEXTBUILD_S, __TS__);
 
@@ -148,9 +145,6 @@ procfs_stop(__unused kmod_info_t *ki, __unused void *d)
         os_log(OS_LOG_DEFAULT, "util_vma_uuid() failed  errno: %d \n", ret);
         return KERN_FAILURE;
     }
-
-    /* Stop the loadavg sampler before tearing anything else down. */
-    procfs_loadavg_stop();
 
     /* Remove the `procfs.linux` sysctl. */
     procfs_sysctl_unregister();

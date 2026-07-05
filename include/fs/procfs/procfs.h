@@ -591,12 +591,6 @@ extern const char *procfs_spoofed_release(void);          /* release str or NULL
 extern int         procfs_build_linux_version(char *buf, size_t sz); /* len, or 0 */
 
 /*
- * Helper functions for loadavg.
- */
-extern void procfs_loadavg_start(void);
-extern void procfs_loadavg_stop(void);
-
-/*
  * Functions that return the data size for a node.
  */
 extern size_t procfs_get_node_size_attr(pfsnode_t *pnp, kauth_cred_t creds);

@@ -10,9 +10,6 @@
 #pragma mark -
 #pragma mark Common API (all architectures)
 
-extern struct loadavg averunnable;
-extern fixpt_t cexp[3];
-
 /*
  * sysctlbyname() is an exported kernel KPI symbol, but the latest
  * <sys/sysctl.h> only prototypes it in the !KERNEL branch; declare it here for

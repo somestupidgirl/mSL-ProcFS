@@ -4,9 +4,6 @@
 #ifndef _procfs_kern_h
 #define _procfs_kern_h
 
-extern void compute_averunnable(void *);
-extern struct loadavg averunnable;
-
 extern int proc_pidshortbsdinfo(proc_t p, struct proc_bsdshortinfo * pbsd_shortp, int zombie);
 extern int proc_pidtaskinfo(proc_t p, struct proc_taskinfo * ptinfo);
 extern int proc_pidthreadinfo(proc_t p, uint64_t arg, bool thuniqueid, struct proc_threadinfo *pthinfo);
