@@ -176,6 +176,11 @@ procfs_structure_init(void)
         pfssnode_t *dma = add_node(root_node, "dma",
                         PFSdma, next_node_id++, 0, 0, NULL, procfs_dodma);
 
+        // Linux-style /proc/ioports (x86 I/O port regions; legacy PC ports on x86,
+        // empty on Apple Silicon which has no port-mapped I/O).
+        pfssnode_t *ioports = add_node(root_node, "ioports",
+                        PFSioports, next_node_id++, 0, 0, NULL, procfs_doioports);
+
         // Linux-style /proc/rtc (real-time-clock state; UTC calendar time + status fields).
         pfssnode_t *rtc = add_node(root_node, "rtc",
                         PFSrtc, next_node_id++, 0, 0, NULL, procfs_dortc);

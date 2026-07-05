@@ -929,6 +929,41 @@ procfs_dodma(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/ioports - Linux's map of allocated I/O port regions ("<start>-<end> :
+ * name"). Port-mapped I/O is an x86 concept; ARM (Apple Silicon) has no I/O port
+ * space at all - it is memory-mapped only - so the node is empty on arm64, as on
+ * ARM Linux. On x86 the legacy ISA controllers (PIC, PIT, 8237 DMA, keyboard,
+ * RTC, FPU) sit at architecturally-fixed ports present on all PC-compatible
+ * hardware, so those standard regions are reported there.
+ */
+int
+procfs_doioports(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+#if defined(__x86_64__)
+    sbuf_printf(&sb,
+        "0000-001f : dma1\n"
+        "0020-0021 : pic1\n"
+        "0040-0043 : timer0\n"
+        "0060-0060 : keyboard\n"
+        "0064-0064 : keyboard\n"
+        "0070-0071 : rtc0\n"
+        "0080-008f : dma page reg\n"
+        "00a0-00a1 : pic2\n"
+        "00c0-00df : dma2\n"
+        "00f0-00ff : fpu\n");
+#endif
+    /* arm64: no port-mapped I/O -> empty. */
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/rtc - Linux's real-time-clock state (drivers/rtc/proc.c). The core is
  * the current RTC time and date; macOS keeps its hardware RTC in UTC, exposed
  * via clock_get_calendar_microtime(), so rtc_time/rtc_date are the UTC calendar

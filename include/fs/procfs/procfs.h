@@ -122,6 +122,7 @@ typedef enum {
     PFSinterrupts,  /* Linux-style /proc/interrupts (IRQ topology) */
     PFSirq,         /* Linux-style /proc/irq (IRQ-to-CPU affinity masks) */
     PFStty,         /* Linux-style /proc/tty (tty drivers / line disciplines) */
+    PFSioports,     /* Linux-style /proc/ioports (x86 I/O port regions) */
     PFSkcmdline,    /* Linux-style kernel boot command line (root /proc/cmdline) */
 } pfstype;
 
@@ -468,7 +469,8 @@ procfs_is_directory_type(pfstype type)
         && type != PFSrtc && type != PFSexecdomains
         && type != PFSfb && type != PFSnfsexports
         && type != PFSinterrupts && type != PFSirq
-        && type != PFStty && type != PFSkcmdline;
+        && type != PFStty && type != PFSioports
+        && type != PFSkcmdline;
 }
 
 /* Gets the pid_t for the process corresponding to a pfsnode_t. */
@@ -669,6 +671,7 @@ extern int procfs_doirq_affinity(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doirq_affinity_list(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dotty_drivers(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dotty_ldiscs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doioports(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dokcmdline(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);

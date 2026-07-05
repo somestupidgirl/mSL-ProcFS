@@ -79,6 +79,10 @@ tfile "$PROC/driver/rtc"      "driver/rtc (grouped rtc)"
 if d=$(cat "$PROC/dma" 2>/dev/null); then
     if [ -n "$d" ]; then ok "dma: $d"; else note "dma empty (no ISA DMA on arm64)"; fi
 else bad "dma unreadable"; fi
+# ioports: legitimately empty on arm64 (no port-mapped I/O); legacy ports on x86
+if p=$(cat "$PROC/ioports" 2>/dev/null); then
+    if [ -n "$p" ]; then ok "ioports: $(printf '%s' "$p" | wc -l | tr -d ' ') regions"; else note "ioports empty (no port I/O on arm64)"; fi
+else bad "ioports unreadable"; fi
 tfile "$PROC/partitions"      "partitions"
 tfile "$PROC/diskstats"       "diskstats"
 tfile "$PROC/mtab"            "mtab"

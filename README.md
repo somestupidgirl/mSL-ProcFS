@@ -47,6 +47,7 @@ Linux-compatible files and helpers:
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`fs/`         | Filesystem-parameters directory; currently `fs/nfs/exports`, the NFS export table (macOS `/etc/exports`, read by the `procfsd` daemon) |
 |`interrupts`  | Linux-style interrupt table (IRQ → controller → device); counts are 0 (macOS exposes no per-CPU interrupt counts), but the IRQ topology from IOKit is real (via the `procfsd` daemon) |
+|`ioports`     | Linux-style I/O port map; an x86-only concept — the fixed legacy PC ports on x86, empty on Apple Silicon (ARM has no port-mapped I/O) |
 |`irq/`        | IRQ-to-CPU affinity directory; `default_smp_affinity`/`_list` (all online CPUs). macOS routes IRQs via the AIC with no user-settable per-IRQ affinity, so per-IRQ subdirectories are omitted |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
@@ -400,6 +401,13 @@ controllers, so `/proc/dma` there is never empty. macOS/XNU uses no 8237 ISA DMA
 and Apple Silicon has no such hardware at all, so the node shows only the
 reserved `cascade` channel on x86 and is empty on arm64 — matching Linux's own
 per-architecture behaviour.
+
+`ioports` is Linux's map of allocated I/O port regions (`<start>-<end> : name`).
+Port-mapped I/O is an x86 concept; ARM (Apple Silicon) has no I/O port space at
+all — it is memory-mapped only — so the node is empty on arm64, as on ARM Linux.
+On x86 the legacy ISA controllers (PIC, PIT, 8237 DMA, keyboard, RTC, FPU) sit at
+architecturally-fixed ports on all PC-compatible hardware, so those standard
+regions are reported there. Fully in-kernel.
 
 `rtc` reports the real-time-clock state (Linux `drivers/rtc/proc.c`). The core is
 the current RTC time and date; macOS keeps its hardware RTC in UTC, exposed via
