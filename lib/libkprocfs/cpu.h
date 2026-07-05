@@ -41,22 +41,18 @@ extern char        *get_leaf7_ext_flags(void);
 #pragma mark -
 #pragma mark Per-CPU interrupt / softirq accounting
 
+#include <fs/procfs/procfs_ctl.h>   /* struct procfs_cpu_stat, PROCFS_REQ_CPUSTAT */
+
 /*
  * The XNU-side analog of the Linux softirq concept. XNU has no softirqs, but it
  * maintains per-CPU interrupt-event counters - hardware IRQs, inter-processor
- * interrupts and timer interrupts - reachable through
- * processor_info(PROCESSOR_CPU_STAT). This surfaces those counters as the
- * per-CPU interrupt/softirq information that /proc/interrupts and /proc/softirqs
- * (and anything else built on the concept) need, replacing the all-zero
- * placeholders with real numbers where the platform provides them.
+ * interrupts and timer interrupts - which host_processor_info(PROCESSOR_CPU_STAT)
+ * exposes. In-kernel that flavor reads zero for a kext, so the counters are
+ * fetched from the procfsd daemon (userspace host_processor_info) and surfaced as
+ * the per-CPU interrupt/softirq information that /proc/interrupts and
+ * /proc/softirqs (and anything else built on the concept) need. Without a daemon
+ * the counters are zero.
  */
-
-/* Raw per-CPU interrupt-event counters. */
-struct procfs_cpu_irq {
-    uint64_t hwirq;   /* hardware interrupts  (irq_ex_cnt) */
-    uint64_t ipi;     /* inter-processor IRQs (ipi_cnt)    */
-    uint64_t timer;   /* timer interrupts     (timer_cnt)  */
-};
 
 /* Linux softirq vectors, in /proc/softirqs order. */
 enum procfs_softirq {
@@ -77,20 +73,20 @@ enum procfs_softirq {
 extern const char *const procfs_softirq_names[PROCFS_NR_SOFTIRQ];
 
 /*
- * Read the raw per-CPU interrupt counters for logical CPU `cpu`. Returns 0 on
- * success, or an errno - ENOTSUP when cpu_to_processor (libklookup) or the
- * PROCESSOR_CPU_STAT processor_info() flavor are unavailable, in which case
- * *out is zeroed.
+ * Fetch per-CPU interrupt counters for all online CPUs from the procfsd daemon
+ * (one PROCFS_REQ_CPUSTAT request). Fills out[0..ncpu); entries the daemon does
+ * not report (or all of them, with no daemon) are left zeroed. Returns 0 on
+ * success, else an errno.
  */
-extern int procfs_cpu_irq_counts(int cpu, struct procfs_cpu_irq *out);
+extern int procfs_cpu_stat_all(struct procfs_cpu_stat *out, uint32_t ncpu);
 
 /*
- * Fill Linux-style per-CPU softirq counts for `cpu` by mapping the XNU per-CPU
- * event counters onto the softirq vectors (TIMER/HRTIMER from the timer
- * interrupt, SCHED from reschedule IPIs; vectors with no XNU counter stay 0).
- * Returns 0 on success, else errno (counts[] zeroed on failure).
+ * Map one CPU's raw counters onto the Linux softirq vectors (TIMER/HRTIMER from
+ * the timer interrupt, SCHED from reschedule IPIs; vectors with no XNU counter
+ * stay 0). Pure - no I/O.
  */
-extern int procfs_cpu_softirq_counts(int cpu, uint64_t counts[PROCFS_NR_SOFTIRQ]);
+extern void procfs_cpu_softirq_map(const struct procfs_cpu_stat *st,
+                                   uint64_t counts[PROCFS_NR_SOFTIRQ]);
 
 #if defined(__x86_64__)
 /* x86-only: power-management line (CPUID 0x80000007) and CPU bug classes

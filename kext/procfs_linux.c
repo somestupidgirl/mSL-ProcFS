@@ -1018,19 +1018,13 @@ procfs_dosoftirqs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
 {
     uint32_t ncpu = procfs_online_cpus();
 
-    /* Per-CPU softirq counts (ncpu x PROCFS_NR_SOFTIRQ), filled from cpu.c. */
-    uint64_t *pc = malloc((size_t)ncpu * PROCFS_NR_SOFTIRQ * sizeof(uint64_t),
-                          M_TEMP, M_WAITOK);
-    if (pc == NULL) {
-        return ENOMEM;
-    }
-    for (uint32_t c = 0; c < ncpu; c++) {
-        (void)procfs_cpu_softirq_counts((int)c, &pc[(size_t)c * PROCFS_NR_SOFTIRQ]);
-    }
+    /* Per-CPU interrupt counters from the daemon (one request for all CPUs), then
+     * map each CPU onto the softirq vectors. */
+    struct procfs_cpu_stat cs[64];
+    (void)procfs_cpu_stat_all(cs, ncpu);
 
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
-        free(pc, M_TEMP);
         return ENOMEM;
     }
     sbuf_printf(&sb, "                    ");            /* pad over the name column */
@@ -1041,15 +1035,15 @@ procfs_dosoftirqs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
     for (int t = 0; t < PROCFS_NR_SOFTIRQ; t++) {
         sbuf_printf(&sb, "%12s:", procfs_softirq_names[t]);
         for (uint32_t c = 0; c < ncpu; c++) {
-            sbuf_printf(&sb, " %10llu",
-                (unsigned long long)pc[(size_t)c * PROCFS_NR_SOFTIRQ + t]);
+            uint64_t counts[PROCFS_NR_SOFTIRQ];
+            procfs_cpu_softirq_map(&cs[c], counts);
+            sbuf_printf(&sb, " %10llu", (unsigned long long)counts[t]);
         }
         sbuf_printf(&sb, "\n");
     }
     sbuf_finish(&sb);
     int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
-    free(pc, M_TEMP);
     return error;
 }
 
@@ -2484,18 +2478,16 @@ procfs_dointerrupts(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
         sbuf_printf(&sb, "\n");
     }
 
-    struct procfs_cpu_irq irqs[64];
-    for (uint32_t c = 0; c < ncpu; c++) {
-        (void)procfs_cpu_irq_counts((int)c, &irqs[c]);
-    }
+    struct procfs_cpu_stat cs[64];
+    (void)procfs_cpu_stat_all(cs, ncpu);
     sbuf_printf(&sb, "%4s:", "LOC");
     for (uint32_t c = 0; c < ncpu; c++) {
-        sbuf_printf(&sb, " %10llu", (unsigned long long)irqs[c].timer);
+        sbuf_printf(&sb, " %10llu", (unsigned long long)cs[c].timer);
     }
     sbuf_printf(&sb, "   Local timer interrupts\n");
     sbuf_printf(&sb, "%4s:", "RES");
     for (uint32_t c = 0; c < ncpu; c++) {
-        sbuf_printf(&sb, " %10llu", (unsigned long long)irqs[c].ipi);
+        sbuf_printf(&sb, " %10llu", (unsigned long long)cs[c].ipi);
     }
     sbuf_printf(&sb, "   Rescheduling interrupts\n");
 

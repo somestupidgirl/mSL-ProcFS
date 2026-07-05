@@ -34,9 +34,6 @@
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/types.h>
-#include <mach/mach_types.h>
-#include <mach/processor_info.h>
-#include <ptrauth.h>
 
 #include "cpu.h"
 #include "symbols.h"
@@ -1397,36 +1394,17 @@ arm64_bogomips(void)
  *
  * The XNU-side analog of Linux softirqs. XNU has no softirq layer, but every
  * processor keeps per-CPU event counters - hardware IRQs, IPIs and timer
- * interrupts - that processor_info(PROCESSOR_CPU_STAT) exposes. We surface those
- * so /proc/interrupts and /proc/softirqs can report real per-CPU numbers.
- *
- * processor_info() is a linkable KPI; the per-CPU processor_t comes from
- * cpu_to_processor(), resolved through libklookup (procfs_kl_cpu_to_processor,
- * PAC-signed on arm64e). PROCESSOR_CPU_STAT and its structure are not in the
- * public kernel headers, so they are declared here; the 32-bit flavor is the
- * one populated on Apple Silicon.
+ * interrupts - that host_processor_info(PROCESSOR_CPU_STAT) exposes. That flavor
+ * reads zero in-kernel for a kext, so the counters are fetched from the procfsd
+ * daemon (userspace host_processor_info) over the control bridge; the kext then
+ * maps them onto the softirq vectors. So /proc/interrupts and /proc/softirqs
+ * report real per-CPU numbers when the daemon is connected, zero otherwise.
  * ============================================================ */
 
-extern kern_return_t processor_info(processor_t processor, processor_flavor_t flavor,
-    host_t *host, processor_info_t info, mach_msg_type_number_t *count);
-
-typedef processor_t (*procfs_cpu_to_processor_fn)(int);
-
-#define PROCFS_PROCESSOR_CPU_STAT   4       /* processor_info() flavor */
-
-struct procfs_processor_cpu_stat {
-    uint32_t irq_ex_cnt;        /* hardware interrupts    */
-    uint32_t ipi_cnt;           /* inter-processor IRQs   */
-    uint32_t timer_cnt;         /* timer interrupts       */
-    uint32_t undef_ex_cnt;
-    uint32_t unaligned_cnt;
-    uint32_t vfp_cnt;
-    uint32_t vfp_shortv_cnt;
-    uint32_t data_ex_cnt;
-    uint32_t instr_ex_cnt;
-};
-#define PROCFS_PROCESSOR_CPU_STAT_COUNT \
-    ((mach_msg_type_number_t)(sizeof(struct procfs_processor_cpu_stat) / sizeof(natural_t)))
+/* Implemented in kext/procfs_ctl.c; resolved when libkprocfs is linked into the
+ * kext. Declared here to avoid pulling the whole kext procfs.h into the lib. */
+extern int procfs_ctl_request(uint32_t type, int pid, uint64_t arg,
+                              void *out, uint32_t outcap, uint32_t *outlen);
 
 const char *const procfs_softirq_names[PROCFS_NR_SOFTIRQ] = {
     "HI", "TIMER", "NET_TX", "NET_RX", "BLOCK",
@@ -1434,52 +1412,37 @@ const char *const procfs_softirq_names[PROCFS_NR_SOFTIRQ] = {
 };
 
 int
-procfs_cpu_irq_counts(int cpu, struct procfs_cpu_irq *out)
+procfs_cpu_stat_all(struct procfs_cpu_stat *out, uint32_t ncpu)
 {
-    out->hwirq = 0;
-    out->ipi   = 0;
-    out->timer = 0;
-
-    if (procfs_kl_cpu_to_processor == NULL) {
-        return ENOTSUP;         /* libklookup did not resolve cpu_to_processor */
-    }
-    procfs_cpu_to_processor_fn cpu_to_processor =
-        ptrauth_sign_unauthenticated(procfs_kl_cpu_to_processor,
-            ptrauth_key_function_pointer, 0);
-
-    processor_t pr = cpu_to_processor(cpu);
-    if (pr == PROCESSOR_NULL) {
-        return ENOTSUP;
+    for (uint32_t i = 0; i < ncpu; i++) {
+        out[i].hwirq = out[i].ipi = out[i].timer = 0;
     }
 
-    struct procfs_processor_cpu_stat st;
-    bzero(&st, sizeof(st));
-    mach_msg_type_number_t count = PROCFS_PROCESSOR_CPU_STAT_COUNT;
-    host_t host;
-    if (processor_info(pr, PROCFS_PROCESSOR_CPU_STAT, &host,
-            (processor_info_t)&st, &count) != KERN_SUCCESS) {
-        return ENOTSUP;         /* flavor unsupported on this platform */
+    /* One request returns every CPU's counters; bounce through a buffer sized to
+     * the bridge payload, then copy in what the caller asked for. */
+    struct procfs_cpu_stat buf[PROCFS_CTL_MAXPAYLOAD / sizeof(struct procfs_cpu_stat)];
+    uint32_t got = 0;
+    int error = procfs_ctl_request(PROCFS_REQ_CPUSTAT, 0, 0,
+                                   buf, sizeof(buf), &got);
+    if (error != 0) {
+        return error;           /* no daemon / bridge error -> counters stay 0 */
     }
 
-    out->hwirq = st.irq_ex_cnt;
-    out->ipi   = st.ipi_cnt;
-    out->timer = st.timer_cnt;
+    uint32_t have = got / (uint32_t)sizeof(struct procfs_cpu_stat);
+    uint32_t n = (have < ncpu) ? have : ncpu;
+    for (uint32_t i = 0; i < n; i++) {
+        out[i] = buf[i];
+    }
     return 0;
 }
 
-int
-procfs_cpu_softirq_counts(int cpu, uint64_t counts[PROCFS_NR_SOFTIRQ])
+void
+procfs_cpu_softirq_map(const struct procfs_cpu_stat *st,
+                       uint64_t counts[PROCFS_NR_SOFTIRQ])
 {
     for (int i = 0; i < PROCFS_NR_SOFTIRQ; i++) {
         counts[i] = 0;
     }
-
-    struct procfs_cpu_irq irq;
-    int error = procfs_cpu_irq_counts(cpu, &irq);
-    if (error != 0) {
-        return error;
-    }
-
     /*
      * Map the XNU per-CPU event counters onto the Linux softirq vectors. On
      * Linux the TIMER softirq is driven from the timer interrupt and the
@@ -1488,8 +1451,7 @@ procfs_cpu_softirq_counts(int cpu, uint64_t counts[PROCFS_NR_SOFTIRQ])
      * The remaining vectors (network, block, tasklet, RCU, ...) have no per-CPU
      * XNU counter and stay 0.
      */
-    counts[PROCFS_SOFTIRQ_TIMER]   = irq.timer;
-    counts[PROCFS_SOFTIRQ_HRTIMER] = irq.timer;
-    counts[PROCFS_SOFTIRQ_SCHED]   = irq.ipi;
-    return 0;
+    counts[PROCFS_SOFTIRQ_TIMER]   = st->timer;
+    counts[PROCFS_SOFTIRQ_HRTIMER] = st->timer;
+    counts[PROCFS_SOFTIRQ_SCHED]   = st->ipi;
 }

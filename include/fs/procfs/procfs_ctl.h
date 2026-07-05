@@ -64,6 +64,21 @@ enum {
     PROCFS_REQ_TTYDRIVERS = 21, /* arg = byte offset; same chunked transfer as
                                  * PROCFS_REQ_DEVICES, Linux /proc/tty/drivers
                                  * (tty devices from /dev grouped by major). */
+    PROCFS_REQ_CPUSTAT    = 22, /* payload: struct procfs_cpu_stat[] (one per CPU),
+                                 * host_processor_info(PROCESSOR_CPU_STAT). Backs
+                                 * the softirq/interrupt concept in libkprocfs. */
+};
+
+/*
+ * Per-CPU interrupt-event counters for PROCFS_REQ_CPUSTAT. The daemon returns an
+ * array of these - one per online CPU - built from host_processor_info()'s
+ * PROCESSOR_CPU_STAT flavor. This is the XNU-side data behind Linux softirqs and
+ * the /proc/interrupts summary lines.
+ */
+struct procfs_cpu_stat {
+    uint64_t hwirq;     /* hardware interrupts  (irq_ex_cnt) */
+    uint64_t ipi;       /* inter-processor IRQs (ipi_cnt)    */
+    uint64_t timer;     /* timer interrupts     (timer_cnt)  */
 };
 
 /*

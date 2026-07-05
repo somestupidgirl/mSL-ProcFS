@@ -39,6 +39,7 @@
 #include <IOKit/ps/IOPSKeys.h>
 #include <mach/mach.h>
 #include <mach/mach_host.h>
+#include <mach/processor_info.h>
 #include <mach/task.h>
 #include <mach/thread_act.h>
 #include <mach_debug/zone_info.h>
@@ -1471,6 +1472,36 @@ main(int argc, char **argv)
                 build_ttydrivers_blob(&g_tty_blob, &g_tty_blob_len);
             }
             blob_slice(g_tty_blob, g_tty_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_CPUSTAT: {
+            /* Per-CPU interrupt-event counters, the XNU-side softirq data. The
+             * PROCESSOR_CPU_STAT flavor (32-bit) is the one populated on Apple
+             * Silicon; each CPU's slice is irq_ex_cnt, ipi_cnt, timer_cnt, ... */
+#ifndef PROCESSOR_CPU_STAT
+#define PROCESSOR_CPU_STAT 4
+#endif
+            natural_t              nc = 0;
+            processor_info_array_t pinfo = NULL;
+            mach_msg_type_number_t pcnt = 0;
+            if (host_processor_info(mach_host_self(), PROCESSOR_CPU_STAT,
+                    &nc, &pinfo, &pcnt) == KERN_SUCCESS && nc > 0) {
+                struct procfs_cpu_stat *out = (struct procfs_cpu_stat *)payload;
+                natural_t maxfit = PROCFS_CTL_MAXPAYLOAD / sizeof(*out);
+                natural_t n = (nc < maxfit) ? nc : maxfit;
+                mach_msg_type_number_t stride = pcnt / nc;   /* natural_t per CPU */
+                for (natural_t i = 0; i < n; i++) {
+                    const uint32_t *s = (const uint32_t *)pinfo + (size_t)i * stride;
+                    out[i].hwirq = s[0];        /* irq_ex_cnt */
+                    out[i].ipi   = s[1];        /* ipi_cnt    */
+                    out[i].timer = s[2];        /* timer_cnt  */
+                }
+                resp->len = (uint32_t)(n * sizeof(*out));
+                vm_deallocate(mach_task_self(), (vm_address_t)pinfo,
+                    pcnt * sizeof(natural_t));
+            } else {
+                resp->error = EIO;
+            }
             break;
         }
         case PROCFS_REQ_RUSAGE: {
