@@ -445,11 +445,21 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     const char *implementer  = arm64_cpu_implementer();
     const char *architecture = arm64_cpu_architecture();
     const char *variant      = arm64_cpu_variant();
-    const char *part         = arm64_cpu_part();
     const char *revision     = arm64_cpu_revision();
+
+    /*
+     * Per-logical-CPU cluster type ('E'/'P') from the device tree (via the
+     * daemon), so each core reports the correct part number - efficiency cores
+     * (e.g. Icestorm 0x023) versus performance cores (Firestorm 0x022). Without
+     * a daemon every entry is '?', and we fall back to the performance-core part.
+     */
+    char clusters[64];
+    procfs_cpu_clusters(clusters, (max_cpus <= 64) ? max_cpus : 64);
 
     while (cnt_cpus < max_cpus) {
         if (cnt_cpus <= max_cpus) {
+            const char *part = (cnt_cpus < 64 && clusters[cnt_cpus] == 'E')
+                             ? arm64_cpu_part_ecore() : arm64_cpu_part();
             len += snprintf(buffer, buffer_size,
                 "processor\t\t: %u\n"
                 "BogoMIPS\t\t: %s\n"

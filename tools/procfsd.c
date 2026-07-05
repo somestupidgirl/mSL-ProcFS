@@ -1474,6 +1474,60 @@ main(int argc, char **argv)
             blob_slice(g_tty_blob, g_tty_blob_len, off, payload, resp);
             break;
         }
+        case PROCFS_REQ_CPUCLUSTERS: {
+            /* Per-logical-CPU cluster type ('E'/'P') from the device tree, for
+             * the /proc/cpuinfo part number (Icestorm E vs Firestorm P, etc.). */
+            char *out = (char *)payload;
+            uint32_t maxn = PROCFS_CTL_MAXPAYLOAD;
+            memset(out, '?', maxn < 256 ? maxn : 256);
+            uint32_t maxid = 0;
+            io_registry_entry_t cpus =
+                IORegistryEntryFromPath(kIOMainPortDefault, "IODeviceTree:/cpus");
+            if (cpus != MACH_PORT_NULL) {
+                io_iterator_t it = MACH_PORT_NULL;
+                if (IORegistryEntryGetChildIterator(cpus, kIODeviceTreePlane, &it)
+                        == KERN_SUCCESS) {
+                    io_registry_entry_t e;
+                    while ((e = IOIteratorNext(it)) != MACH_PORT_NULL) {
+                        int id = -1;
+                        CFTypeRef p = IORegistryEntryCreateCFProperty(e,
+                            CFSTR("logical-cpu-id"), kCFAllocatorDefault, 0);
+                        if (p != NULL) {
+                            if (CFGetTypeID(p) == CFNumberGetTypeID()) {
+                                CFNumberGetValue(p, kCFNumberIntType, &id);
+                            } else if (CFGetTypeID(p) == CFDataGetTypeID() &&
+                                       CFDataGetLength(p) >= 1) {
+                                id = *(const uint8_t *)CFDataGetBytePtr(p);
+                            }
+                            CFRelease(p);
+                        }
+                        char ct = '?';
+                        p = IORegistryEntryCreateCFProperty(e, CFSTR("cluster-type"),
+                            kCFAllocatorDefault, 0);
+                        if (p != NULL) {
+                            if (CFGetTypeID(p) == CFDataGetTypeID() &&
+                                CFDataGetLength(p) >= 1) {
+                                ct = *(const char *)CFDataGetBytePtr(p);
+                            } else if (CFGetTypeID(p) == CFStringGetTypeID()) {
+                                char b[8] = "";
+                                CFStringGetCString(p, b, sizeof(b), kCFStringEncodingUTF8);
+                                ct = b[0];
+                            }
+                            CFRelease(p);
+                        }
+                        if (id >= 0 && (uint32_t)id < maxn) {
+                            out[id] = ct;
+                            if ((uint32_t)id + 1 > maxid) { maxid = id + 1; }
+                        }
+                        IOObjectRelease(e);
+                    }
+                    IOObjectRelease(it);
+                }
+                IOObjectRelease(cpus);
+            }
+            resp->len = maxid;
+            break;
+        }
         case PROCFS_REQ_CPUSTAT: {
             /* Per-CPU interrupt-event counters, the XNU-side softirq data. The
              * PROCESSOR_CPU_STAT flavor (32-bit) is the one populated on Apple

@@ -947,24 +947,42 @@ cpuid_info(void)
  * Returns the ARM part number string for a given hw.cpufamily value.
  * Part numbers follow ARM convention (0xXXX hex).
  */
-static const char *
-arm64_cpu_part_string(uint32_t cpufamily)
+/* Performance-core MIDR part number for a hw.cpufamily. */
+static uint32_t
+arm64_cpu_part_num(uint32_t cpufamily)
 {
     switch (cpufamily) {
-        case CPUFAMILY_ARM_SWIFT:               return "0x01";
-        case CPUFAMILY_ARM_CYCLONE:             return "0x02";
-        case CPUFAMILY_ARM_TYPHOON:             return "0x03";
-        case CPUFAMILY_ARM_TWISTER:             return "0x04";
-        case CPUFAMILY_ARM_HURRICANE:           return "0x05";
-        case CPUFAMILY_ARM_MONSOON_MISTRAL:     return "0x06";
-        case CPUFAMILY_ARM_VORTEX_TEMPEST:      return "0x07";
-        case CPUFAMILY_ARM_LIGHTNING_THUNDER:   return "0x08";
-        case CPUFAMILY_ARM_FIRESTORM_ICESTORM:  return "0x22"; /* M1  */
-        case CPUFAMILY_ARM_AVALANCHE_BLIZZARD:  return "0x25"; /* M2  */
-        case CPUFAMILY_ARM_EVEREST_SAWTOOTH:    return "0x28"; /* M3  */
-        case CPUFAMILY_ARM_IBIZA:               return "0x2b"; /* M4  */
-        default:                                return "0x00";
+        case CPUFAMILY_ARM_SWIFT:               return 0x001;
+        case CPUFAMILY_ARM_CYCLONE:             return 0x002;
+        case CPUFAMILY_ARM_TYPHOON:             return 0x003;
+        case CPUFAMILY_ARM_TWISTER:             return 0x004;
+        case CPUFAMILY_ARM_HURRICANE:           return 0x005;
+        case CPUFAMILY_ARM_MONSOON_MISTRAL:     return 0x006;
+        case CPUFAMILY_ARM_VORTEX_TEMPEST:      return 0x007;
+        case CPUFAMILY_ARM_LIGHTNING_THUNDER:   return 0x008;
+        case CPUFAMILY_ARM_FIRESTORM_ICESTORM:  return 0x022; /* M1  Firestorm */
+        case CPUFAMILY_ARM_AVALANCHE_BLIZZARD:  return 0x032; /* M2  Avalanche */
+        case CPUFAMILY_ARM_EVEREST_SAWTOOTH:    return 0x048; /* M3  Everest   */
+        case CPUFAMILY_ARM_IBIZA:               return 0x052; /* M4  P-core    */
+        default:                                return 0x000;
     }
+}
+
+/*
+ * Part number string. Apple's efficiency core sits one part number above the
+ * performance core (Icestorm 0x023 = Firestorm 0x022 + 1, Blizzard = Avalanche
+ * + 1, ...), so is_ecore adds one. Formatted 0x%03x, as Linux prints MIDR_PARTNUM.
+ */
+static const char *
+arm64_cpu_part_string(uint32_t cpufamily, boolean_t is_ecore)
+{
+    static char part_str[8];
+    uint32_t p = arm64_cpu_part_num(cpufamily);
+    if (is_ecore && p != 0) {
+        p += 1;
+    }
+    snprintf(part_str, sizeof(part_str), "0x%03x", p);
+    return part_str;
 }
 
 /*
@@ -1189,39 +1207,83 @@ get_cpu_flags(void)
     size_t map_count = sizeof(feature_map) / sizeof(feature_map[0]);
 
     /*
-     * Deduplicate: some flags appear twice in the map (e.g. ilrcpc).
-     * We track which flag strings we've already appended.
+     * Linux AArch64 HWCAP print order (arch/arm64/kernel/cpuinfo.c). When Linux
+     * compatibility is on, the Features line is emitted in this order so it
+     * matches a real /proc/cpuinfo; otherwise the map's grouped order is kept.
      */
-    const char *emitted[map_count];
-    size_t emitted_count = 0;
+    extern int procfs_linux_mode;
+    static const char *const hwcap_order[] = {
+        "fp", "asimd", "evtstrm", "aes", "pmull", "sha1", "sha2", "crc32",
+        "atomics", "fphp", "asimdhp", "cpuid", "asimdrdm", "jscvt", "fcma",
+        "lrcpc", "dcpop", "sha3", "sm3", "sm4", "asimddp", "sha512", "sve",
+        "asimdfhm", "dit", "uscat", "ilrcpc", "flagm", "ssbs", "sb", "paca",
+        "pacg", "dcpodp", "sve2", "sveaes", "svepmull", "svebitperm", "svesha3",
+        "svesm4", "flagm2", "frint", "svei8mm", "svef32mm", "svef64mm",
+        "svebf16", "i8mm", "bf16", "dgh", "rng", "bti", "mte", "ecv", "afp",
+        "rpres",
+    };
+    const size_t hwcap_count = sizeof(hwcap_order) / sizeof(hwcap_order[0]);
+
+    /* Collect the present, de-duplicated flags plus each one's sort key. */
+    const char *present[map_count];
+    int         order[map_count];
+    size_t      n = 0;
 
     for (size_t i = 0; i < map_count; i++) {
         int val = 0;
-        size_t len = sizeof(val);
-        if (sysctlbyname(feature_map[i].sysctl, &val, &len, NULL, 0) != 0
+        size_t vlen = sizeof(val);
+        if (sysctlbyname(feature_map[i].sysctl, &val, &vlen, NULL, 0) != 0
             || val == 0) {
             continue;
         }
-
-        /* Check for duplicates */
         boolean_t already = FALSE;
-        for (size_t j = 0; j < emitted_count; j++) {
-            if (strcmp(emitted[j], feature_map[i].flag) == 0) {
+        for (size_t j = 0; j < n; j++) {
+            if (strcmp(present[j], feature_map[i].flag) == 0) {
                 already = TRUE;
                 break;
             }
         }
-        if (already) continue;
+        if (already) {
+            continue;
+        }
+        /* HWCAP position, or after the known list (in map order) if unlisted. */
+        int ord = (int)(hwcap_count + i);
+        for (size_t k = 0; k < hwcap_count; k++) {
+            if (strcmp(hwcap_order[k], feature_map[i].flag) == 0) {
+                ord = (int)k;
+                break;
+            }
+        }
+        present[n] = feature_map[i].flag;
+        order[n]   = ord;
+        n++;
+    }
 
-        strlcat(flags, feature_map[i].flag, sizeof(flags));
+    if (procfs_linux_mode) {
+        /* Stable insertion sort into HWCAP order. */
+        for (size_t i = 1; i < n; i++) {
+            const char *pf = present[i];
+            int         po = order[i];
+            size_t j = i;
+            while (j > 0 && order[j - 1] > po) {
+                present[j] = present[j - 1];
+                order[j]   = order[j - 1];
+                j--;
+            }
+            present[j] = pf;
+            order[j]   = po;
+        }
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        strlcat(flags, present[i], sizeof(flags));
         strlcat(flags, " ", sizeof(flags));
-        emitted[emitted_count++] = feature_map[i].flag;
     }
 
     /* Trim trailing space */
-    size_t len = strlen(flags);
-    if (len > 0 && flags[len - 1] == ' ') {
-        flags[len - 1] = '\0';
+    size_t slen = strlen(flags);
+    if (slen > 0 && flags[slen - 1] == ' ') {
+        flags[slen - 1] = '\0';
     }
 
     return flags;
@@ -1291,44 +1353,72 @@ arm64_cpu_architecture(void)
 }
 
 /*
+ * MIDR_EL1 is readable at EL1 (a kext), even though EL0 traps it. It gives the
+ * running core's implementer / variant / part / revision. Variant and revision
+ * are uniform across a chip's clusters, so a single read serves all cores; the
+ * part differs by cluster and is taken from the device tree instead (see
+ * arm64_cpu_part / _ecore).
+ */
+static uint64_t
+arm64_read_midr(void)
+{
+    return __builtin_arm_rsr64("MIDR_EL1");
+}
+
+/*
  * arm64_cpu_variant()
  *
- * Returns the CPU variant as a hex string.
- * On Apple Silicon this is always 0x0 since Apple
- * does not expose MIDR_EL1 variant bits to software.
+ * MIDR_EL1[23:20], the variant field (e.g. 0x1 on M1).
  */
 const char *
 arm64_cpu_variant(void)
 {
-    return "0x0";
+    static char variant_str[8];
+    uint32_t variant = (uint32_t)((arm64_read_midr() >> 20) & 0xf);
+    snprintf(variant_str, sizeof(variant_str), "0x%x", variant);
+    return variant_str;
 }
 
 /*
- * arm64_cpu_part()
+ * arm64_cpu_part()  - performance-core part number.
+ * arm64_cpu_part_ecore() - efficiency-core part number.
  *
- * Returns the CPU part number as a hex string derived
- * from hw.cpufamily.
+ * Derived from hw.cpufamily; the caller picks one per logical CPU from the
+ * device-tree cluster type (procfs_cpu_clusters).
  */
-const char *
-arm64_cpu_part(void)
+static uint32_t
+arm64_family(void)
 {
     uint32_t cpufamily = 0;
     size_t len = sizeof(cpufamily);
     sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0);
-    return arm64_cpu_part_string(cpufamily);
+    return cpufamily;
+}
+
+const char *
+arm64_cpu_part(void)
+{
+    return arm64_cpu_part_string(arm64_family(), FALSE);
+}
+
+const char *
+arm64_cpu_part_ecore(void)
+{
+    return arm64_cpu_part_string(arm64_family(), TRUE);
 }
 
 /*
  * arm64_cpu_revision()
  *
- * Returns the CPU revision as a decimal string.
- * Apple Silicon does not expose MIDR_EL1 revision bits;
- * report as 0 per convention.
+ * MIDR_EL1[3:0], the revision field.
  */
 const char *
 arm64_cpu_revision(void)
 {
-    return "0";
+    static char rev_str[8];
+    uint32_t rev = (uint32_t)(arm64_read_midr() & 0xf);
+    snprintf(rev_str, sizeof(rev_str), "%u", rev);
+    return rev_str;
 }
 
 /*
@@ -1454,4 +1544,24 @@ procfs_cpu_softirq_map(const struct procfs_cpu_stat *st,
     counts[PROCFS_SOFTIRQ_TIMER]   = st->timer;
     counts[PROCFS_SOFTIRQ_HRTIMER] = st->timer;
     counts[PROCFS_SOFTIRQ_SCHED]   = st->ipi;
+}
+
+int
+procfs_cpu_clusters(char *out, uint32_t ncpu)
+{
+    for (uint32_t i = 0; i < ncpu; i++) {
+        out[i] = '?';
+    }
+    char buf[256];
+    uint32_t got = 0;
+    int error = procfs_ctl_request(PROCFS_REQ_CPUCLUSTERS, 0, 0,
+                                   buf, sizeof(buf), &got);
+    if (error != 0) {
+        return error;           /* no daemon -> all '?' (caller falls back) */
+    }
+    uint32_t n = (got < ncpu) ? got : ncpu;
+    for (uint32_t i = 0; i < n; i++) {
+        out[i] = buf[i];
+    }
+    return 0;
 }

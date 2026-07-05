@@ -88,6 +88,15 @@ extern int procfs_cpu_stat_all(struct procfs_cpu_stat *out, uint32_t ncpu);
 extern void procfs_cpu_softirq_map(const struct procfs_cpu_stat *st,
                                    uint64_t counts[PROCFS_NR_SOFTIRQ]);
 
+/*
+ * Fetch per-logical-CPU cluster types from the procfsd daemon (the device-tree
+ * 'E'/'P', PROCFS_REQ_CPUCLUSTERS): the authoritative source for which cores are
+ * efficiency vs performance, used for the per-core /proc/cpuinfo part number.
+ * Fills out[0..ncpu); unreported entries (or all, with no daemon) are '?'.
+ * Returns 0 on success, else an errno.
+ */
+extern int procfs_cpu_clusters(char *out, uint32_t ncpu);
+
 #if defined(__x86_64__)
 /* x86-only: power-management line (CPUID 0x80000007) and CPU bug classes
  * (IA32_ARCH_CAPABILITIES + vendor/family). */
@@ -129,8 +138,11 @@ extern const char  *arm64_cpu_architecture(void);
 /* CPU variant hex string, e.g. "0x0" */
 extern const char  *arm64_cpu_variant(void);
 
-/* CPU part hex string derived from hw.cpufamily, e.g. "0x22" for M1 */
+/* CPU part hex string for the performance core, e.g. "0x022" for M1 Firestorm */
 extern const char  *arm64_cpu_part(void);
+
+/* CPU part hex string for the efficiency core, e.g. "0x023" for M1 Icestorm */
+extern const char  *arm64_cpu_part_ecore(void);
 
 /* CPU revision decimal string, e.g. "0" */
 extern const char  *arm64_cpu_revision(void);

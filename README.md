@@ -128,7 +128,13 @@ Verified with `tests/test_features.sh`.
 
   - Directory listing of the root and per-process directories via `ls`, `find`, `readdir(3)` and `getdirentries64(2)`
   - `version` — kernel version string
-  - `cpuinfo` — Linux-style CPU information (some flag fields incomplete; see Issues)
+  - `cpuinfo` — Linux-style CPU information. On Apple Silicon the `Features` line
+    comes from `hw.optional.arm.FEAT_*` (real capabilities), `CPU variant`/`CPU
+    revision` are read from `MIDR_EL1`, and each core reports the correct `CPU
+    part` for its cluster — efficiency cores (Icestorm `0x023`) vs performance
+    cores (Firestorm `0x022`), from the device-tree cluster type via the daemon.
+    With Linux compatibility on, `Features` are ordered like a real
+    `/proc/cpuinfo` (AArch64 HWCAP order)
   - `loadavg` — process count plus the true 1/5/15-minute load averages from the
     `procfsd` daemon (`getloadavg`); falls back to a CPU-utilisation approximation
     when no daemon is connected (see Apple Silicon note)

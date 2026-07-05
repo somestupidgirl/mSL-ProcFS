@@ -67,6 +67,9 @@ enum {
     PROCFS_REQ_CPUSTAT    = 22, /* payload: struct procfs_cpu_stat[] (one per CPU),
                                  * host_processor_info(PROCESSOR_CPU_STAT). Backs
                                  * the softirq/interrupt concept in libkprocfs. */
+    PROCFS_REQ_CPUCLUSTERS = 23, /* payload: char[] (one per logical CPU) = the
+                                  * device-tree cluster-type 'E'/'P', for the
+                                  * per-core /proc/cpuinfo part number. */
 };
 
 /*
