@@ -46,7 +46,7 @@ Linux-compatible files and helpers:
 |`fb`          | Linux-style framebuffer device list (`<index> <name>`); macOS IOKit framebuffers (`IOFramebuffer`/`IOMobileFramebuffer`) via the `procfsd` daemon |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`fs/`         | Filesystem-parameters directory; currently `fs/nfs/exports`, the NFS export table (macOS `/etc/exports`, read by the `procfsd` daemon) |
-|`interrupts`  | Linux-style interrupt table (IRQ → controller → device); counts are 0 (macOS exposes no per-CPU interrupt counts), but the IRQ topology from IOKit is real (via the `procfsd` daemon) |
+|`interrupts`  | Linux-style interrupt table (IRQ → controller → device, via the `procfsd` daemon); per-device counts are 0, but the `LOC`/`RES` summary lines carry real per-CPU timer/IPI counts from the softirq layer (`libkprocfs/cpu.c`) |
 |`iomem`       | Linux-style physical memory map; `System RAM` + `Reserved` sized from `hw.memsize`/`hw.memsize_usable` (macOS publishes no full physical map, so the base is nominal) |
 |`ioports`     | Linux-style I/O port map; an x86-only concept — the fixed legacy PC ports on x86, empty on Apple Silicon (ARM has no port-mapped I/O) |
 |`irq/`        | IRQ-to-CPU affinity directory; `default_smp_affinity`/`_list` (all online CPUs). macOS routes IRQs via the AIC with no user-settable per-IRQ affinity, so per-IRQ subdirectories are omitted |
@@ -59,7 +59,7 @@ Linux-compatible files and helpers:
 |`partitions`  | Linux-style partition table (text; all block devices via IOKit — see below) |
 |`rtc`         | Linux-style real-time-clock state; `rtc_time`/`rtc_date` are the UTC calendar time (`clock_get_calendar_microtime`), alarm/IRQ fields report their inactive defaults |
 |`self/`        | Symbolic link to the calling process's directory (Linux name)       |
-|`softirqs`    | Linux-style per-CPU softirq counts; softirqs are Linux-only, so the standard type list is reported with all-zero counts (one CPU column per processor) |
+|`softirqs`    | Linux-style per-CPU softirq counts; XNU has no softirqs, but `libkprocfs/cpu.c` maps its per-CPU timer/IPI event counters onto the vectors, so `TIMER`/`HRTIMER`/`SCHED` carry real counts (others 0) |
 |`stat`        | Linux-style kernel/system statistics (`cpu`/`cpuN` ticks, `btime`, `processes`; see below) |
 |`swaps`       | Linux-style swap-area table (aggregate `vm.swapusage`; macOS swaps dynamically under `/private/var/vm`) |
 |`sys/`        | Dynamic mirror of the kernel sysctl MIB tree (Linux `/proc/sys`); directories are sysctl nodes, leaves read their value as text |
@@ -452,15 +452,24 @@ has them), so the count columns are 0. The IRQ *topology*, though, is real: the
 `procfsd` daemon walks the IORegistry for each device's `IOInterruptSpecifiers`
 (the IRQ numbers) and `IOInterruptControllers`, producing genuine
 IRQ → controller → device rows (e.g. `cpu0`, `spi2`, `i2c1`, `pci-bridge0`),
-sorted by IRQ. Streamed over the same chunked transfer as `/proc/bus/pci/devices`;
-empty without a connected daemon.
+sorted by IRQ. The per-device lines carry no counts (macOS has no per-IRQ-line
+per-CPU data), but the kext appends the architecture summary lines `LOC` (local
+timer interrupts) and `RES` (rescheduling IPIs) with real per-CPU counts from the
+softirq layer (`libkprocfs/cpu.c`, `PROCESSOR_CPU_STAT`) — so the node is useful
+even without a daemon (which just adds the per-device topology). The topology is
+streamed over the same chunked transfer as `/proc/bus/pci/devices`.
 
 `softirqs` is Linux's per-CPU softirq-count table, one line per softirq type
 (`HI`, `TIMER`, `NET_TX`, `NET_RX`, `BLOCK`, `IRQ_POLL`, `TASKLET`, `SCHED`,
-`HRTIMER`, `RCU`). Softirqs are a Linux-specific bottom-half mechanism; macOS/XNU
-has no softirq concept and tracks no such counters, so the standard type list is
-reported with all-zero counts (as `/proc/interrupts` does for its counts), one
-CPU column per online processor. Fully in-kernel.
+`HRTIMER`, `RCU`). Softirqs are a Linux-specific bottom-half mechanism; XNU has
+no softirq layer, but every processor keeps per-CPU interrupt-event counters —
+hardware IRQs, IPIs and timer interrupts — reachable through
+`processor_info(PROCESSOR_CPU_STAT)`. `libkprocfs/cpu.c` surfaces those as the
+XNU-side softirq concept (`procfs_cpu_softirq_counts()`) and maps them onto the
+vectors: `TIMER` and `HRTIMER` from the timer interrupt, `SCHED` from reschedule
+IPIs. So those three carry real per-CPU numbers; the vectors with no XNU counter
+(network, block, tasklet, RCU, …) stay 0, and the whole table is 0 if libklookup
+could not resolve `cpu_to_processor`. Fully in-kernel.
 
 `tty/` is Linux's TTY-information directory. `tty/drivers` is the tty driver
 table; Linux lists registered `tty_driver` structs, but macOS has no such

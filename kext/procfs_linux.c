@@ -1006,23 +1006,31 @@ static uint32_t procfs_online_cpus(void);   /* defined with the /proc/irq nodes 
 
 /*
  * /proc/softirqs - Linux's per-CPU softirq counts, one line per softirq type.
- * Softirqs are a Linux-specific bottom-half mechanism; macOS/XNU has no softirq
- * concept and tracks no such counters, so the standard Linux type list is
- * reported with all-zero counts (as /proc/interrupts does for its counts), with
- * one CPU column per online processor.
+ * Softirqs are a Linux-specific bottom-half mechanism; XNU has no softirq layer,
+ * but libkprocfs/cpu.c surfaces the equivalent per-CPU event counters (timer
+ * interrupts, reschedule IPIs) via processor_info(PROCESSOR_CPU_STAT) and maps
+ * them onto the softirq vectors (procfs_cpu_softirq_counts). So TIMER/HRTIMER and
+ * SCHED carry real numbers; vectors with no XNU counter (network, block, RCU, ...)
+ * read 0. Without libklookup-resolved cpu_to_processor the whole table is 0.
  */
 int
 procfs_dosoftirqs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    static const char *const names[] = {
-        "HI", "TIMER", "NET_TX", "NET_RX", "BLOCK", "IRQ_POLL",
-        "TASKLET", "SCHED", "HRTIMER", "RCU",
-    };
-    const int ntypes = (int)(sizeof(names) / sizeof(names[0]));
     uint32_t ncpu = procfs_online_cpus();
+
+    /* Per-CPU softirq counts (ncpu x PROCFS_NR_SOFTIRQ), filled from cpu.c. */
+    uint64_t *pc = malloc((size_t)ncpu * PROCFS_NR_SOFTIRQ * sizeof(uint64_t),
+                          M_TEMP, M_WAITOK);
+    if (pc == NULL) {
+        return ENOMEM;
+    }
+    for (uint32_t c = 0; c < ncpu; c++) {
+        (void)procfs_cpu_softirq_counts((int)c, &pc[(size_t)c * PROCFS_NR_SOFTIRQ]);
+    }
 
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
+        free(pc, M_TEMP);
         return ENOMEM;
     }
     sbuf_printf(&sb, "                    ");            /* pad over the name column */
@@ -1030,16 +1038,18 @@ procfs_dosoftirqs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
         sbuf_printf(&sb, "CPU%-8u", c);
     }
     sbuf_printf(&sb, "\n");
-    for (int t = 0; t < ntypes; t++) {
-        sbuf_printf(&sb, "%12s:", names[t]);
+    for (int t = 0; t < PROCFS_NR_SOFTIRQ; t++) {
+        sbuf_printf(&sb, "%12s:", procfs_softirq_names[t]);
         for (uint32_t c = 0; c < ncpu; c++) {
-            sbuf_printf(&sb, " %10u", 0u);              /* macOS has no softirqs */
+            sbuf_printf(&sb, " %10llu",
+                (unsigned long long)pc[(size_t)c * PROCFS_NR_SOFTIRQ + t]);
         }
         sbuf_printf(&sb, "\n");
     }
     sbuf_finish(&sb);
     int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+    free(pc, M_TEMP);
     return error;
 }
 
@@ -2452,10 +2462,42 @@ procfs_dointerrupts(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
     }
 
     int error = procfs_ctl_request_blob(PROCFS_REQ_INTERRUPTS, &sb);
-    if (error != 0) {
+    if (error != 0 && error != ENOTCONN) {
         sbuf_delete(&sb);
-        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+        return error;
     }
+
+    /*
+     * Append the architecture summary lines with real per-CPU counts - the
+     * softirq/interrupt concept from libkprocfs/cpu.c. The daemon supplies the
+     * per-device IRQ topology (counts 0, no per-line data on macOS); the kext
+     * adds LOC (local timer interrupts) and RES (rescheduling IPIs), which XNU
+     * does count per CPU. When there is no daemon the topology is empty, so a
+     * CPU-column header is emitted first to keep the summary aligned.
+     */
+    uint32_t ncpu = procfs_online_cpus();
+    if (sbuf_len(&sb) == 0) {
+        sbuf_printf(&sb, "     ");
+        for (uint32_t c = 0; c < ncpu; c++) {
+            sbuf_printf(&sb, "CPU%-8u", c);
+        }
+        sbuf_printf(&sb, "\n");
+    }
+
+    struct procfs_cpu_irq irqs[64];
+    for (uint32_t c = 0; c < ncpu; c++) {
+        (void)procfs_cpu_irq_counts((int)c, &irqs[c]);
+    }
+    sbuf_printf(&sb, "%4s:", "LOC");
+    for (uint32_t c = 0; c < ncpu; c++) {
+        sbuf_printf(&sb, " %10llu", (unsigned long long)irqs[c].timer);
+    }
+    sbuf_printf(&sb, "   Local timer interrupts\n");
+    sbuf_printf(&sb, "%4s:", "RES");
+    for (uint32_t c = 0; c < ncpu; c++) {
+        sbuf_printf(&sb, " %10llu", (unsigned long long)irqs[c].ipi);
+    }
+    sbuf_printf(&sb, "   Rescheduling interrupts\n");
 
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
