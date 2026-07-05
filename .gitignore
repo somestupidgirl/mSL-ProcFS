@@ -6,6 +6,8 @@ test/test_mount
 test/test_readdir
 test/test_getdents
 test/test_getdents_multi
+tools/procfs_ksyms
+tools/procfsd
 **/*.dSYM
 **/.DS_Store
 .DS_Store
