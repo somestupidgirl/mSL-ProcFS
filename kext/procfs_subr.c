@@ -76,6 +76,7 @@ procfs_allocvp(pfstype pfs_type)
     case PFSnfsexports:     /* FALLTHROUGH */
     case PFSinterrupts:     /* FALLTHROUGH */
     case PFSirq:            /* FALLTHROUGH */
+    case PFStty:            /* FALLTHROUGH */
     case PFSkcmdline:       /* FALLTHROUGH */
         return VREG;
 
@@ -137,7 +138,7 @@ procfs_node_type_has_pid(pfstype node_type)
         && node_type != PFSrtc && node_type != PFSexecdomains
         && node_type != PFSfb && node_type != PFSnfsexports
         && node_type != PFSinterrupts && node_type != PFSirq
-        && node_type != PFSkcmdline;
+        && node_type != PFStty && node_type != PFSkcmdline;
 }
 
 /*

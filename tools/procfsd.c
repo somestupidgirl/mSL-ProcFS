@@ -232,6 +232,8 @@ static char  *g_nfs_blob = NULL;   /* NFS exports (/proc/fs/nfs/exports) */
 static size_t g_nfs_blob_len = 0;
 static char  *g_intr_blob = NULL;  /* Linux format (/proc/interrupts) */
 static size_t g_intr_blob_len = 0;
+static char  *g_tty_blob = NULL;   /* Linux format (/proc/tty/drivers) */
+static size_t g_tty_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -872,6 +874,140 @@ build_interrupts_blob(char **blobp, size_t *lenp)
 }
 
 /*
+ * /proc/tty/drivers support. Linux lists registered tty_driver structs; macOS
+ * has no such registry, so derive the table from the tty devices in /dev,
+ * grouped by major. Each major becomes one Linux-style line: driver name,
+ * /dev prefix, major, minor range and a type.
+ */
+struct ttyrow {
+    int      major;
+    uint32_t min, max;      /* minor range seen for this major */
+    char     name[64];      /* driver / dev family name */
+    char     type[16];      /* system / console / serial / pty:master|slave */
+};
+
+static int
+tty_is_name(const char *n)
+{
+    return strncmp(n, "tty", 3) == 0 || strncmp(n, "cu.", 3) == 0 ||
+           strncmp(n, "pty", 3) == 0 || strncmp(n, "ptm", 3) == 0 ||
+           strcmp(n, "console") == 0;
+}
+
+/* Family name: the device name up to its first '.' or digit (ptyp0 -> "ptyp",
+ * cu.wlan-debug -> "cu", ttys003 -> "ttys", console -> "console"). */
+static void
+tty_family(const char *in, char *out, size_t cap)
+{
+    size_t i = 0;
+    for (; in[i] != '\0' && i + 1 < cap; i++) {
+        char c = in[i];
+        if (c == '.' || (c >= '0' && c <= '9')) {
+            break;
+        }
+        out[i] = c;
+    }
+    out[i] = '\0';
+    if (i == 0) {
+        strlcpy(out, in, cap);
+    }
+}
+
+static const char *
+tty_type(const char *n)
+{
+    if (strcmp(n, "console") == 0)                                return "console";
+    if (strncmp(n, "cu.", 3) == 0 || strncmp(n, "tty.", 4) == 0)  return "serial";
+    if (strncmp(n, "ptm", 3) == 0 || strncmp(n, "pty", 3) == 0)   return "pty:master";
+    if (strcmp(n, "tty") == 0)                                    return "system";
+    if (strncmp(n, "tty", 3) == 0)                                return "pty:slave";
+    return "system";
+}
+
+static int
+ttyrow_cmp(const void *a, const void *b)
+{
+    int ma = ((const struct ttyrow *)a)->major;
+    int mb = ((const struct ttyrow *)b)->major;
+    return (ma > mb) - (ma < mb);
+}
+
+static void
+build_ttydrivers_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    DIR *dir = opendir("/dev");
+    if (dir == NULL) {
+        return;
+    }
+
+    struct ttyrow *rows = NULL;
+    size_t nrows = 0, cap = 0;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL) {
+        if (de->d_name[0] == '.' || !tty_is_name(de->d_name)) {
+            continue;
+        }
+        char path[1100];
+        snprintf(path, sizeof(path), "/dev/%s", de->d_name);
+        struct stat st;
+        if (lstat(path, &st) != 0 || !S_ISCHR(st.st_mode)) {
+            continue;
+        }
+        int      maj = major(st.st_rdev);
+        uint32_t min = (uint32_t)minor(st.st_rdev);
+
+        struct ttyrow *r = NULL;
+        for (size_t i = 0; i < nrows; i++) {
+            if (rows[i].major == maj) { r = &rows[i]; break; }
+        }
+        if (r != NULL) {
+            if (min < r->min) { r->min = min; }
+            if (min > r->max) { r->max = min; }
+            continue;
+        }
+        if (nrows == cap) {
+            size_t nc = (cap == 0) ? 32 : cap * 2;
+            struct ttyrow *nr = realloc(rows, nc * sizeof(*nr));
+            if (nr == NULL) { break; }
+            rows = nr; cap = nc;
+        }
+        r = &rows[nrows++];
+        r->major = maj;
+        r->min = r->max = min;
+        tty_family(de->d_name, r->name, sizeof(r->name));
+        strlcpy(r->type, tty_type(de->d_name), sizeof(r->type));
+    }
+    closedir(dir);
+
+    qsort(rows, nrows, sizeof(*rows), ttyrow_cmp);
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f != NULL) {
+        for (size_t i = 0; i < nrows; i++) {
+            char devp[80], range[32];
+            snprintf(devp, sizeof(devp), "/dev/%s", rows[i].name);
+            if (rows[i].min == rows[i].max) {
+                snprintf(range, sizeof(range), "%u", rows[i].min);
+            } else {
+                snprintf(range, sizeof(range), "%u-%u", rows[i].min, rows[i].max);
+            }
+            fprintf(f, "%-20s %-11s %3d %s %s\n",
+                rows[i].name, devp, rows[i].major, range, rows[i].type);
+        }
+        fclose(f);
+        *blobp = buf;
+        *lenp = sz;
+    }
+    free(rows);
+}
+
+/*
  * /proc/fs/nfs/exports support. macOS keeps the NFS export configuration in
  * /etc/exports, which nfsd registers with the kernel, so serve that file's
  * contents. A machine with no NFS server configured has no /etc/exports, which
@@ -1327,6 +1463,14 @@ main(int argc, char **argv)
                 build_interrupts_blob(&g_intr_blob, &g_intr_blob_len);
             }
             blob_slice(g_intr_blob, g_intr_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_TTYDRIVERS: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_ttydrivers_blob(&g_tty_blob, &g_tty_blob_len);
+            }
+            blob_slice(g_tty_blob, g_tty_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_RUSAGE: {

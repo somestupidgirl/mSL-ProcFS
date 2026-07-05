@@ -105,6 +105,12 @@ tdir "$PROC/bus/pci" "bus/pci dir"
 if out=$(cat "$PROC/bus/pci/devices" 2>/dev/null) && [ -n "$out" ]; then ok "bus/pci/devices: $(printf '%s' "$out" | wc -l | tr -d ' ') devices"
 elif [ "$daemon" = no ]; then note "bus/pci/devices empty (procfsd not running)"; else note "bus/pci/devices empty"; fi
 
+hdr "Root: /proc/tty (drivers)"
+tdir  "$PROC/tty"          "tty dir"
+tfile "$PROC/tty/ldiscs"   "tty/ldiscs"
+if out=$(cat "$PROC/tty/drivers" 2>/dev/null) && [ -n "$out" ]; then ok "tty/drivers: $(printf '%s' "$out" | wc -l | tr -d ' ') drivers"
+elif [ "$daemon" = no ]; then note "tty/drivers empty (procfsd not running)"; else note "tty/drivers empty"; fi
+
 hdr "Root: /proc/irq (SMP affinity)"
 tdir  "$PROC/irq"                            "irq dir"
 tfile "$PROC/irq/default_smp_affinity"       "irq/default_smp_affinity"

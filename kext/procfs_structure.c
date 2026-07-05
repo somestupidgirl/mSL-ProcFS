@@ -202,6 +202,15 @@ procfs_structure_init(void)
         pfssnode_t *irq_afl = add_node(irq_dir, "default_smp_affinity_list",
                         PFSirq, next_node_id++, 0, 0, NULL, procfs_doirq_affinity_list);
 
+        // Linux-style /proc/tty/ - tty driver table (from /dev via procfsd) and the
+        // line disciplines.
+        pfssnode_t *tty_dir = add_directory(root_node, "tty",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *tty_drv = add_node(tty_dir, "drivers",
+                        PFStty, next_node_id++, 0, 0, NULL, procfs_dotty_drivers);
+        pfssnode_t *tty_ld = add_node(tty_dir, "ldiscs",
+                        PFStty, next_node_id++, 0, 0, NULL, procfs_dotty_ldiscs);
+
         // Linux-style /proc/fs/ - filesystem parameters. Currently /proc/fs/nfs/exports,
         // the NFS export table (macOS /etc/exports, read by procfsd).
         pfssnode_t *fs_dir = add_directory(root_node, "fs",

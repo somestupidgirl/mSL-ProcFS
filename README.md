@@ -60,6 +60,7 @@ Linux-compatible files and helpers:
 |`stat`        | Linux-style kernel/system statistics (`cpu`/`cpuN` ticks, `btime`, `processes`; see below) |
 |`swaps`       | Linux-style swap-area table (aggregate `vm.swapusage`; macOS swaps dynamically under `/private/var/vm`) |
 |`sys/`        | Dynamic mirror of the kernel sysctl MIB tree (Linux `/proc/sys`); directories are sysctl nodes, leaves read their value as text |
+|`tty/`        | TTY info directory: `tty/drivers` (the tty driver table, derived from `/dev` by the `procfsd` daemon) and `tty/ldiscs` (line disciplines) |
 |`uptime`      | Linux-style uptime (seconds since boot; idle field `0.00`)          |
 |`version`     | Kernel version string (text)                                        |
 |`vmstat`      | Linux-style virtual-memory statistics (daemon-backed `host_statistics64`; see below) |
@@ -434,6 +435,17 @@ has them), so the count columns are 0. The IRQ *topology*, though, is real: the
 IRQ → controller → device rows (e.g. `cpu0`, `spi2`, `i2c1`, `pci-bridge0`),
 sorted by IRQ. Streamed over the same chunked transfer as `/proc/bus/pci/devices`;
 empty without a connected daemon.
+
+`tty/` is Linux's TTY-information directory. `tty/drivers` is the tty driver
+table; Linux lists registered `tty_driver` structs, but macOS has no such
+registry, so the `procfsd` daemon derives it from the tty devices in `/dev`,
+grouped by major — one `<name> /dev/<name> <major> <minor-range> <type>` line per
+major, with the type inferred from the device family (`console`, `system` for
+`/dev/tty`, `serial` for the `cu.*` callout devices, `pty:master`/`pty:slave` for
+the BSD and unix98 pty majors). `tty/ldiscs` lists the line disciplines; macOS's
+tty layer uses the standard terminal discipline (`TTYDISC`, number 0) and exposes
+no enumerable table to a kext, so it reports that one canonical entry. The
+`drivers` listing is empty without a connected daemon.
 
 `irq/` is Linux's IRQ-to-CPU affinity tree. On Linux each `/proc/irq/<N>/` holds
 an `smp_affinity` bitmask naming the CPUs that may service IRQ `<N>`, plus a

@@ -61,6 +61,9 @@ enum {
     PROCFS_REQ_INTERRUPTS = 20, /* arg = byte offset; same chunked transfer as
                                  * PROCFS_REQ_DEVICES, Linux /proc/interrupts
                                  * (IRQ topology via IOKit IOInterruptSpecifiers). */
+    PROCFS_REQ_TTYDRIVERS = 21, /* arg = byte offset; same chunked transfer as
+                                 * PROCFS_REQ_DEVICES, Linux /proc/tty/drivers
+                                 * (tty devices from /dev grouped by major). */
 };
 
 /*

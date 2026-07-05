@@ -2399,6 +2399,44 @@ procfs_doirq_affinity_list(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_cont
 }
 
 /*
+ * /proc/tty/drivers - Linux's registered tty-driver table. macOS has no such
+ * registry, so the procfsd daemon derives it from the tty devices in /dev,
+ * grouped by major (one "<name> /dev/<name> <major> <minor-range> <type>" line
+ * per major, like Linux). Chunked transfer like /proc/devices.
+ */
+int
+procfs_dotty_drivers(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 1024, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_TTYDRIVERS, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
+ * /proc/tty/ldiscs - the line disciplines. macOS's tty layer uses the standard
+ * terminal discipline (TTYDISC, number 0); it exposes no enumerable table of
+ * registered disciplines to a kext, so report the one canonical entry.
+ */
+int
+procfs_dotty_ldiscs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char text[] = "tty\t\t0\n";
+    return procfs_copy_data(text, sizeof(text) - 1, uio);
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon
