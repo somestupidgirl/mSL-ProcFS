@@ -181,6 +181,11 @@ procfs_structure_init(void)
         pfssnode_t *ioports = add_node(root_node, "ioports",
                         PFSioports, next_node_id++, 0, 0, NULL, procfs_doioports);
 
+        // Linux-style /proc/iomem (physical memory map; System RAM + Reserved from
+        // hw.memsize / hw.memsize_usable, as macOS publishes no full physical map).
+        pfssnode_t *iomem = add_node(root_node, "iomem",
+                        PFSiomem, next_node_id++, 0, 0, NULL, procfs_doiomem);
+
         // Linux-style /proc/rtc (real-time-clock state; UTC calendar time + status fields).
         pfssnode_t *rtc = add_node(root_node, "rtc",
                         PFSrtc, next_node_id++, 0, 0, NULL, procfs_dortc);

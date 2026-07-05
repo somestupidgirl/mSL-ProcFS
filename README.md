@@ -47,6 +47,7 @@ Linux-compatible files and helpers:
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`fs/`         | Filesystem-parameters directory; currently `fs/nfs/exports`, the NFS export table (macOS `/etc/exports`, read by the `procfsd` daemon) |
 |`interrupts`  | Linux-style interrupt table (IRQ → controller → device); counts are 0 (macOS exposes no per-CPU interrupt counts), but the IRQ topology from IOKit is real (via the `procfsd` daemon) |
+|`iomem`       | Linux-style physical memory map; `System RAM` + `Reserved` sized from `hw.memsize`/`hw.memsize_usable` (macOS publishes no full physical map, so the base is nominal) |
 |`ioports`     | Linux-style I/O port map; an x86-only concept — the fixed legacy PC ports on x86, empty on Apple Silicon (ARM has no port-mapped I/O) |
 |`irq/`        | IRQ-to-CPU affinity directory; `default_smp_affinity`/`_list` (all online CPUs). macOS routes IRQs via the AIC with no user-settable per-IRQ affinity, so per-IRQ subdirectories are omitted |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
@@ -408,6 +409,15 @@ all — it is memory-mapped only — so the node is empty on arm64, as on ARM Li
 On x86 the legacy ISA controllers (PIC, PIT, 8237 DMA, keyboard, RTC, FPU) sit at
 architecturally-fixed ports on all PC-compatible hardware, so those standard
 regions are reported there. Fully in-kernel.
+
+`iomem` is Linux's physical address-space map (`<start>-<end> : name`), dominated
+by System RAM. macOS publishes no complete physical map to a kext — the
+device-tree memory node redacts the DRAM base and device regions need multi-level
+`ranges` translation — so the one solid fact is the RAM size. The node reports
+`System RAM` (the OS-usable amount, `hw.memsize_usable`) and `Reserved` (the
+firmware carve-out, `hw.memsize` − usable). The base is a nominal `0` (macOS does
+not expose the true physical base), so this is a size-accurate representation of
+RAM rather than a literal address map. Fully in-kernel.
 
 `rtc` reports the real-time-clock state (Linux `drivers/rtc/proc.c`). The core is
 the current RTC time and date; macOS keeps its hardware RTC in UTC, exposed via

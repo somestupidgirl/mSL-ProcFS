@@ -964,6 +964,45 @@ procfs_doioports(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/iomem - Linux's physical address-space map ("<start>-<end> : name"),
+ * dominated by System RAM. macOS publishes no complete physical map to a kext:
+ * the device-tree memory node redacts the DRAM base and device regions need
+ * multi-level "ranges" translation. The one solid fact is the RAM size, so this
+ * reports System RAM (the OS-usable amount, hw.memsize_usable) and Reserved (the
+ * firmware carve-out, hw.memsize - usable). The base is nominal 0 - macOS does
+ * not expose the true physical base - so this is a size-accurate representation
+ * of RAM rather than a literal address map.
+ */
+int
+procfs_doiomem(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    uint64_t total = 0, usable = 0;
+    size_t   sz;
+    sz = sizeof(total);  (void)sysctlbyname("hw.memsize", &total, &sz, NULL, 0);
+    sz = sizeof(usable); (void)sysctlbyname("hw.memsize_usable", &usable, &sz, NULL, 0);
+    if (usable == 0 || usable > total) {
+        usable = total;
+    }
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 256, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+    if (total > 0) {
+        sbuf_printf(&sb, "%08llx-%08llx : System RAM\n",
+            0ULL, (unsigned long long)(usable - 1));
+        if (usable < total) {
+            sbuf_printf(&sb, "%08llx-%08llx : Reserved\n",
+                (unsigned long long)usable, (unsigned long long)(total - 1));
+        }
+    }
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/rtc - Linux's real-time-clock state (drivers/rtc/proc.c). The core is
  * the current RTC time and date; macOS keeps its hardware RTC in UTC, exposed
  * via clock_get_calendar_microtime(), so rtc_time/rtc_date are the UTC calendar

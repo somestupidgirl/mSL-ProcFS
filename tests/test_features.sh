@@ -83,6 +83,7 @@ else bad "dma unreadable"; fi
 if p=$(cat "$PROC/ioports" 2>/dev/null); then
     if [ -n "$p" ]; then ok "ioports: $(printf '%s' "$p" | wc -l | tr -d ' ') regions"; else note "ioports empty (no port I/O on arm64)"; fi
 else bad "ioports unreadable"; fi
+tfile "$PROC/iomem"           "iomem (System RAM map)"
 tfile "$PROC/partitions"      "partitions"
 tfile "$PROC/diskstats"       "diskstats"
 tfile "$PROC/mtab"            "mtab"
