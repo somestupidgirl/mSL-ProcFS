@@ -27,7 +27,6 @@
 #include <mach/mach_types.h>
 #include <ptrauth.h>
 
-#include "symbols.h"
 
 /*
  * =========== From bsd/kern/bsd_init.c ===========
@@ -208,7 +207,9 @@ proc_pidshortbsdinfo(proc_t p, struct proc_bsdshortinfo * pbsd_shortp, __unused 
         pbsd_shortp->pbsi_flags |= PROC_FLAG_THCWD;
     }
 
-    if (_proc_issetugid != NULL && proc_issetugid(p) != 0)  {
+    /* proc_issetugid() is not exported for kext linkage; read the flag it checks
+     * (P_SUGID: privileges changed since last exec) from p_flag directly. */
+    if ((proc_flag & P_SUGID) != 0)  {
         pbsd_shortp->pbsi_flags |= PROC_FLAG_PSUGID;
     }
 
@@ -301,38 +302,22 @@ munge_vinfo_stat(struct stat64 *sbp, struct vinfo_stat *vsbp)
 int
 fill_vnodeinfo(vnode_t vp, struct vnode_info *vinfo, __unused boolean_t check_fsgetpath)
 {
-    vfs_context_t context;
+    /*
+     * vn_stat() (for vi_stat) and the dead_mountp global (for vi_fsid) are
+     * com.apple.kpi.private/unresolved on arm64, so those fields are left zero;
+     * fd fileinfo consumers rely on vi_type, which the public vnode_vtype() KPI
+     * supplies. (vnode_getattr()/vfs_statfs() could fill the rest as a later
+     * public-KPI enhancement.)
+     */
     struct stat64 sb;
-    int error = 0;
+    bzero(&sb, sizeof(sb));
+    munge_vinfo_stat(&sb, &vinfo->vi_stat);     /* deterministically zeroed */
 
-    struct vnode_attr *vap;
-
-    bzero(&sb, sizeof(struct stat64));
-    context = vfs_context_create((vfs_context_t)0);
-
-    if (!error) {
-        if (_vn_stat != NULL) {
-            error = vn_stat(vp, &sb, NULL, 1, 0, context);
-            munge_vinfo_stat(&sb, &vinfo->vi_stat);
-        }
-    }
-
-    (void)vfs_context_rele(context);
-
-    if (error != 0) {
-        goto out;
-    }
-
-    if (_dead_mountp != NULL && vnode_mount(vp) != dead_mountp) {
-        vinfo->vi_fsid = vp->v_mount->mnt_vfsstat.f_fsid;
-    } else {
-        vinfo->vi_fsid.val[0] = 0;
-        vinfo->vi_fsid.val[1] = 0;
-    }
+    vinfo->vi_fsid.val[0] = 0;
+    vinfo->vi_fsid.val[1] = 0;
     vinfo->vi_type = vnode_vtype(vp);
 
-out:
-    return error;
+    return 0;
 }
 
 

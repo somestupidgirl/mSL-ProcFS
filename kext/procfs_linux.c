@@ -156,14 +156,11 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
      * Not to be conflated with cpu_cores (number of cores)
      * as these are not the same.
      */
-    /* processor_count is a private symbol - use sysctlbyname instead */
+    /* Overall logical-processor count. The kernel's processor_count global is
+     * not linkable, so read hw.logicalcpu. */
     uint32_t max_cpus = 1;
-    if (_processor_count != NULL) {
-        max_cpus = processor_count;
-    } else {
-        size_t max_cpus_size = sizeof(max_cpus);
-        sysctlbyname("hw.logicalcpu", &max_cpus, &max_cpus_size, NULL, 0);
-    }
+    size_t   max_cpus_size = sizeof(max_cpus);
+    sysctlbyname("hw.logicalcpu", &max_cpus, &max_cpus_size, NULL, 0);
     uint32_t cnt_cpus = 0;
 
     /*
@@ -415,9 +412,6 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
             if ((int)core_id > (int)cpu_cores - 1) {
                 core_id = 0;
             }
-            if (_processor_count != NULL && max_cpus != processor_count) {
-                max_cpus = processor_count;
-            }
         } else if (cnt_cpus > max_cpus) {
             break;
         }
@@ -491,9 +485,6 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
              * An unknown bug is causing the variable to reduce the
              * count down to 23 unless we do this.
              */
-            if (_processor_count != NULL && max_cpus != processor_count) {
-                max_cpus = processor_count;
-            }
         } else if (cnt_cpus > max_cpus) {
             /*
              * If the counter exceeds the processor count,

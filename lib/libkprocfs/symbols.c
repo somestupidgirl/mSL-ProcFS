@@ -42,18 +42,10 @@ boolean_t procfs_klookup_ok = FALSE;
 	__typeof(_##sym) _##sym = NULL
 
 /*
- * These stay NULL: resolve_symbols() below never assigns them, so every call
- * site guards on `_sym != NULL` and takes a public-KPI/daemon fallback. They
- * remain only for the handful of guarded references still in the tree and are
- * being removed stage by stage.
+ * x86-only NULL stubs, never assigned: the x86 /proc/cpuinfo path guards on
+ * `_sym != NULL` and takes a zeroed fallback. These are the last symbols.h
+ * consumers, migrated to the procfsd daemon next.
  */
-SYM_INIT(proc_issetugid);
-SYM_INIT(proc_get_darwinbgstate);
-SYM_INIT(fill_taskprocinfo);
-SYM_INIT(fill_taskthreadinfo);
-SYM_INIT(vn_stat);
-SYM_INIT(dead_mountp);
-SYM_INIT(processor_count);
 #if defined(__x86_64__)
 SYM_INIT(tscFreq);
 SYM_INIT(cpuid_info);
