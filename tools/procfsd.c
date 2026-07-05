@@ -1298,6 +1298,54 @@ procfsd_handle_memread(const struct procfs_ctl_req *req, struct procfs_ctl_resp 
 }
 
 /*
+ * Serve a PROCFS_REQ_PROCARGS request: fetch the target's flattened argument
+ * region with the KERN_PROCARGS2 sysctl (argc, exec path, argv, env, apple[])
+ * and return the slice [arg, arg+MAXPAYLOAD). The kext re-requests at successive
+ * offsets until a short reply, then splits the sections. This is a root sysctl,
+ * not task_for_pid, so it works for protected/hardened targets too; it fails
+ * (EINVAL) for zombies and some system processes, which the kext already handles
+ * by falling back to the parenthesised command name.
+ */
+static void
+procfsd_handle_procargs(const struct procfs_ctl_req *req, struct procfs_ctl_resp *resp,
+    void *payload)
+{
+    static size_t argmax = 0;
+    if (argmax == 0) {
+        int    am = 0;
+        size_t s  = sizeof(am);
+        int    m[2] = { CTL_KERN, KERN_ARGMAX };
+        argmax = (sysctl(m, 2, &am, &s, NULL, 0) == 0 && am > 0)
+                 ? (size_t)am : (1u << 20);     /* 1 MB fallback */
+    }
+
+    char *buf = malloc(argmax);
+    if (buf == NULL) {
+        resp->error = ENOMEM;
+        return;
+    }
+
+    int    mib[3] = { CTL_KERN, KERN_PROCARGS2, req->pid };
+    size_t sz     = argmax;
+    if (sysctl(mib, 3, buf, &sz, NULL, 0) != 0) {
+        resp->error = (errno != 0) ? errno : EINVAL;
+        free(buf);
+        return;
+    }
+
+    size_t off = (size_t)req->arg;
+    if (off < sz) {
+        size_t avail = sz - off;
+        size_t n = (avail < PROCFS_CTL_MAXPAYLOAD) ? avail : PROCFS_CTL_MAXPAYLOAD;
+        memcpy(payload, buf + off, n);
+        resp->len = (uint32_t)n;
+    } else {
+        resp->len = 0;      /* at/past the end of the region */
+    }
+    free(buf);
+}
+
+/*
  * Restore one persisted integer setting: read `path` and write the value to the
  * `oid` sysctl. wait_connect() returns as soon as the kext registers its kernel
  * control, which the start routine does just before registering these oids - so
@@ -1749,6 +1797,9 @@ main(int argc, char **argv)
             break;
         case PROCFS_REQ_MEMREAD:
             procfsd_handle_memread(req, resp, payload);
+            break;
+        case PROCFS_REQ_PROCARGS:
+            procfsd_handle_procargs(req, resp, payload);
             break;
         case PROCFS_REQ_REGS:
         case PROCFS_REQ_FPREGS:

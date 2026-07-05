@@ -90,6 +90,13 @@ enum {
                                  * resident prefix - a short/empty reply marks a
                                  * hole). EPERM for protected targets. Backs
                                  * /proc/<pid>/mem. */
+    PROCFS_REQ_PROCARGS   = 28, /* pid + arg = byte offset; payload: slice of the
+                                 * flattened KERN_PROCARGS2 argument region (argc,
+                                 * exec path, argv, env, apple[]). The caller
+                                 * re-requests with arg += chunk until a short
+                                 * reply, then splits the sections. Backs
+                                 * cmdline/environ/auxv. Uses a root sysctl (no
+                                 * task_for_pid), so protected targets still work. */
 };
 
 /*

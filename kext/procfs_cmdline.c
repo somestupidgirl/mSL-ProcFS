@@ -11,103 +11,102 @@
  * The argument-fetching mechanism necessarily diverges. NetBSD's helper is an
  * output callback for the kernel's copy_procargs(); macOS has no equivalent
  * callback KPI a kext may link (KERN_PROCARGS2's vm_map_copyin() path is
- * com.apple.kpi.private), so procfs_doprocargs_helper() here reads the target's
- * user stack directly through its pmap. Because the implementation differs
- * substantially from NetBSD's, that file's source license header is not
+ * com.apple.kpi.private). Rather than translate the target's user stack through
+ * its pmap in-kernel (which needs proc_task and the unsupported pmap
+ * primitives), the flattened argument region is fetched from the procfsd daemon,
+ * which reads it with the KERN_PROCARGS2 sysctl (PROCFS_REQ_PROCARGS). That is a
+ * root sysctl rather than task_for_pid, so - unlike the maps/mem nodes - it also
+ * works for SIP/AMFI-protected and hardened targets. Because the implementation
+ * differs substantially from NetBSD's, that file's source license header is not
  * reproduced here.
  */
 #include <stdint.h>
 #include <string.h>
 #include <libkern/libkern.h>
-#include <libkext/libkext.h>
-#if defined(__x86_64__)
-#include <mach/i386/vm_param.h>
-#elif defined(__arm64__) || defined(__aarch64__)
-#include <mach/vm_param.h>
-#endif
-#include <mach/vm_map.h>
-#include <mach/vm_types.h>
-#include <os/log.h>
 #include <sys/errno.h>
-#include <sys/exec.h>
 #include <sys/malloc.h>
 #include <sys/param.h>
 #include <sys/proc.h>
 #include <sys/proc_internal.h>
-#include <sys/syslimits.h>
 #include <sys/types.h>
 #include <sys/uio.h>
-#include <sys/uio_internal.h>
-#include <sys/vm.h>
-#include <sys/vnode.h>
 
 #include <bsdcompat/sys/malloc.h>
 
 #include <fs/procfs/procfs.h>
+#include <fs/procfs/procfs_ctl.h>
 
-#include <libkprocfs/symbols.h>
-
-/*
- * The process arguments live at the top of the target process's user stack, in
- * the region [user_stack - p_argslen, user_stack). KERN_PROCARGS2 reads them
- * with vm_map_copyin(), but that primitive (and vm_map_copy_overwrite, etc.) is
- * com.apple.kpi.private and cannot be linked by a third-party kext. Instead we
- * translate the target's user pages to physical frames through its pmap and read
- * them via the physical aperture - all linkable (com.apple.kpi.unsupported):
- * get_task_pmap(), pmap_find_phys() and ml_phys_read().
- */
-extern pmap_t       get_task_pmap(task_t task);
-extern ppnum_t      pmap_find_phys(pmap_t pmap, addr64_t va);
-extern unsigned int ml_phys_read(vm_offset_t paddr);
-
-/* The bare executable path in the args section is prefixed with this key (see
- * sysctl_procargsx() in XNU's kern_sysctl.c); we skip past it to reach argv. */
+/* apple[0] (and the environ/apple boundary) is the first "executable_path="
+ * entry in the KERN_PROCARGS2 region (see sysctl_procargsx() in XNU's
+ * kern_sysctl.c). */
 #define PROCFS_EXEC_KEY     "executable_path="
 
-/* Upper bound on how much of the args region we read. argv sits at the start of
- * the region (before the environment), so this comfortably covers any real
- * command line while bounding the work for a pathological one. */
+/* Upper bound on how much of the args region we accumulate from the daemon. This
+ * comfortably covers any real command line and environment while bounding the
+ * work (and kernel memory) for a pathological one. */
 #define PROCFS_CMDLINE_MAX  (256 * 1024)
 
 /*
- * Best-effort copy of `len` bytes from user virtual address `uva` in the address
- * space described by `pmap` into kernel buffer `dst`. Returns the number of
- * bytes copied, stopping at the first page that is not resident. Reads go
- * through the physical aperture, so a paged-out page is simply not returned
- * rather than faulted in (the args are normally resident).
+ * Accumulate the target's flattened KERN_PROCARGS2 argument region from the
+ * procfsd daemon into a freshly malloc'd buffer (free with M_TEMP). The daemon
+ * returns the region in MAXPAYLOAD-sized slices keyed by byte offset; we grow
+ * the buffer and re-request until a short slice marks the end, capping at
+ * PROCFS_CMDLINE_MAX. Returns 0 with the buffer and length set, else an errno
+ * (ENOTSUP with no daemon; EINVAL/EPERM from the sysctl for zombies/system).
  */
-size_t
-procfs_copy_user_phys(pmap_t pmap, user_addr_t uva, uint8_t *dst, size_t len)
+static int
+procfs_fetch_procargs(pid_t pid, uint8_t **bufp, size_t *lenp)
 {
-    size_t done = 0;
-
-    while (done < len) {
-        user_addr_t va = uva + done;
-        ppnum_t ppn = pmap_find_phys(pmap, (addr64_t)va);
-        if (ppn == 0) {
-            break;                              /* not resident - stop here */
-        }
-
-        addr64_t pa = (addr64_t)ptoa_64(ppn) + (va & PAGE_MASK);
-        size_t   chunk = (size_t)(PAGE_SIZE - (va & PAGE_MASK));
-        if (chunk > len - done) {
-            chunk = len - done;
-        }
-
-        for (size_t i = 0; i < chunk;) {
-            addr64_t cur = pa + i;
-            uint32_t word = ml_phys_read((vm_offset_t)(cur & ~3ULL));
-            unsigned shift = (unsigned)(cur & 3) * 8;   /* little-endian byte */
-            do {
-                dst[done + i] = (uint8_t)(word >> shift);
-                shift += 8;
-                i++;
-            } while (shift < 32 && i < chunk);
-        }
-        done += chunk;
+    size_t   cap = PROCFS_CTL_MAXPAYLOAD;
+    uint8_t *buf = malloc(cap, M_TEMP, M_WAITOK);
+    if (buf == NULL) {
+        return ENOMEM;
     }
 
-    return done;
+    size_t total = 0;
+    for (;;) {
+        if (total + PROCFS_CTL_MAXPAYLOAD > cap) {
+            size_t ncap = cap * 2;
+            if (ncap > PROCFS_CMDLINE_MAX) {
+                ncap = PROCFS_CMDLINE_MAX;
+            }
+            if (ncap <= total) {
+                break;              /* hit the cap - return what we have */
+            }
+            uint8_t *nbuf = malloc(ncap, M_TEMP, M_WAITOK);
+            if (nbuf == NULL) {
+                free(buf, M_TEMP);
+                return ENOMEM;
+            }
+            memcpy(nbuf, buf, total);
+            free(buf, M_TEMP);
+            buf = nbuf;
+            cap = ncap;
+        }
+
+        uint32_t got = 0;
+        int rc = procfs_ctl_request(PROCFS_REQ_PROCARGS, pid, total,
+                                    buf + total, PROCFS_CTL_MAXPAYLOAD, &got);
+        if (rc != 0) {
+            if (total == 0) {
+                free(buf, M_TEMP);
+                return (rc == ENOTCONN || rc == ETIMEDOUT) ? ENOTSUP : rc;
+            }
+            break;                  /* partial region already accumulated */
+        }
+        total += got;
+        if (got < PROCFS_CTL_MAXPAYLOAD) {
+            break;                  /* end of the region */
+        }
+    }
+
+    if (total == 0) {
+        free(buf, M_TEMP);
+        return EIO;
+    }
+    *bufp = buf;
+    *lenp = total;
+    return 0;
 }
 
 /*
@@ -129,22 +128,18 @@ procfs_cmdline_comm(proc_t p, uio_t uio)
 }
 
 /*
- * Read the target's flattened argument region (the KERN_PROCARGS2 layout) and
- * locate its argv / env / apple[] sections. On success returns 0 with *bufp a
- * malloc'd buffer (free with M_TEMP), *lenp its length, and the byte offsets
- * where each section begins:
+ * Fetch the target's flattened argument region (the KERN_PROCARGS2 layout) from
+ * the daemon and locate its argv / env / apple[] sections. On success returns 0
+ * with *bufp a malloc'd buffer (free with M_TEMP), *lenp its length, and the
+ * byte offsets where each section begins:
  *
- *   [ bare exec path \0 pad ][ argv strings ][ env strings ][ apple strings ]
- *     ^0                       ^*argv_off      ^*env_off       ^*apple_off
+ *   [ argc ][ exec path \0 pad ][ argv strings ][ env strings ][ apple strings ]
+ *     ^0      ^4                  ^*argv_off      ^*env_off       ^*apple_off
  *
  * The env/apple boundary is the first "executable_path=" entry (apple[0]); if no
  * apple section is found, *apple_off == *lenp. Shared by cmdline (argv span),
  * environ (env span) and the native auxv node (apple span). The caller holds the
- * proc_find() reference.
- *
- * Snapshotting the pmap under that reference keeps proc->task (hence its map)
- * valid; if the process exits mid-read its pages simply stop being resident and
- * pmap_find_phys() returns 0 (matching XNU's own KERN_PROCARGS2 stance).
+ * proc_find() reference (which pins the pid the daemon reads).
  */
 int
 procfs_read_procargs(proc_t p, uint8_t **bufp, size_t *lenp,
@@ -154,38 +149,30 @@ procfs_read_procargs(proc_t p, uint8_t **bufp, size_t *lenp,
     *lenp = 0;
     *argv_off = *env_off = *apple_off = 0;
 
-    int         argc       = p->p_argc;
-    size_t      argslen    = p->p_argslen;
-    user_addr_t user_stack = p->user_stack;
-    task_t      task       = proc_task(p);
-    pmap_t      pmap       = (task != TASK_NULL) ? get_task_pmap(task) : NULL;
-
-    if (argc <= 0 || user_stack == 0 || pmap == NULL ||
-        argslen <= sizeof(PROCFS_EXEC_KEY) - 1) {
+    uint8_t *buf = NULL;
+    size_t   n   = 0;
+    int rc = procfs_fetch_procargs(proc_pid(p), &buf, &n);
+    if (rc != 0) {
+        return rc;
+    }
+    if (n < sizeof(int)) {
+        free(buf, M_TEMP);
         return EINVAL;
     }
 
-    /*
-     * The args region is [user_stack - argslen, user_stack); the leading
-     * PROCFS_EXEC_KEY prefix is stripped exactly as sysctl_procargsx() does, so
-     * the data starts with the bare executable path, then argv, env and apple[].
-     */
-    size_t      adj     = argslen - (sizeof(PROCFS_EXEC_KEY) - 1);
-    user_addr_t data_va = user_stack - adj;
-    size_t      readlen = (adj > PROCFS_CMDLINE_MAX) ? PROCFS_CMDLINE_MAX : adj;
-
-    uint8_t *buf = malloc(readlen, M_TEMP, M_WAITOK);
-    if (buf == NULL) {
-        return ENOMEM;
-    }
-    size_t n = procfs_copy_user_phys(pmap, data_va, buf, readlen);
-    if (n == 0) {
+    /* KERN_PROCARGS2 leads with argc; the exec path, argv, env and apple[]
+     * strings follow, exactly the layout the rest of this parse expects. */
+    int argc;
+    memcpy(&argc, buf, sizeof(argc));
+    if (argc <= 0) {
         free(buf, M_TEMP);
-        return EIO;
+        return EINVAL;
     }
+    size_t pos = sizeof(int);
 
-    /* Index 0 is the bare exec path, possibly with NUL alignment padding. */
-    size_t pos = strnlen((const char *)buf, n);
+    /* The bare exec path, possibly with NUL alignment padding, precedes argv. */
+    size_t pathlen = strnlen((const char *)buf + pos, n - pos);
+    pos += pathlen;
     if (pos < n) {
         pos++;                                       /* path's NUL */
         while (pos < n && buf[pos] == '\0') {
