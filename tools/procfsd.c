@@ -1555,6 +1555,33 @@ main(int argc, char **argv)
             resp->len = maxid;
             break;
         }
+        case PROCFS_REQ_CPULOAD: {
+            /* Per-CPU user/nice/system/idle ticks for /proc/stat's cpu/cpuN
+             * lines. PROCESSOR_CPU_LOAD_INFO returns processor_cpu_load_info
+             * records (cpu_ticks[] indexed by CPU_STATE_*), already in USER_HZ. */
+            natural_t              nc = 0;
+            processor_info_array_t pinfo = NULL;
+            mach_msg_type_number_t pcnt = 0;
+            if (host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO,
+                    &nc, &pinfo, &pcnt) == KERN_SUCCESS && nc > 0) {
+                struct procfs_cpu_load *out = (struct procfs_cpu_load *)payload;
+                natural_t maxfit = PROCFS_CTL_MAXPAYLOAD / sizeof(*out);
+                natural_t n = (nc < maxfit) ? nc : maxfit;
+                processor_cpu_load_info_t li = (processor_cpu_load_info_t)pinfo;
+                for (natural_t i = 0; i < n; i++) {
+                    out[i].user = li[i].cpu_ticks[CPU_STATE_USER];
+                    out[i].nice = li[i].cpu_ticks[CPU_STATE_NICE];
+                    out[i].sys  = li[i].cpu_ticks[CPU_STATE_SYSTEM];
+                    out[i].idle = li[i].cpu_ticks[CPU_STATE_IDLE];
+                }
+                resp->len = (uint32_t)(n * sizeof(*out));
+                vm_deallocate(mach_task_self(), (vm_address_t)pinfo,
+                    pcnt * sizeof(natural_t));
+            } else {
+                resp->error = EIO;
+            }
+            break;
+        }
         case PROCFS_REQ_CPUSTAT: {
             /* Per-CPU interrupt-event counters, the XNU-side softirq data. The
              * PROCESSOR_CPU_STAT flavor (32-bit) is the one populated on Apple

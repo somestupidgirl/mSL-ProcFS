@@ -73,6 +73,10 @@ enum {
     PROCFS_REQ_TTY        = 24, /* pid; payload: controlling-terminal /dev path
                                  * string (proc_pidinfo PROC_PIDTBSDINFO e_tdev ->
                                  * devname). Empty payload = no controlling tty. */
+    PROCFS_REQ_CPULOAD    = 25, /* payload: struct procfs_cpu_load[] (one per CPU),
+                                 * host_processor_info(PROCESSOR_CPU_LOAD_INFO).
+                                 * The per-CPU user/nice/system/idle ticks behind
+                                 * /proc/stat's cpu/cpuN lines. */
 };
 
 /*
@@ -85,6 +89,18 @@ struct procfs_cpu_stat {
     uint64_t hwirq;     /* hardware interrupts  (irq_ex_cnt) */
     uint64_t ipi;       /* inter-processor IRQs (ipi_cnt)    */
     uint64_t timer;     /* timer interrupts     (timer_cnt)  */
+};
+
+/*
+ * Per-CPU tick counters for PROCFS_REQ_CPULOAD. The daemon returns one per
+ * online CPU, from host_processor_info()'s PROCESSOR_CPU_LOAD_INFO flavor -
+ * already in USER_HZ jiffies. These back /proc/stat's cpu/cpuN lines.
+ */
+struct procfs_cpu_load {
+    uint64_t user;      /* CPU_STATE_USER   */
+    uint64_t nice;      /* CPU_STATE_NICE   */
+    uint64_t sys;       /* CPU_STATE_SYSTEM */
+    uint64_t idle;      /* CPU_STATE_IDLE   */
 };
 
 /*

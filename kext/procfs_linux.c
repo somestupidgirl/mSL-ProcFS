@@ -714,12 +714,13 @@ procfs_doloadavg(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 
 /*
  * Linux-compatible /proc/stat. The cpu/cpuN lines (user/nice/system/idle ticks)
- * come from the same per-CPU source as the loadavg sampler:
- * processor_info(PROCESSOR_CPU_LOAD_INFO) on each processor_t from the
- * libklookup-resolved cpu_to_processor(). The macOS cpu_ticks are already in
- * 1/CLK_TCK units (USER_HZ jiffies), so they map straight onto the Linux
- * columns. btime comes from kern.boottime; interrupt/ctxt/fork counters have no
- * kernel-reachable source and are reported as 0.
+ * come from the procfsd daemon's host_processor_info(PROCESSOR_CPU_LOAD_INFO)
+ * (PROCFS_REQ_CPULOAD); that flavor reads zero for an in-kernel caller, so it is
+ * sourced from userspace like the softirq/interrupt counters. The macOS
+ * cpu_ticks are already in 1/CLK_TCK units (USER_HZ jiffies), so they map
+ * straight onto the Linux columns. btime comes from kern.boottime;
+ * interrupt/ctxt/fork counters have no kernel-reachable source and are reported
+ * as 0. Without a connected daemon the cpu lines read 0.
  */
 int
 procfs_dostat(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
@@ -744,23 +745,16 @@ procfs_dostat(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     bzero(cl, (size_t)ncpu * sizeof(*cl));
 
     struct cpuline agg = { 0, 0, 0, 0 };
-    if (la_cpu_to_processor != NULL) {
-        for (int i = 0; i < ncpu; i++) {
-            processor_t pr = la_cpu_to_processor(i);
-            if (pr == PROCESSOR_NULL) {
-                continue;
-            }
-            processor_cpu_load_info_data_t info;
-            mach_msg_type_number_t count = PROCESSOR_CPU_LOAD_INFO_COUNT;
-            host_t host;
-            if (processor_info(pr, PROCESSOR_CPU_LOAD_INFO, &host,
-                    (processor_info_t)&info, &count) != KERN_SUCCESS) {
-                continue;
-            }
-            cl[i].user = info.cpu_ticks[CPU_STATE_USER];
-            cl[i].nice = info.cpu_ticks[CPU_STATE_NICE];
-            cl[i].sys  = info.cpu_ticks[CPU_STATE_SYSTEM];
-            cl[i].idle = info.cpu_ticks[CPU_STATE_IDLE];
+    struct procfs_cpu_load ld[64];
+    bzero(ld, sizeof(ld));
+    uint32_t got = 0;
+    if (procfs_ctl_request(PROCFS_REQ_CPULOAD, 0, 0, ld, sizeof(ld), &got) == 0) {
+        uint32_t nld = got / (uint32_t)sizeof(ld[0]);
+        for (int i = 0; i < ncpu && (uint32_t)i < nld; i++) {
+            cl[i].user = ld[i].user;
+            cl[i].nice = ld[i].nice;
+            cl[i].sys  = ld[i].sys;
+            cl[i].idle = ld[i].idle;
             agg.user += cl[i].user;
             agg.nice += cl[i].nice;
             agg.sys  += cl[i].sys;
