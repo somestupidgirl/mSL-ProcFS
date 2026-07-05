@@ -38,9 +38,8 @@
 /* Private kernel symbols the kext wants. version + kernel_pmap are the slide
  * anchor and validation anchor; the rest unlock walled features. */
 static const char *const WANTED[] = {
-    "_version",
-    "_kernel_pmap",
-    "_proc_task",           /* task for a proc (mem/cmdline/taskinfo fallback) */
+    "_version",             /* KASLR slide anchor + staged-file validation */
+    "_kernel_pmap",         /* klookup's own validation anchor */
 };
 #define NWANTED (sizeof(WANTED) / sizeof(WANTED[0]))
 

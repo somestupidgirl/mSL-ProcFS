@@ -217,25 +217,12 @@ procfs_dotaskinfo(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
                 info.pti_policy = POLICY_TIMESHARE;
             }
             /*
-             * pti_priority = task->priority (int16). No resolvable accessor
-             * exists on arm64, so read it at the empirically-confirmed struct
-             * offset (see test/find_task_offsets.c), guarded against a mismatched
-             * kernel layout: task->thread_count at +0x78 must equal the
-             * uthread-list count and the value must be a valid base priority.
-             * The remaining proc_taskinfo fields (CPU time, faults, syscalls,
-             * context switches, ...) are not in the task struct to read - they
-             * are per-CPU (recount / scalable counters) and accumulate live - so
-             * they stay zero. On x86_64 proc_pidtaskinfo already filled them.
+             * The remaining proc_taskinfo fields (pti_priority, CPU time, faults,
+             * syscalls, context switches, ...) live only in the opaque task
+             * struct or in live per-CPU counters, with no resolvable accessor, so
+             * this daemon-less fallback leaves them zero. The daemon path above
+             * supplies the exact values when connected.
              */
-            task_t task = proc_task(p);
-            if (task != TASK_NULL && tcount > 0) {
-                const volatile uint8_t *tb = (const volatile uint8_t *)task;
-                int32_t tc_at = *(const volatile int32_t *)(tb + 0x78);
-                int16_t pri   = *(const volatile int16_t *)(tb + 0x8c);
-                if (tc_at == tcount && pri >= 0 && pri <= 127) {
-                    info.pti_priority = pri;
-                }
-            }
             error = procfs_copy_data((const char *)&info, sizeof(info), uio);
         } else {
             error = ESRCH;

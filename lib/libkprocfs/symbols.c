@@ -59,30 +59,19 @@ SYM_INIT(tscFreq);
 SYM_INIT(cpuid_info);
 #endif
 
-/*
- * Raw runtime addresses of private kernel functions resolved via libklookup
- * (NULL if unavailable). These are unsigned; sign with KL_SIGN_FN at the call
- * site, using the function-pointer type the call expects.
- *
- * On arm64 the fill_taskinfo/fill_taskthreadinfo symbols are stripped from the
- * kernel entirely (see reference memory), so taskinfo/threadinfo cannot use
- * them. proc_task survives in the symtab and is the last klookup consumer.
- */
-task_t (*procfs_kl_proc_task)(proc_t p) = NULL;            /* PAC-signed */
-
 kern_return_t
 resolve_symbols(void)
 {
     /*
-     * Resolve the private symbols we use from the staged kernel-symbol file.
-     * "_version" is the slide anchor and validates by construction; klookup
-     * additionally validates against "_kernel_pmap", so a non-matching staged
-     * file yields NULLs and we leave the features disabled.
+     * No private symbols are resolved through libklookup anymore - every former
+     * consumer now goes through the procfsd daemon. This only validates that the
+     * staged kernel-symbol file matches the running kernel ("_version" is the
+     * slide anchor, validated by construction) and is kept as a vestigial gate
+     * until the staging pipeline is removed.
      */
-    enum { I_VERSION, I_PROC_TASK, N_SYMS };
+    enum { I_VERSION, N_SYMS };
     static const char *const names[N_SYMS] = {
-        [I_VERSION]             = "_version",
-        [I_PROC_TASK]           = "_proc_task",
+        [I_VERSION] = "_version",
     };
     void *addr[N_SYMS] = { NULL };
 
@@ -94,14 +83,7 @@ resolve_symbols(void)
     }
 
     procfs_klookup_ok = TRUE;
-
-    /* proc_task: call the kernel's own accessor rather than reading struct proc
-     * at a compile-time offset, which drifts across kernel point-releases. */
-    if (addr[I_PROC_TASK] != NULL) {
-        procfs_kl_proc_task = KL_SIGN_FN(addr[I_PROC_TASK]);
-    }
-
-    printf("procfs: libklookup OK (proc_task=%d)\n", procfs_kl_proc_task != NULL);
+    printf("procfs: libklookup OK\n");
 
     return KERN_SUCCESS;
 }

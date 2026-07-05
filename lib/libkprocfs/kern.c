@@ -155,7 +155,7 @@ struct proclist zombproc = LIST_HEAD_INITIALIZER(zombproc);
  * =========== From bsd/kern/proc_info.c ===========
  */
 int
-proc_pidshortbsdinfo(proc_t p, struct proc_bsdshortinfo * pbsd_shortp, int zombie)
+proc_pidshortbsdinfo(proc_t p, struct proc_bsdshortinfo * pbsd_shortp, __unused int zombie)
 {
     unsigned int proc_flag = p->p_flag;
     uint32_t proc_status = (uint32_t)p->p_stat;
@@ -241,34 +241,28 @@ proc_pidshortbsdinfo(proc_t p, struct proc_bsdshortinfo * pbsd_shortp, int zombi
         break;
     };
 
-    /* if process is a zombie skip bg state */
-    if (_proc_get_darwinbgstate != NULL &&
-        (zombie == 0) && (proc_status != SZOMB) && (proc_task(p) != TASK_NULL)) {
-        proc_get_darwinbgstate(proc_task(p), &pbsd_shortp->pbsi_flags);
-    }
-
     return 0;
 }
 
+/*
+ * proc_pidtaskinfo / proc_pidthreadinfo: the private fillers (fill_taskprocinfo,
+ * fill_taskthreadinfo) are stripped from the arm64 kernel and were never
+ * resolvable, so these return a zeroed struct - the procfsd daemon supplies the
+ * real proc_taskinfo / proc_threadinfo (PROCFS_REQ_TASKINFO / THREADINFO), and
+ * the callers in procfs_status.c recompute what they can without the daemon.
+ */
 int
-proc_pidtaskinfo(proc_t p, struct proc_taskinfo * ptinfo)
+proc_pidtaskinfo(__unused proc_t p, struct proc_taskinfo * ptinfo)
 {
     bzero(ptinfo, sizeof(struct proc_taskinfo));
-    if (_fill_taskprocinfo != NULL) {
-        fill_taskprocinfo(proc_task(p), (struct proc_taskinfo_internal *)ptinfo);
-    }
-
     return 0;
 }
 
 int
-proc_pidthreadinfo(proc_t p, uint64_t arg, bool thuniqueid, struct proc_threadinfo *pthinfo)
+proc_pidthreadinfo(__unused proc_t p, __unused uint64_t arg, __unused bool thuniqueid,
+    struct proc_threadinfo *pthinfo)
 {
     bzero(pthinfo, sizeof(struct proc_threadinfo));
-    if (_fill_taskthreadinfo != NULL) {
-        fill_taskthreadinfo(proc_task(p), (uint64_t)arg, thuniqueid, (struct proc_threadinfo_internal *)pthinfo, NULL, NULL);
-    }
-
     return 0;
 }
 
@@ -616,24 +610,5 @@ procfs_fd_socket(proc_t p, int fd, socket_t *sop, struct proc_fileinfo *fi)
 
     *sop = so;
     return 0;
-}
-
-/*
- * proc_task() - the Mach task for a process (com.apple.kpi.private, not linkable).
- *
- * Prefer the kernel's own proc_task resolved via libklookup: it uses the running
- * kernel's exact struct proc / proc_ro layout and P_LHASTASK semantics, which
- * drift across kernel point-releases and otherwise break every task-based node
- * (map/maps/mem/cmdline/...). Only if the symbol is unavailable do we fall back
- * to reading p->p_proc_ro->pr_task at the compile-time offset.
- */
-task_t
-proc_task(proc_t p)
-{
-    if (procfs_kl_proc_task != NULL) {
-        return procfs_kl_proc_task(p);
-    }
-    task_t task = p->p_proc_ro->pr_task;
-    return (p->p_lflag & P_LHASTASK) ? task : TASK_NULL;
 }
 

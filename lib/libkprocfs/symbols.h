@@ -108,12 +108,11 @@ extern unsigned int             (*_processor_count);
                                 *_processor_count
 
 /*
- * Private kernel symbols resolved at load via libklookup from the staged
- * kernel-symbol file (see lib/libkprocfs/symbols.c, tools/procfs_ksyms.c). NULL
- * when unavailable - callers must check. procfs_kl_proc_task is PAC-signed and
- * directly callable.
+ * Set at load if libklookup validates against the staged kernel-symbol file (see
+ * lib/libkprocfs/symbols.c, tools/procfs_ksyms.c). No callable private symbols
+ * remain resolved through it - every former consumer now goes through the
+ * procfsd daemon - so this is vestigial and removed with the staging pipeline.
  */
 extern boolean_t                procfs_klookup_ok;
-extern task_t                   (*procfs_kl_proc_task)(proc_t p);
 
 #endif /* _symbols_h */
