@@ -111,41 +111,26 @@ int
 procfs_dotty(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     // The controlling terminal lives at p->p_pgrp->pg_session->s_ttyvp, reached
-    // through the SMR-protected p_pgrp. The safe accessor is proc_gettty(), which
-    // is com.apple.kpi.private and cannot be linked by a third-party kext - and
-    // its SMR read section / proc_list_lock slow path are unlinkable too. We
-    // resolve proc_gettty() at load via libklookup and call it: its SMR and
-    // session locking run inside the kernel's own code, so a resolved call is
-    // safe (no need to touch p_pgrp ourselves). When libklookup is unavailable
-    // (e.g. the staged symbol file is missing), report ENOTSUP as before.
-    if (procfs_proc_gettty == NULL) {
-        return ENOTSUP;
-    }
-
-    proc_t p = proc_find(pnp->node_id.nodeid_pid);
-    if (p == PROC_NULL) {
+    // through the SMR-protected p_pgrp; the safe accessor, proc_gettty(), is
+    // com.apple.kpi.private and unlinkable in-kernel (its SMR read section is too).
+    // Rather than resolve it via libklookup, ask the procfsd daemon: it reads the
+    // controlling-terminal device from proc_pidinfo(PROC_PIDTBSDINFO)'s e_tdev and
+    // maps it to its /dev path (devname), returning the path string (empty when
+    // the process has no controlling terminal). Without a connected daemon the
+    // node reports ENOTSUP, as it did when libklookup was unavailable.
+    char path[MAXPATHLEN];
+    uint32_t got = 0;
+    int rc = procfs_ctl_request(PROCFS_REQ_TTY, pnp->node_id.nodeid_pid, 0,
+                                path, sizeof(path), &got);
+    if (rc == ESRCH) {
         return ESRCH;
     }
-
-    int error = 0;
-    vnode_t ttyvp = NULLVP;
-    if (procfs_proc_gettty(p, &ttyvp) == 0 && ttyvp != NULLVP) {
-        // proc_gettty() returns the tty vnode with an iocount; get its path.
-        char path[MAXPATHLEN];
-        int len = (int)sizeof(path);
-        if (vn_getpath(ttyvp, path, &len) == 0) {
-            error = procfs_copy_data(path, (int)strlen(path), uio);
-        } else {
-            error = EIO;
-        }
-        vnode_put(ttyvp);
-    } else {
-        // No controlling terminal.
-        error = procfs_copy_data("", 0, uio);
+    if (rc != 0) {
+        // No daemon connected (ENOTCONN), timed out, or other failure.
+        return ENOTSUP;
     }
-
-    proc_rele(p);
-    return error;
+    // got == 0 means no controlling terminal: emit an empty node.
+    return procfs_copy_data(path, (int)got, uio);
 }
 
 /*

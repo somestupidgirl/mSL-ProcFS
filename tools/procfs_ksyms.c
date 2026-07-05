@@ -40,7 +40,6 @@
 static const char *const WANTED[] = {
     "_version",
     "_kernel_pmap",
-    "_proc_gettty",         /* tty         */
     "_cpu_to_processor",    /* loadavg     */
     "_get_task_map",        /* map/maps  */
     "_mach_vm_region",      /* map/maps  */

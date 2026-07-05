@@ -1318,6 +1318,33 @@ main(int argc, char **argv)
             }
             break;
         }
+        case PROCFS_REQ_TTY: {
+            /* Controlling terminal for /proc/<pid>/tty. proc_pidinfo's BSD info
+             * carries e_tdev (the controlling tty device, NODEV when none);
+             * map it to its /dev path via devname_r. Empty reply = no tty. */
+            struct proc_bsdinfo bi;
+            int r = proc_pidinfo(req->pid, PROC_PIDTBSDINFO, 0, &bi, sizeof(bi));
+            if (r == (int)sizeof(bi)) {
+                if ((bi.pbi_flags & PROC_FLAG_CONTROLT) &&
+                    bi.e_tdev != (uint32_t)-1) {
+                    char dbuf[64];
+                    char *nm = devname_r((dev_t)bi.e_tdev, S_IFCHR,
+                                         dbuf, (int)sizeof(dbuf));
+                    if (nm != NULL && nm[0] != '\0' && nm[0] != '?') {
+                        int n = snprintf((char *)payload, PROCFS_CTL_MAXPAYLOAD,
+                                         "/dev/%s", nm);
+                        if (n > 0) {
+                            resp->len = (n > (int)PROCFS_CTL_MAXPAYLOAD)
+                                        ? PROCFS_CTL_MAXPAYLOAD : (uint32_t)n;
+                        }
+                    }
+                }
+                /* else: no controlling terminal -> resp->len stays 0 */
+            } else {
+                resp->error = (r < 0) ? errno : ESRCH;
+            }
+            break;
+        }
         case PROCFS_REQ_VMSTAT: {
             vm_statistics64_data_t vm;
             mach_msg_type_number_t cnt = HOST_VM_INFO64_COUNT;

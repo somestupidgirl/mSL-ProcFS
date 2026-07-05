@@ -110,11 +110,10 @@ extern unsigned int             (*_processor_count);
 /*
  * Private kernel symbols resolved at load via libklookup from the staged
  * kernel-symbol file (see lib/libkprocfs/symbols.c, tools/procfs_ksyms.c). NULL
- * when unavailable - callers must check. procfs_proc_gettty and
- * procfs_kl_proc_task are PAC-signed and directly callable.
+ * when unavailable - callers must check. procfs_kl_proc_task is PAC-signed and
+ * directly callable.
  */
 extern boolean_t                procfs_klookup_ok;
-extern int                      (*procfs_proc_gettty)(proc_t p, vnode_t *vpp);
 extern task_t                   (*procfs_kl_proc_task)(proc_t p);
 extern void *                   procfs_kl_cpu_to_processor;
 extern void *                   procfs_kl_get_task_map;

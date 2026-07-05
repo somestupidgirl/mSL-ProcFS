@@ -70,6 +70,9 @@ enum {
     PROCFS_REQ_CPUCLUSTERS = 23, /* payload: char[] (one per logical CPU) = the
                                   * device-tree cluster-type 'E'/'P', for the
                                   * per-core /proc/cpuinfo part number. */
+    PROCFS_REQ_TTY        = 24, /* pid; payload: controlling-terminal /dev path
+                                 * string (proc_pidinfo PROC_PIDTBSDINFO e_tdev ->
+                                 * devname). Empty payload = no controlling tty. */
 };
 
 /*
