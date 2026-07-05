@@ -84,6 +84,12 @@ enum {
                                  * until an empty reply. EPERM for SIP/hardened
                                  * targets task_for_pid cannot open. Backs
                                  * map/maps/smaps/smaps_rollup/numa_maps. */
+    PROCFS_REQ_MEMREAD    = 27, /* pid + arg = virtual address; payload: up to
+                                 * MAXPAYLOAD bytes read from the target at arg
+                                 * (task_for_pid + mach_vm_read_overwrite, the
+                                 * resident prefix - a short/empty reply marks a
+                                 * hole). EPERM for protected targets. Backs
+                                 * /proc/<pid>/mem. */
 };
 
 /*

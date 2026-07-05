@@ -17,97 +17,41 @@
  *
  * The read mechanism itself diverges. Both BSDs fault the target's pages in
  * through the VM system (NetBSD uvm_io(), FreeBSD proc_rwmem()); macOS exposes
- * no equivalent KPI a third-party kext may link (the vm_map_copyin() path is
- * com.apple.kpi.private), so we instead translate the target's user pages to
- * physical frames through its pmap and read them via the physical aperture - all
- * linkable (com.apple.kpi.unsupported): get_task_pmap(), pmap_find_phys() and
- * ml_phys_read(). This is the same approach the cmdline node uses (see
- * procfs_cmdline.c). One consequence of not faulting is that only resident
- * pages are returned; a paged-out address ends the read rather than being
- * paged back in. Because the implementation differs substantially from the BSD
- * originals, their source license headers are not reproduced here.
+ * no equivalent KPI a third-party kext may link. Rather than translate the
+ * target's pages through its pmap in-kernel (which needs proc_task and the
+ * unsupported pmap primitives), the read is delegated to the procfsd daemon: it
+ * opens the target with task_for_pid() and reads with mach_vm_read_overwrite()
+ * (PROCFS_REQ_MEMREAD), returning the resident prefix at the requested address.
+ * A short or empty reply marks a hole, so - as with the BSD originals - only
+ * resident memory is returned and a gap ends the read rather than faulting a
+ * page back in. The cost is coverage: task_for_pid is denied for SIP/AMFI-
+ * protected and hardened-runtime targets, which then report EPERM.
  */
 #include <stdint.h>
-#include <string.h>
 #include <libkern/libkern.h>
-#if defined(__x86_64__)
-#include <mach/i386/vm_param.h>
-#elif defined(__arm64__) || defined(__aarch64__)
-#include <mach/vm_param.h>
-#endif
-#include <mach/vm_types.h>
 #include <sys/errno.h>
 #include <sys/malloc.h>
-#include <sys/param.h>
 #include <sys/proc.h>
 #include <sys/proc_internal.h>
 #include <sys/types.h>
 #include <sys/uio.h>
-#include <sys/vnode.h>
 
 #include <bsdcompat/sys/malloc.h>
 
 #include <fs/procfs/procfs.h>
-
-/*
- * Physical-aperture read primitives (com.apple.kpi.unsupported, linkable). See
- * the file banner and procfs_cmdline.c for why these are used in place of the
- * private vm_map_copyin() path.
- */
-extern pmap_t       get_task_pmap(task_t task);
-extern ppnum_t      pmap_find_phys(pmap_t pmap, addr64_t va);
-extern unsigned int ml_phys_read(vm_offset_t paddr);
-
-/*
- * Best-effort copy of `len` bytes from user virtual address `uva` in the address
- * space described by `pmap` into kernel buffer `dst`. Returns the number of
- * bytes copied, stopping at the first page that is not resident. Reads go
- * through the physical aperture, so a paged-out page is simply not returned
- * rather than faulted in.
- */
-static size_t
-procfs_read_user_phys(pmap_t pmap, user_addr_t uva, uint8_t *dst, size_t len)
-{
-    size_t done = 0;
-
-    while (done < len) {
-        user_addr_t va = uva + done;
-        ppnum_t ppn = pmap_find_phys(pmap, (addr64_t)va);
-        if (ppn == 0) {
-            break;                              /* not resident - stop here */
-        }
-
-        addr64_t pa = (addr64_t)ptoa_64(ppn) + (va & PAGE_MASK);
-        size_t   chunk = (size_t)(PAGE_SIZE - (va & PAGE_MASK));
-        if (chunk > len - done) {
-            chunk = len - done;
-        }
-
-        for (size_t i = 0; i < chunk;) {
-            addr64_t cur = pa + i;
-            uint32_t word = ml_phys_read((vm_offset_t)(cur & ~3ULL));
-            unsigned shift = (unsigned)(cur & 3) * 8;   /* little-endian byte */
-            do {
-                dst[done + i] = (uint8_t)(word >> shift);
-                shift += 8;
-                i++;
-            } while (shift < 32 && i < chunk);
-        }
-        done += chunk;
-    }
-
-    return done;
-}
+#include <fs/procfs/procfs_ctl.h>
 
 /*
  * Reads the data for the "mem" node: bytes from the target process's address
  * space, with the uio offset interpreted as the virtual address (the Linux
  * /proc/<pid>/mem semantics). Named after NetBSD's procfs_domem().
  *
- * Returns EIO if the very first requested address is not resident (an unmapped
- * region or a paged-out address), and stops cleanly at the first hole once some
- * bytes have been returned - matching how reads of /proc/<pid>/mem behave across
- * unmapped gaps.
+ * Each iteration asks the daemon for the resident bytes at the current address
+ * (up to one payload). Returns EIO if the very first requested address is not
+ * resident (an unmapped region or a paged-out address), and stops cleanly at the
+ * first hole once some bytes have been returned - matching how reads of
+ * /proc/<pid>/mem behave across unmapped gaps. ENOTSUP without a connected
+ * daemon; EPERM for a SIP/AMFI-protected or hardened target.
  */
 int
 procfs_domem(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
@@ -133,19 +77,14 @@ procfs_domem(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     }
 
     /*
-     * Hold the proc_find() reference across the whole read: that keeps
-     * proc->task referenced so the task's map/pmap stay valid. If the process
-     * exits mid-read its pages simply stop being resident and the read ends at
-     * that point (see the cmdline node for the same reasoning).
+     * Hold the proc_find() reference across the whole read: that pins the pid so
+     * it cannot be reused mid-read. The daemon opens the target by pid on each
+     * chunk; if the process exits its memory simply stops being readable and the
+     * read ends at that point.
      */
-    task_t task = proc_task(p);
-    pmap_t pmap = (task != TASK_NULL) ? get_task_pmap(task) : NULL;
-    if (pmap == NULL) {
-        proc_rele(p);
-        return EIO;
-    }
+    pid_t pid = pnp->node_id.nodeid_pid;
 
-    uint8_t *buf = malloc(PAGE_SIZE, M_TEMP, M_WAITOK);
+    uint8_t *buf = malloc(PROCFS_CTL_MAXPAYLOAD, M_TEMP, M_WAITOK);
     if (buf == NULL) {
         proc_rele(p);
         return ENOMEM;
@@ -153,30 +92,33 @@ procfs_domem(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 
     boolean_t any = FALSE;
     while (uio_resid(uio) > 0) {
-        user_addr_t  va    = (user_addr_t)uio_offset(uio);
-        size_t       pgoff = (size_t)(va & PAGE_MASK);
-        size_t       chunk = (size_t)PAGE_SIZE - pgoff;     /* up to a page boundary */
-        user_ssize_t resid = uio_resid(uio);
-        if ((user_ssize_t)chunk > resid) {
-            chunk = (size_t)resid;
+        uint64_t va  = (uint64_t)uio_offset(uio);
+        uint32_t got = 0;
+        int rc = procfs_ctl_request(PROCFS_REQ_MEMREAD, pid, va,
+                                    buf, PROCFS_CTL_MAXPAYLOAD, &got);
+        if (rc != 0) {
+            if (!any) {
+                error = (rc == ENOTCONN || rc == ETIMEDOUT) ? ENOTSUP : rc;
+            }
+            break;                  /* no daemon / protected / gone */
         }
-
-        size_t got = procfs_read_user_phys(pmap, va, buf, chunk);
         if (got == 0) {
             if (!any) {
-                error = EIO;        /* nothing readable at the start address */
+                error = EIO;        /* nothing resident at the start address */
             }
             break;                  /* otherwise return what we have */
         }
 
-        error = uiomove((const char *)buf, (int)got, uio);
+        user_ssize_t resid = uio_resid(uio);
+        size_t move = ((user_ssize_t)got < resid) ? (size_t)got : (size_t)resid;
+        error = uiomove((const char *)buf, (int)move, uio);
         if (error != 0) {
             break;
         }
         any = TRUE;
 
-        if (got < chunk) {
-            break;                  /* hit a non-resident page - stop at the hole */
+        if (got < PROCFS_CTL_MAXPAYLOAD) {
+            break;                  /* resident prefix ended - stop at the hole */
         }
     }
 

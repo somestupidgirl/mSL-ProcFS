@@ -1252,6 +1252,52 @@ procfsd_handle_maps(const struct procfs_ctl_req *req, struct procfs_ctl_resp *re
 }
 
 /*
+ * Serve a PROCFS_REQ_MEMREAD request: read up to MAXPAYLOAD bytes from the target
+ * task starting at the virtual address req->arg, into the response payload. Reads
+ * proceed page by page and stop at the first unreadable (non-resident/unmapped)
+ * page, so the reply is the resident prefix - a short or empty reply signals a
+ * hole, which the kext turns into the Linux /proc/<pid>/mem "stop at the gap"
+ * behaviour. task_for_pid is denied for SIP/AMFI-protected & hardened targets
+ * (EPERM).
+ */
+static void
+procfsd_handle_memread(const struct procfs_ctl_req *req, struct procfs_ctl_resp *resp,
+    void *payload)
+{
+    task_t task = TASK_NULL;
+    if (task_for_pid(mach_task_self(), req->pid, &task) != KERN_SUCCESS) {
+        resp->error = EPERM;
+        return;
+    }
+
+    uint8_t          *out  = (uint8_t *)payload;
+    mach_vm_address_t base  = (mach_vm_address_t)req->arg;
+    mach_vm_size_t    total = 0;
+
+    while (total < PROCFS_CTL_MAXPAYLOAD) {
+        mach_vm_address_t cur   = base + total;
+        mach_vm_size_t    pgoff = cur & (mach_vm_size_t)(vm_page_size - 1);
+        mach_vm_size_t    chunk = (mach_vm_size_t)vm_page_size - pgoff;
+        if (chunk > PROCFS_CTL_MAXPAYLOAD - total) {
+            chunk = PROCFS_CTL_MAXPAYLOAD - total;
+        }
+        mach_vm_size_t got = 0;
+        if (mach_vm_read_overwrite(task, cur, chunk,
+                (mach_vm_address_t)(uintptr_t)(out + total), &got) != KERN_SUCCESS ||
+                got == 0) {
+            break;      /* non-resident/unmapped page - stop at the hole */
+        }
+        total += got;
+        if (got < chunk) {
+            break;
+        }
+    }
+
+    resp->len = (uint32_t)total;    /* 0 => hole at the start address */
+    mach_port_deallocate(mach_task_self(), task);
+}
+
+/*
  * Restore one persisted integer setting: read `path` and write the value to the
  * `oid` sysctl. wait_connect() returns as soon as the kext registers its kernel
  * control, which the start routine does just before registering these oids - so
@@ -1700,6 +1746,9 @@ main(int argc, char **argv)
         }
         case PROCFS_REQ_MAPS:
             procfsd_handle_maps(req, resp, payload);
+            break;
+        case PROCFS_REQ_MEMREAD:
+            procfsd_handle_memread(req, resp, payload);
             break;
         case PROCFS_REQ_REGS:
         case PROCFS_REQ_FPREGS:
