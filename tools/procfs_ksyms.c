@@ -42,7 +42,6 @@ static const char *const WANTED[] = {
     "_kernel_pmap",
     "_proc_gettty",         /* tty         */
     "_cpu_to_processor",    /* loadavg     */
-    "_vm_page_wire_count",  /* meminfo     */
     "_get_task_map",        /* map/maps  */
     "_mach_vm_region",      /* map/maps  */
     "_proc_task",           /* task for a proc (map/maps/mem/cmdline/...) */

@@ -1142,13 +1142,13 @@ procfs_doexecdomains(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
  * (FreeBSD: memused = vm_wire_count * PAGE_SIZE; memfree = memtotal - memused).
  *
  * Data sources differ on macOS. MemTotal comes from the hw.memsize sysctl
- * (readable from kernel context). The wired-page count comes from the kernel's
- * vm_page_wire_count global, resolved through libklookup (it survives in the
- * arm64 kernel symbol table; the vm.* page-count sysctls are not readable from
- * kernel context, and most vm_page_*_count globals are stripped). Cached,
+ * (readable from kernel context). The wired-page count comes from the procfsd
+ * daemon's host_statistics64(HOST_VM_INFO64) (a vm_statistics64, via
+ * PROCFS_REQ_VMSTAT); the vm.* page-count sysctls are not readable from kernel
+ * context and most vm_page_*_count globals are stripped on arm64. Cached,
  * Buffers and swap have no comparable source on arm64 and are reported as 0
- * (Buffers is 0 on FreeBSD too). If libklookup did not resolve the wired count,
- * MemFree is reported as 0 rather than guessed.
+ * (Buffers is 0 on FreeBSD too). Without a connected daemon the wired count is
+ * unavailable and MemFree is reported as 0 rather than guessed.
  */
 int
 procfs_domeminfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
@@ -1157,9 +1157,14 @@ procfs_domeminfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     size_t   sz = sizeof(memtotal);
     (void)sysctlbyname("hw.memsize", &memtotal, &sz, NULL, 0);
 
+    vm_statistics64_data_t vm;
+    bzero(&vm, sizeof(vm));
+    uint32_t got = 0;
+
     unsigned long memfree = 0;
-    if (procfs_vm_page_wire_count != NULL) {
-        uint64_t wired = (uint64_t)*procfs_vm_page_wire_count * PAGE_SIZE;
+    if (procfs_ctl_request(PROCFS_REQ_VMSTAT, 0, 0, &vm, sizeof(vm), &got) == 0 &&
+        got == sizeof(vm)) {
+        uint64_t wired = (uint64_t)vm.wire_count * PAGE_SIZE;
         memfree = (unsigned long)(memtotal > wired ? memtotal - wired : 0);
     }
 

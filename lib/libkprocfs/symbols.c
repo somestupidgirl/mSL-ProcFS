@@ -73,7 +73,6 @@ task_t (*procfs_kl_proc_task)(proc_t p) = NULL;            /* PAC-signed */
 void *procfs_kl_cpu_to_processor = NULL;
 void *procfs_kl_get_task_map = NULL;
 void *procfs_kl_mach_vm_region = NULL;
-unsigned int *procfs_vm_page_wire_count = NULL;  /* data global, not PAC-signed */
 
 kern_return_t
 resolve_symbols(void)
@@ -84,13 +83,12 @@ resolve_symbols(void)
      * additionally validates against "_kernel_pmap", so a non-matching staged
      * file yields NULLs and we leave the features disabled.
      */
-    enum { I_VERSION, I_PROC_GETTTY, I_CPU_TO_PROCESSOR, I_VM_PAGE_WIRE_COUNT,
+    enum { I_VERSION, I_PROC_GETTTY, I_CPU_TO_PROCESSOR,
            I_GET_TASK_MAP, I_MACH_VM_REGION, I_PROC_TASK, N_SYMS };
     static const char *const names[N_SYMS] = {
         [I_VERSION]             = "_version",
         [I_PROC_GETTTY]         = "_proc_gettty",
         [I_CPU_TO_PROCESSOR]    = "_cpu_to_processor",
-        [I_VM_PAGE_WIRE_COUNT]  = "_vm_page_wire_count",
         [I_GET_TASK_MAP]        = "_get_task_map",
         [I_MACH_VM_REGION]      = "_mach_vm_region",
         [I_PROC_TASK]           = "_proc_task",
@@ -122,14 +120,10 @@ resolve_symbols(void)
     procfs_kl_get_task_map   = addr[I_GET_TASK_MAP];
     procfs_kl_mach_vm_region = addr[I_MACH_VM_REGION];
 
-    /* vm_page_wire_count is a plain data global; the resolved address is read
-     * directly (no PAC), used by the meminfo node to estimate free memory. */
-    procfs_vm_page_wire_count = (unsigned int *)addr[I_VM_PAGE_WIRE_COUNT];
-
-    printf("procfs: libklookup OK (proc_gettty=%d cpu_to_processor=%d vm_page_wire_count=%d "
+    printf("procfs: libklookup OK (proc_gettty=%d cpu_to_processor=%d "
            "get_task_map=%d mach_vm_region=%d proc_task=%d)\n",
            procfs_proc_gettty != NULL, procfs_kl_cpu_to_processor != NULL,
-           procfs_vm_page_wire_count != NULL, procfs_kl_get_task_map != NULL,
+           procfs_kl_get_task_map != NULL,
            procfs_kl_mach_vm_region != NULL, procfs_kl_proc_task != NULL);
 
     return KERN_SUCCESS;

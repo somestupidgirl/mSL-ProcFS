@@ -119,6 +119,5 @@ extern task_t                   (*procfs_kl_proc_task)(proc_t p);
 extern void *                   procfs_kl_cpu_to_processor;
 extern void *                   procfs_kl_get_task_map;
 extern void *                   procfs_kl_mach_vm_region;
-extern unsigned int *           procfs_vm_page_wire_count;
 
 #endif /* _symbols_h */
