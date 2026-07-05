@@ -66,11 +66,9 @@ SYM_INIT(cpuid_info);
  *
  * On arm64 the fill_taskinfo/fill_taskthreadinfo symbols are stripped from the
  * kernel entirely (see reference memory), so taskinfo/threadinfo cannot use
- * them. proc_task and the VM-region accessors survive in the symtab.
+ * them. proc_task survives in the symtab and is the last klookup consumer.
  */
 task_t (*procfs_kl_proc_task)(proc_t p) = NULL;            /* PAC-signed */
-void *procfs_kl_get_task_map = NULL;
-void *procfs_kl_mach_vm_region = NULL;
 
 kern_return_t
 resolve_symbols(void)
@@ -81,11 +79,9 @@ resolve_symbols(void)
      * additionally validates against "_kernel_pmap", so a non-matching staged
      * file yields NULLs and we leave the features disabled.
      */
-    enum { I_VERSION, I_GET_TASK_MAP, I_MACH_VM_REGION, I_PROC_TASK, N_SYMS };
+    enum { I_VERSION, I_PROC_TASK, N_SYMS };
     static const char *const names[N_SYMS] = {
         [I_VERSION]             = "_version",
-        [I_GET_TASK_MAP]        = "_get_task_map",
-        [I_MACH_VM_REGION]      = "_mach_vm_region",
         [I_PROC_TASK]           = "_proc_task",
     };
     void *addr[N_SYMS] = { NULL };
@@ -105,14 +101,7 @@ resolve_symbols(void)
         procfs_kl_proc_task = KL_SIGN_FN(addr[I_PROC_TASK]);
     }
 
-    /* mach_vm_region + get_task_map are called directly (PAC-signed at the use
-     * site in procfs_map.c) to enumerate a task's VM regions. */
-    procfs_kl_get_task_map   = addr[I_GET_TASK_MAP];
-    procfs_kl_mach_vm_region = addr[I_MACH_VM_REGION];
-
-    printf("procfs: libklookup OK (get_task_map=%d mach_vm_region=%d proc_task=%d)\n",
-           procfs_kl_get_task_map != NULL,
-           procfs_kl_mach_vm_region != NULL, procfs_kl_proc_task != NULL);
+    printf("procfs: libklookup OK (proc_task=%d)\n", procfs_kl_proc_task != NULL);
 
     return KERN_SUCCESS;
 }

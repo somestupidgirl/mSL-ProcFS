@@ -39,6 +39,8 @@
 #include <IOKit/ps/IOPSKeys.h>
 #include <mach/mach.h>
 #include <mach/mach_host.h>
+#include <mach/mach_vm.h>
+#include <mach/vm_region.h>
 #include <mach/processor_info.h>
 #include <mach/task.h>
 #include <mach/thread_act.h>
@@ -1180,6 +1182,76 @@ procfsd_handle_regs(const struct procfs_ctl_req *req, struct procfs_ctl_resp *re
 }
 
 /*
+ * Serve a PROCFS_REQ_MAPS request: enumerate the target task's VM regions at or
+ * above req->arg (the resume address; 0 on the first request) and return as many
+ * struct procfs_map_region records as fit in one payload. Each region is probed
+ * twice - VM_REGION_BASIC_INFO_64 for protections/offset/wired, then
+ * VM_REGION_EXTENDED_INFO at the same address for the page counts and share mode.
+ * The kext re-requests with arg = the last region's end until an empty reply.
+ * task_for_pid is denied for SIP/AMFI-protected & hardened targets (EPERM),
+ * which is the coverage limit of moving this off the in-kernel VM walk.
+ */
+static void
+procfsd_handle_maps(const struct procfs_ctl_req *req, struct procfs_ctl_resp *resp,
+    void *payload)
+{
+    task_t task = TASK_NULL;
+    if (task_for_pid(mach_task_self(), req->pid, &task) != KERN_SUCCESS) {
+        resp->error = EPERM;
+        return;
+    }
+
+    struct procfs_map_region *out = (struct procfs_map_region *)payload;
+    uint32_t maxfit = PROCFS_CTL_MAXPAYLOAD / (uint32_t)sizeof(*out);
+    uint32_t n = 0;
+    mach_vm_address_t addr = (mach_vm_address_t)req->arg;
+
+    while (n < maxfit) {
+        mach_vm_size_t                 size = 0;
+        vm_region_basic_info_data_64_t bi;
+        mach_msg_type_number_t         bc = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t                    bobj = MACH_PORT_NULL;
+        if (mach_vm_region(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                (vm_region_info_t)&bi, &bc, &bobj) != KERN_SUCCESS) {
+            break;      /* no more regions at or above addr */
+        }
+
+        /* Extended info for the same region (found at or above addr == its base). */
+        mach_vm_address_t              eaddr = addr;
+        mach_vm_size_t                 esize = 0;
+        vm_region_extended_info_data_t ei;
+        mach_msg_type_number_t         ec = VM_REGION_EXTENDED_INFO_COUNT;
+        mach_port_t                    eobj = MACH_PORT_NULL;
+        memset(&ei, 0, sizeof(ei));
+        (void)mach_vm_region(task, &eaddr, &esize, VM_REGION_EXTENDED_INFO,
+                (vm_region_info_t)&ei, &ec, &eobj);
+
+        out[n].start          = addr;
+        out[n].size           = size;
+        out[n].offset         = bi.offset;
+        out[n].prot           = (uint32_t)bi.protection;
+        out[n].max_prot       = (uint32_t)bi.max_protection;
+        out[n].user_wired     = bi.user_wired_count;
+        out[n].share_mode     = ei.share_mode;
+        out[n].resident_pages = ei.pages_resident;
+        out[n].dirty_pages    = ei.pages_dirtied;
+        out[n].swapped_pages  = ei.pages_swapped_out;
+        out[n].external_pager = ei.external_pager;
+        out[n].shared         = (uint32_t)bi.shared;
+        n++;
+
+        mach_vm_address_t next = addr + size;
+        if (next <= addr) {
+            break;      /* wrapped at the top of the address space */
+        }
+        addr = next;
+    }
+
+    resp->len = n * (uint32_t)sizeof(*out);
+    mach_port_deallocate(mach_task_self(), task);
+}
+
+/*
  * Restore one persisted integer setting: read `path` and write the value to the
  * `oid` sysctl. wait_connect() returns as soon as the kext registers its kernel
  * control, which the start routine does just before registering these oids - so
@@ -1626,6 +1698,9 @@ main(int argc, char **argv)
             }
             break;
         }
+        case PROCFS_REQ_MAPS:
+            procfsd_handle_maps(req, resp, payload);
+            break;
         case PROCFS_REQ_REGS:
         case PROCFS_REQ_FPREGS:
             /* thread_get_state is stripped from the kernelcache, so the kext

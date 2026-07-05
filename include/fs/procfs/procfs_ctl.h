@@ -77,6 +77,13 @@ enum {
                                  * host_processor_info(PROCESSOR_CPU_LOAD_INFO).
                                  * The per-CPU user/nice/system/idle ticks behind
                                  * /proc/stat's cpu/cpuN lines. */
+    PROCFS_REQ_MAPS       = 26, /* pid + arg = resume address; payload: struct
+                                 * procfs_map_region[] for the VM regions at or
+                                 * above arg (task_for_pid + mach_vm_region). The
+                                 * caller re-requests with arg = last region's end
+                                 * until an empty reply. EPERM for SIP/hardened
+                                 * targets task_for_pid cannot open. Backs
+                                 * map/maps/smaps/smaps_rollup/numa_maps. */
 };
 
 /*
@@ -101,6 +108,28 @@ struct procfs_cpu_load {
     uint64_t nice;      /* CPU_STATE_NICE   */
     uint64_t sys;       /* CPU_STATE_SYSTEM */
     uint64_t idle;      /* CPU_STATE_IDLE   */
+};
+
+/*
+ * One VM region for PROCFS_REQ_MAPS. The daemon fills these from a userspace
+ * mach_vm_region() walk of the target task - BASIC_INFO_64 for the protections,
+ * offset and wired count, EXTENDED_INFO for the page counts and share mode - so
+ * the kext keeps all node formatting (map/maps/smaps/...) and only consumes the
+ * raw records.
+ */
+struct procfs_map_region {
+    uint64_t start;          /* region base address                    */
+    uint64_t size;           /* region size in bytes                   */
+    uint64_t offset;         /* BASIC.offset (into the backing object)  */
+    uint32_t prot;           /* BASIC.protection    (current)          */
+    uint32_t max_prot;       /* BASIC.max_protection                   */
+    uint32_t user_wired;     /* BASIC.user_wired_count                 */
+    uint32_t share_mode;     /* EXTENDED.share_mode (SM_*)             */
+    uint32_t resident_pages; /* EXTENDED.pages_resident                */
+    uint32_t dirty_pages;    /* EXTENDED.pages_dirtied                 */
+    uint32_t swapped_pages;  /* EXTENDED.pages_swapped_out             */
+    uint32_t external_pager; /* EXTENDED.external_pager (0 => anon)    */
+    uint32_t shared;         /* BASIC.shared (bool)                    */
 };
 
 /*

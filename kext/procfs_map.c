@@ -10,24 +10,22 @@
  *   https://github.com/NetBSD/src/blob/trunk/sys/miscfs/procfs/procfs_map.c
  *   Linux Documentation/filesystems/proc.rst (/proc/<pid>/maps)
  *
- * Both nodes share the region walk in procfs_map_render() and differ only in
- * the per-region formatter. The walk uses mach_vm_region(), resolved from the
- * on-disk kernel collection via libklookup along with get_task_map(): macOS
- * exports no region-enumeration KPI a third-party kext may link, and the
- * internal walkers (vm_map_region/vm_map_lookup_entry) are stripped from the
- * arm64 kernel. mach_vm_region() takes the map's read lock internally, so this
- * needs no struct-walking or manual locking. For VM_REGION_BASIC_INFO_64 the
- * call sets object_name to IP_NULL, so there is no port reference to release.
+ * All map/maps/smaps nodes share the region walk in procfs_map_walk() and differ
+ * only in the per-region formatter. macOS exports no region-enumeration KPI a
+ * third-party kext may link, and the internal walkers are stripped from the
+ * arm64 kernel. Rather than resolve get_task_map()/mach_vm_region() from the
+ * kernelcache via libklookup, the enumeration is delegated to the procfsd
+ * daemon: it opens the target with task_for_pid() and walks the regions with a
+ * userspace mach_vm_region() (PROCFS_REQ_MAPS), returning raw region records.
+ * The kext keeps all node formatting here and only consumes the records. The
+ * cost is coverage: task_for_pid() is denied for SIP/AMFI-protected and
+ * hardened-runtime targets, so those report EPERM (like /proc/<pid>/regs).
  *
  * Backing-file paths (the trailing column on Linux) are not resolved: that
  * needs the region's memory object -> vnode, which is not reachable here.
  */
 #include <stdint.h>
-#include <string.h>
 #include <libkern/libkern.h>
-#include <mach/kern_return.h>
-#include <mach/mach_types.h>
-#include <mach/vm_types.h>
 #include <mach/vm_prot.h>
 #include <mach/vm_region.h>
 #if defined(__x86_64__)
@@ -41,35 +39,86 @@
 #include <sys/sbuf.h>
 #include <sys/types.h>
 #include <sys/uio.h>
-#include <sys/vnode.h>
-#include <ptrauth.h>
-
-#include <bsdcompat/sys/malloc.h>
 
 #include <fs/procfs/procfs.h>
-
-#include <libkprocfs/symbols.h>
+#include <fs/procfs/procfs_ctl.h>
 
 /*
- * Resolved-symbol function-pointer types. The mach_vm_region() prototype uses
- * the "user typed" (_ut) wrappers, but those are transparent_unions that are
- * ABI-identical to the plain mach_vm_offset_t/mach_vm_size_t, so a plain-typed
- * pointer is calling-convention correct. object_name is taken as void * so the
- * kernel's 8-byte IP_NULL write lands in a pointer-sized slot regardless of how
- * mach_port_t is typedef'd here.
+ * Fetch the target's VM regions from the procfsd daemon and invoke `cb` once per
+ * region. The daemon returns the regions at or above a resume address; we start
+ * at 0 and re-request with the end of the last region until an empty reply. On
+ * the first request a failure is reported: ENOTSUP when no daemon is connected,
+ * else the daemon's errno (EPERM for a protected target, ESRCH if it exited). A
+ * failure partway through a walk truncates the result rather than discarding it.
  */
-typedef vm_map_t (*procfs_get_task_map_fn)(task_t task);
-typedef kern_return_t (*procfs_mach_vm_region_fn)(vm_map_t map,
-    mach_vm_offset_t *address, mach_vm_size_t *size, int flavor,
-    int *info, mach_msg_type_number_t *count, void *object_name);
+typedef void (*procfs_region_cb_t)(const struct procfs_map_region *r, void *arg);
 
-/* Guard against a pathological walk (mach_vm_region terminates with a non-
- * success return at the top of the address space anyway). */
-#define PROCFS_MAP_MAX_REGIONS 1000000
+static int
+procfs_map_walk(pid_t pid, procfs_region_cb_t cb, void *arg)
+{
+    struct procfs_map_region regs[PROCFS_CTL_MAXPAYLOAD / sizeof(struct procfs_map_region)];
+    uint64_t  addr  = 0;
+    boolean_t first = TRUE;
+
+    for (;;) {
+        uint32_t got = 0;
+        int rc = procfs_ctl_request(PROCFS_REQ_MAPS, pid, addr,
+                                    regs, sizeof(regs), &got);
+        if (rc != 0) {
+            if (!first) {
+                return 0;   /* partial result already emitted */
+            }
+            if (rc == ENOTCONN || rc == ETIMEDOUT) {
+                return ENOTSUP;     /* no daemon connected */
+            }
+            return rc;              /* EPERM (protected), ESRCH, ... */
+        }
+
+        uint32_t n = got / (uint32_t)sizeof(regs[0]);
+        if (n == 0) {
+            return 0;               /* end of the walk */
+        }
+        for (uint32_t i = 0; i < n; i++) {
+            cb(&regs[i], arg);
+        }
+
+        uint64_t last_end = regs[n - 1].start + regs[n - 1].size;
+        if (last_end <= addr) {
+            return 0;               /* no forward progress - stop */
+        }
+        addr  = last_end;
+        first = FALSE;
+    }
+}
 
 /*
- * Shared region walk for the map/maps nodes. Enumerates the process's VM
- * regions and invokes `fmt` once per region to append a formatted line.
+ * map/maps walk: build a struct procfs_region for each region and hand it to the
+ * node's formatter.
+ */
+struct procfs_map_render_ctx {
+    struct sbuf           *sb;
+    procfs_region_fmt_fn   fmt;
+};
+
+static void
+procfs_map_render_cb(const struct procfs_map_region *mr, void *arg)
+{
+    struct procfs_map_render_ctx *c = arg;
+    struct procfs_region r = {
+        .start    = mr->start,
+        .end      = mr->start + mr->size,
+        .offset   = mr->offset,
+        .prot     = (int)mr->prot,
+        .max_prot = (int)mr->max_prot,
+        .shared   = (int)mr->shared,
+        .wired    = mr->user_wired,
+    };
+    c->fmt(c->sb, &r);
+}
+
+/*
+ * Shared region walk for the map/maps nodes. Enumerates the process's VM regions
+ * and invokes `fmt` once per region to append a formatted line.
  */
 int
 procfs_map_render(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx, procfs_region_fmt_fn fmt)
@@ -85,25 +134,6 @@ procfs_map_render(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx, procfs_region_fm
         return error;
     }
 
-    if (procfs_kl_get_task_map == NULL || procfs_kl_mach_vm_region == NULL) {
-        proc_rele(p);
-        return ENOTSUP;     /* libklookup did not resolve the VM symbols */
-    }
-
-    /* Sign the resolved addresses for the arm64e ABI (disc 0; the assignment
-     * resigns to each call's type discriminator). */
-    procfs_get_task_map_fn   get_task_map   =
-        ptrauth_sign_unauthenticated(procfs_kl_get_task_map, ptrauth_key_function_pointer, 0);
-    procfs_mach_vm_region_fn mach_vm_region =
-        ptrauth_sign_unauthenticated(procfs_kl_mach_vm_region, ptrauth_key_function_pointer, 0);
-
-    task_t   task = proc_task(p);
-    vm_map_t map  = (task != TASK_NULL) ? get_task_map(task) : NULL;
-    if (map == NULL) {
-        proc_rele(p);
-        return EIO;
-    }
-
     /* A large address space can have thousands of regions, so grow on demand. */
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
@@ -111,38 +141,13 @@ procfs_map_render(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx, procfs_region_fm
         return ENOMEM;
     }
 
-    mach_vm_offset_t addr = 0;
-    for (int n = 0; n < PROCFS_MAP_MAX_REGIONS; n++) {
-        mach_vm_size_t                 size  = 0;
-        vm_region_basic_info_data_64_t info;
-        mach_msg_type_number_t         count = VM_REGION_BASIC_INFO_COUNT_64;
-        void                          *object_name = NULL;  /* 8-byte slot; gets IP_NULL */
-
-        kern_return_t kr = mach_vm_region(map, &addr, &size, VM_REGION_BASIC_INFO_64,
-            (int *)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) {
-            break;          /* no more regions at or above addr */
-        }
-
-        struct procfs_region r = {
-            .start    = (uint64_t)addr,
-            .end      = (uint64_t)(addr + size),
-            .offset   = (uint64_t)info.offset,
-            .prot     = info.protection,
-            .max_prot = info.max_protection,
-            .shared   = info.shared,
-            .wired    = info.user_wired_count,
-        };
-        fmt(&sb, &r);
-
-        mach_vm_offset_t next = addr + size;
-        if (next <= addr) {
-            break;          /* wrapped at the top of the address space */
-        }
-        addr = next;
-    }
-
+    struct procfs_map_render_ctx rctx = { &sb, fmt };
+    error = procfs_map_walk(pnp->node_id.nodeid_pid, procfs_map_render_cb, &rctx);
     proc_rele(p);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return error;
+    }
 
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
@@ -152,8 +157,38 @@ procfs_map_render(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx, procfs_region_fm
 }
 
 /*
- * Sum the task's virtual size and resident size by walking its VM regions with
- * VM_REGION_EXTENDED_INFO (which carries pages_resident per region). This is the
+ * Virtual and (footprint-approximating) resident size accumulator.
+ */
+struct procfs_map_sizes_ctx {
+    uint64_t vsize;
+    uint64_t rsize;
+};
+
+static void
+procfs_map_sizes_cb(const struct procfs_map_region *mr, void *arg)
+{
+    struct procfs_map_sizes_ctx *c = arg;
+    c->vsize += mr->size;
+
+    /*
+     * Approximate proc_pidinfo's pti_resident_size, which is the task's
+     * phys_footprint - private memory, excluding pages shared with other tasks
+     * (the dyld shared cache, shared libraries). pages_resident counts shared
+     * pages too, so only count regions that are not shared.
+     */
+    switch (mr->share_mode) {
+    case SM_SHARED:
+    case SM_TRUESHARED:
+    case SM_SHARED_ALIASED:
+        break;      /* shared with other tasks - not part of footprint */
+    default:
+        c->rsize += (uint64_t)mr->resident_pages * PAGE_SIZE;
+        break;
+    }
+}
+
+/*
+ * Sum the task's virtual size and resident size from its VM regions. This is the
  * offset-free way to obtain proc_taskinfo's pti_virtual_size / pti_resident_size
  * on arm64, where fill_taskprocinfo, task_info and pmap_resident_count are all
  * stripped. Caller holds the proc_find() reference.
@@ -164,73 +199,49 @@ procfs_task_vm_sizes(proc_t p, uint64_t *vsize, uint64_t *rsize)
     *vsize = 0;
     *rsize = 0;
 
-    if (procfs_kl_get_task_map == NULL || procfs_kl_mach_vm_region == NULL) {
-        return ENOTSUP;
+    struct procfs_map_sizes_ctx c = { 0, 0 };
+    int error = procfs_map_walk(proc_pid(p), procfs_map_sizes_cb, &c);
+    if (error != 0) {
+        return error;
     }
-
-    procfs_get_task_map_fn   get_task_map   =
-        ptrauth_sign_unauthenticated(procfs_kl_get_task_map, ptrauth_key_function_pointer, 0);
-    procfs_mach_vm_region_fn mach_vm_region =
-        ptrauth_sign_unauthenticated(procfs_kl_mach_vm_region, ptrauth_key_function_pointer, 0);
-
-    task_t   task = proc_task(p);
-    if (task == TASK_NULL) {
-        return ESRCH;
-    }
-    vm_map_t map = get_task_map(task);
-    if (map == NULL) {
-        return EIO;
-    }
-
-    mach_vm_offset_t addr = 0;
-    for (int n = 0; n < PROCFS_MAP_MAX_REGIONS; n++) {
-        mach_vm_size_t                    size  = 0;
-        vm_region_extended_info_data_t    info;
-        mach_msg_type_number_t            count = VM_REGION_EXTENDED_INFO_COUNT;
-        void                             *object_name = NULL;  /* gets IP_NULL */
-
-        kern_return_t kr = mach_vm_region(map, &addr, &size, VM_REGION_EXTENDED_INFO,
-            (int *)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) {
-            break;
-        }
-
-        *vsize += (uint64_t)size;
-
-        /*
-         * Approximate proc_pidinfo's pti_resident_size, which is the task's
-         * phys_footprint (ledger phys_mem) - private memory, excluding pages
-         * shared with other tasks (the dyld shared cache, shared libraries).
-         * EXTENDED_INFO's pages_resident counts shared pages too, which would
-         * over-report by ~10x, so only count regions that are not shared. The
-         * exact ledger value is unreachable (ledger_get_balance is stripped).
-         */
-        switch (info.share_mode) {
-        case SM_SHARED:
-        case SM_TRUESHARED:
-        case SM_SHARED_ALIASED:
-            break;      /* shared with other tasks - not part of footprint */
-        default:
-            *rsize += (uint64_t)info.pages_resident * PAGE_SIZE;
-            break;
-        }
-
-        mach_vm_offset_t next = addr + size;
-        if (next <= addr) {
-            break;
-        }
-        addr = next;
-    }
-
+    *vsize = c.vsize;
+    *rsize = c.rsize;
     return 0;
 }
 
 /*
- * Shared VM-region walk using VM_REGION_EXTENDED_INFO. Resolves the process's
- * map (like procfs_map_render, but exposing the extended per-region page counts
- * and share mode) and invokes cb(&region, arg) for each region. The Linux
- * smaps-family nodes (smaps / smaps_rollup / numa_maps) in procfs_linux.c build
- * their text from this; it produces no output of its own. Returns 0 or an errno.
+ * smaps-family walk: build a struct procfs_ext_region (extended per-region page
+ * counts and share mode) for each region and hand it to the caller's callback.
+ */
+struct procfs_map_ext_ctx {
+    procfs_ext_region_fn cb;
+    void                *arg;
+};
+
+static void
+procfs_map_ext_cb(const struct procfs_map_region *mr, void *arg)
+{
+    struct procfs_map_ext_ctx *c = arg;
+    struct procfs_ext_region r = {
+        .start          = mr->start,
+        .end            = mr->start + mr->size,
+        .prot           = (int)mr->prot,
+        .resident_pages = mr->resident_pages,
+        .dirty_pages    = mr->dirty_pages,
+        .swapped_pages  = mr->swapped_pages,
+        .shared         = (mr->share_mode == SM_SHARED ||
+                           mr->share_mode == SM_TRUESHARED ||
+                           mr->share_mode == SM_SHARED_ALIASED),
+        .anonymous      = (mr->external_pager == 0),
+    };
+    c->cb(&r, c->arg);
+}
+
+/*
+ * Shared VM-region walk exposing the extended per-region page counts and share
+ * mode. The Linux smaps-family nodes (smaps / smaps_rollup / numa_maps) in
+ * procfs_linux.c build their text from this; it produces no output of its own.
+ * Returns 0 or an errno.
  */
 int
 procfs_map_foreach_ext(pfsnode_t *pnp, vfs_context_t ctx,
@@ -247,58 +258,10 @@ procfs_map_foreach_ext(pfsnode_t *pnp, vfs_context_t ctx,
         return error;
     }
 
-    if (procfs_kl_get_task_map == NULL || procfs_kl_mach_vm_region == NULL) {
-        proc_rele(p);
-        return ENOTSUP;
-    }
-    procfs_get_task_map_fn   get_task_map   =
-        ptrauth_sign_unauthenticated(procfs_kl_get_task_map, ptrauth_key_function_pointer, 0);
-    procfs_mach_vm_region_fn mach_vm_region =
-        ptrauth_sign_unauthenticated(procfs_kl_mach_vm_region, ptrauth_key_function_pointer, 0);
-
-    task_t   task = proc_task(p);
-    vm_map_t map  = (task != TASK_NULL) ? get_task_map(task) : NULL;
-    if (map == NULL) {
-        proc_rele(p);
-        return EIO;
-    }
-
-    mach_vm_offset_t addr = 0;
-    for (int n = 0; n < PROCFS_MAP_MAX_REGIONS; n++) {
-        mach_vm_size_t                 size = 0;
-        vm_region_extended_info_data_t info;
-        mach_msg_type_number_t         count = VM_REGION_EXTENDED_INFO_COUNT;
-        void                          *object_name = NULL;
-
-        kern_return_t kr = mach_vm_region(map, &addr, &size, VM_REGION_EXTENDED_INFO,
-            (int *)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) {
-            break;
-        }
-
-        struct procfs_ext_region r = {
-            .start          = (uint64_t)addr,
-            .end            = (uint64_t)(addr + size),
-            .prot           = info.protection,
-            .resident_pages = info.pages_resident,
-            .dirty_pages    = info.pages_dirtied,
-            .swapped_pages  = info.pages_swapped_out,
-            .shared         = (info.share_mode == SM_SHARED ||
-                               info.share_mode == SM_TRUESHARED ||
-                               info.share_mode == SM_SHARED_ALIASED),
-            .anonymous      = (info.external_pager == 0),
-        };
-        cb(&r, arg);
-
-        mach_vm_offset_t next = addr + size;
-        if (next <= addr) {
-            break;
-        }
-        addr = next;
-    }
-
+    struct procfs_map_ext_ctx ectx = { cb, arg };
+    error = procfs_map_walk(pnp->node_id.nodeid_pid, procfs_map_ext_cb, &ectx);
     proc_rele(p);
-    return 0;
+    return error;
 }
 
 /*
