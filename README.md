@@ -69,6 +69,7 @@ Linux-compatible files and helpers:
 |`stat`        | Linux-style kernel/system statistics (`cpu`/`cpuN` ticks, `btime`, `processes`; see below) |
 |`swaps`       | Linux-style swap-area table (aggregate `vm.swapusage`; macOS swaps dynamically under `/private/var/vm`) |
 |`sys/`        | Dynamic mirror of the kernel sysctl MIB tree (Linux `/proc/sys`); directories are sysctl nodes, leaves read their value as text |
+|`sysvipc/`    | System V IPC object tables (`msg`/`sem`/`shm`). macOS lacks Linux's `SHM_STAT`/`MSG_STAT`/`SEM_STAT` enumeration, so the `procfsd` daemon lists the live objects via the `kern.sysv.ipcs.*` sysctl that `ipcs(1)` uses, formatted in the Linux layout (key/id/perms/… per object). Falls back to the header line (an empty table) without a connected daemon |
 |`tty/`        | TTY info directory: `tty/drivers` (the tty driver table, derived from `/dev` by the `procfsd` daemon) and `tty/ldiscs` (line disciplines) |
 |`uptime`      | Linux-style uptime (seconds since boot; idle field `0.00`)          |
 |`version`     | Kernel version string (text)                                        |

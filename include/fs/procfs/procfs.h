@@ -130,6 +130,7 @@ typedef enum {
     PFSvmallocinfo, /* Linux-style /proc/vmallocinfo (kernel VM allocations) */
     PFSisapnp,      /* Linux-style /proc/isapnp (ISA PnP devices; none on macOS) */
     PFSscsi,        /* Linux-style /proc/scsi/scsi (attached SCSI devices) */
+    PFSsysvipc,     /* Linux-style /proc/sysvipc/{msg,sem,shm} (SysV IPC tables) */
 } pfstype;
 
 typedef struct pfsnode pfsnode_t;
@@ -479,7 +480,7 @@ procfs_is_directory_type(pfstype type)
         && type != PFSiomem && type != PFSsoftirqs
         && type != PFSkcmdline && type != PFSide
         && type != PFSvmallocinfo && type != PFSisapnp
-        && type != PFSscsi;
+        && type != PFSscsi && type != PFSsysvipc;
 }
 
 /* Gets the pid_t for the process corresponding to a pfsnode_t. */
@@ -682,6 +683,9 @@ extern int procfs_doide_drivers(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dovmallocinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doisapnp(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doscsi(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dosysvipc_msg(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dosysvipc_sem(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dosysvipc_shm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosmaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);

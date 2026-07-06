@@ -106,6 +106,13 @@ enum {
                                  * PROCFS_REQ_ALLOCINFO, Linux /proc/scsi/scsi
                                  * format (attached SCSI peripheral devices via
                                  * IOKit IOSCSIPeripheralDeviceType*). */
+    PROCFS_REQ_SYSVIPC_SHM = 31, /* arg = byte offset; chunked Linux
+                                  * /proc/sysvipc/shm - SysV shared-memory segments
+                                  * enumerated via the kern.sysv.ipcs.shm sysctl. */
+    PROCFS_REQ_SYSVIPC_SEM = 32, /* arg = byte offset; chunked /proc/sysvipc/sem
+                                  * (semaphore sets, kern.sysv.ipcs.sem). */
+    PROCFS_REQ_SYSVIPC_MSG = 33, /* arg = byte offset; chunked /proc/sysvipc/msg
+                                  * (message queues, kern.sysv.ipcs.msg). */
 };
 
 /*

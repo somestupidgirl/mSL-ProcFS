@@ -266,6 +266,21 @@ procfs_structure_init(void)
         pfssnode_t *scsi_scsi = add_node(scsi_dir, "scsi",
                         PFSscsi, next_node_id++, 0, 0, NULL, procfs_doscsi);
 
+        // Linux-style /proc/sysvipc/ - the System V IPC object tables (msg queues,
+        // semaphore sets, shared-memory segments). macOS has SysV IPC but no
+        // userspace way to enumerate the objects (no SHM_STAT/MSG_STAT/SEM_STAT
+        // index extensions, no /dev/kmem under SIP), so each file emits the Linux
+        // header line with an empty body - exactly as on a Linux host with no IPC
+        // objects of that type.
+        pfssnode_t *sysvipc_dir = add_directory(root_node, "sysvipc",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *sysvipc_msg = add_node(sysvipc_dir, "msg",
+                        PFSsysvipc, next_node_id++, 0, 0, NULL, procfs_dosysvipc_msg);
+        pfssnode_t *sysvipc_sem = add_node(sysvipc_dir, "sem",
+                        PFSsysvipc, next_node_id++, 0, 0, NULL, procfs_dosysvipc_sem);
+        pfssnode_t *sysvipc_shm = add_node(sysvipc_dir, "shm",
+                        PFSsysvipc, next_node_id++, 0, 0, NULL, procfs_dosysvipc_shm);
+
         // Linux-style /proc/fs/ - filesystem parameters. Currently /proc/fs/nfs/exports,
         // the NFS export table (macOS /etc/exports, read by procfsd).
         pfssnode_t *fs_dir = add_directory(root_node, "fs",

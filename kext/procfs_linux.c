@@ -2520,6 +2520,60 @@ procfs_doscsi(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/sysvipc/{msg,sem,shm} - the System V IPC object tables. macOS implements
+ * SysV IPC (msgget/semget/shmget); it lacks the Linux SHM_STAT/MSG_STAT/SEM_STAT
+ * index extensions, but the procfsd daemon enumerates the live objects via the
+ * same kern.sysv.ipcs.{shm,sem,msg} sysctl that ipcs(1) uses and formats them in
+ * the Linux layout (header + one line per object). Without a connected daemon
+ * the node falls back to the header line only - which is also exactly what Linux
+ * shows when no objects of that type exist. Headers match Linux's ipc sources.
+ */
+static int
+procfs_sysvipc_node(uio_t uio, uint32_t req_type, const char *hdr, int hdrlen)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 2048, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(req_type, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        /* No daemon: still show the header (an empty table), as Linux does. */
+        return (error == ENOTCONN) ? procfs_copy_data(hdr, hdrlen, uio) : error;
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+int
+procfs_dosysvipc_shm(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char hdr[] =
+        "       key      shmid perms       size  cpid  lpid nattch   uid   gid  cuid  cgid      atime      dtime      ctime        rss       swap\n";
+    return procfs_sysvipc_node(uio, PROCFS_REQ_SYSVIPC_SHM, hdr, sizeof(hdr) - 1);
+}
+
+int
+procfs_dosysvipc_sem(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char hdr[] =
+        "       key      semid perms      nsems   uid   gid  cuid  cgid      otime      ctime\n";
+    return procfs_sysvipc_node(uio, PROCFS_REQ_SYSVIPC_SEM, hdr, sizeof(hdr) - 1);
+}
+
+int
+procfs_dosysvipc_msg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char hdr[] =
+        "       key      msqid perms      cbytes       qnum lspid lrpid   uid   gid  cuid  cgid      stime      rtime      ctime\n";
+    return procfs_sysvipc_node(uio, PROCFS_REQ_SYSVIPC_MSG, hdr, sizeof(hdr) - 1);
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon

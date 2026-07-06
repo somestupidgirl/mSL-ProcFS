@@ -32,6 +32,10 @@
 #include <libproc.h>
 #include <sys/proc_info.h>
 #include <sys/sysctl.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/sem.h>
+#include <sys/msg.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
 #include <IOKit/kext/KextManager.h>
@@ -223,6 +227,12 @@ static char  *g_pci_blob = NULL;   /* Linux format (/proc/bus/pci/devices) */
 static size_t g_pci_blob_len = 0;
 static char  *g_scsi_blob = NULL;  /* Linux format (/proc/scsi/scsi) */
 static size_t g_scsi_blob_len = 0;
+static char  *g_shm_blob = NULL;   /* Linux format (/proc/sysvipc/shm) */
+static size_t g_shm_blob_len = 0;
+static char  *g_sem_blob = NULL;   /* Linux format (/proc/sysvipc/sem) */
+static size_t g_sem_blob_len = 0;
+static char  *g_msg_blob = NULL;   /* Linux format (/proc/sysvipc/msg) */
+static size_t g_msg_blob_len = 0;
 static char  *g_fb_blob = NULL;    /* Linux format (/proc/fb) */
 static size_t g_fb_blob_len = 0;
 static char  *g_nfs_blob = NULL;   /* NFS exports (/proc/fs/nfs/exports) */
@@ -869,6 +879,168 @@ build_scsi_blob(char **blobp, size_t *lenp)
             IOObjectRelease(e);
         }
         IOObjectRelease(it);
+    }
+
+    fclose(f);
+    *blobp = buf;
+    *lenp = sz;
+}
+
+/*
+ * /proc/sysvipc/{shm,sem,msg} support. macOS implements System V IPC but has no
+ * Linux SHM_STAT/MSG_STAT/SEM_STAT enumeration; instead it exposes the same
+ * kern.sysv.ipcs.{shm,sem,msg} sysctl that ipcs(1) uses. Drive it with an
+ * IPCS_command (from <sys/ipcs.h>, not in the userspace SDK, so declared here -
+ * ABI verified against ipcs on macOS 26): set the ITER op and a zeroed cursor,
+ * pass the command as both old and new value, and the kernel fills one *id_ds
+ * per call and advances the cursor, returning ENOENT at the end. The object id
+ * is IXSEQ_TO_IPCID = (_seq << 16) | index, index = cursor-1. Emits the Linux
+ * header plus one line per object (the header always, so an empty subsystem
+ * matches a Linux host with no such objects). rss/swap have no macOS source (0).
+ */
+#define PROCFS_IPCS_MAGIC     1
+#define PROCFS_IPCS_SHM_ITER  0x00000002
+#define PROCFS_IPCS_SEM_ITER  0x00000020
+#define PROCFS_IPCS_MSG_ITER  0x00000200
+
+typedef struct {
+    int   ipcs_magic;
+    int   ipcs_op;
+    int   ipcs_cursor;
+    int   ipcs_datalen;
+    void *ipcs_data;
+} procfs_ipcs_command;
+
+#define PROCFS_IPCS_GUARD 200000   /* bound the iteration defensively */
+
+static void
+build_sysvipc_shm_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f == NULL) {
+        return;
+    }
+    fprintf(f, "       key      shmid perms       size  cpid  lpid nattch"
+               "   uid   gid  cuid  cgid      atime      dtime      ctime"
+               "        rss       swap\n");
+
+    procfs_ipcs_command ic;
+    struct shmid_ds     ds;
+    memset(&ic, 0, sizeof(ic));
+    ic.ipcs_magic = PROCFS_IPCS_MAGIC;
+    ic.ipcs_op = PROCFS_IPCS_SHM_ITER;
+    ic.ipcs_datalen = sizeof(ds);
+    ic.ipcs_data = &ds;
+    size_t len = sizeof(ic);
+    int guard = 0;
+    while (sysctlbyname("kern.sysv.ipcs.shm", &ic, &len, &ic, sizeof(ic)) == 0 &&
+           guard++ < PROCFS_IPCS_GUARD) {
+        int id = (ds.shm_perm._seq << 16) | ((ic.ipcs_cursor - 1) & 0xffff);
+        fprintf(f, "%10d %10d %5o %10lu %5d %5d %6d %5u %5u %5u %5u %10ld %10ld %10ld %10lu %10lu\n",
+            ds.shm_perm._key, id, ds.shm_perm.mode & 0777,
+            (unsigned long)ds.shm_segsz, ds.shm_cpid, ds.shm_lpid,
+            (int)ds.shm_nattch, ds.shm_perm.uid, ds.shm_perm.gid,
+            ds.shm_perm.cuid, ds.shm_perm.cgid, (long)ds.shm_atime,
+            (long)ds.shm_dtime, (long)ds.shm_ctime, 0UL, 0UL);
+        ic.ipcs_op = PROCFS_IPCS_SHM_ITER;
+        ic.ipcs_datalen = sizeof(ds);
+        ic.ipcs_data = &ds;
+        len = sizeof(ic);
+    }
+
+    fclose(f);
+    *blobp = buf;
+    *lenp = sz;
+}
+
+static void
+build_sysvipc_sem_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f == NULL) {
+        return;
+    }
+    fprintf(f, "       key      semid perms      nsems   uid   gid  cuid  cgid"
+               "      otime      ctime\n");
+
+    procfs_ipcs_command ic;
+    struct semid_ds     ds;
+    memset(&ic, 0, sizeof(ic));
+    ic.ipcs_magic = PROCFS_IPCS_MAGIC;
+    ic.ipcs_op = PROCFS_IPCS_SEM_ITER;
+    ic.ipcs_datalen = sizeof(ds);
+    ic.ipcs_data = &ds;
+    size_t len = sizeof(ic);
+    int guard = 0;
+    while (sysctlbyname("kern.sysv.ipcs.sem", &ic, &len, &ic, sizeof(ic)) == 0 &&
+           guard++ < PROCFS_IPCS_GUARD) {
+        int id = (ds.sem_perm._seq << 16) | ((ic.ipcs_cursor - 1) & 0xffff);
+        fprintf(f, "%10d %10d %5o %10u %5u %5u %5u %5u %10ld %10ld\n",
+            ds.sem_perm._key, id, ds.sem_perm.mode & 0777,
+            (unsigned)ds.sem_nsems, ds.sem_perm.uid, ds.sem_perm.gid,
+            ds.sem_perm.cuid, ds.sem_perm.cgid, (long)ds.sem_otime,
+            (long)ds.sem_ctime);
+        ic.ipcs_op = PROCFS_IPCS_SEM_ITER;
+        ic.ipcs_datalen = sizeof(ds);
+        ic.ipcs_data = &ds;
+        len = sizeof(ic);
+    }
+
+    fclose(f);
+    *blobp = buf;
+    *lenp = sz;
+}
+
+static void
+build_sysvipc_msg_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f == NULL) {
+        return;
+    }
+    fprintf(f, "       key      msqid perms      cbytes       qnum lspid lrpid"
+               "   uid   gid  cuid  cgid      stime      rtime      ctime\n");
+
+    procfs_ipcs_command ic;
+    struct msqid_ds     ds;
+    memset(&ic, 0, sizeof(ic));
+    ic.ipcs_magic = PROCFS_IPCS_MAGIC;
+    ic.ipcs_op = PROCFS_IPCS_MSG_ITER;
+    ic.ipcs_datalen = sizeof(ds);
+    ic.ipcs_data = &ds;
+    size_t len = sizeof(ic);
+    int guard = 0;
+    while (sysctlbyname("kern.sysv.ipcs.msg", &ic, &len, &ic, sizeof(ic)) == 0 &&
+           guard++ < PROCFS_IPCS_GUARD) {
+        int id = (ds.msg_perm._seq << 16) | ((ic.ipcs_cursor - 1) & 0xffff);
+        fprintf(f, "%10d %10d %5o %10lu %10lu %5d %5d %5u %5u %5u %5u %10ld %10ld %10ld\n",
+            ds.msg_perm._key, id, ds.msg_perm.mode & 0777,
+            (unsigned long)ds.msg_cbytes, (unsigned long)ds.msg_qnum,
+            ds.msg_lspid, ds.msg_lrpid, ds.msg_perm.uid, ds.msg_perm.gid,
+            ds.msg_perm.cuid, ds.msg_perm.cgid, (long)ds.msg_stime,
+            (long)ds.msg_rtime, (long)ds.msg_ctime);
+        ic.ipcs_op = PROCFS_IPCS_MSG_ITER;
+        ic.ipcs_datalen = sizeof(ds);
+        ic.ipcs_data = &ds;
+        len = sizeof(ic);
     }
 
     fclose(f);
@@ -1807,6 +1979,30 @@ main(__unused int argc, __unused char **argv)
                 build_scsi_blob(&g_scsi_blob, &g_scsi_blob_len);
             }
             blob_slice(g_scsi_blob, g_scsi_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_SYSVIPC_SHM: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_sysvipc_shm_blob(&g_shm_blob, &g_shm_blob_len);
+            }
+            blob_slice(g_shm_blob, g_shm_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_SYSVIPC_SEM: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_sysvipc_sem_blob(&g_sem_blob, &g_sem_blob_len);
+            }
+            blob_slice(g_sem_blob, g_sem_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_SYSVIPC_MSG: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_sysvipc_msg_blob(&g_msg_blob, &g_msg_blob_len);
+            }
+            blob_slice(g_msg_blob, g_msg_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_FBDEVICES: {
