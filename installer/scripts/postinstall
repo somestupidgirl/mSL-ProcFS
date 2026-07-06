@@ -2,7 +2,7 @@
 #
 # ProcFS installer postinstall.
 #
-# The payload (kext, procfs.fs, procfsd/procfs_ksyms, LaunchDaemon plist and
+# The payload (kext, procfs.fs, procfsd, LaunchDaemon plist and
 # ProcFS.app) has already been laid down by the installer with root:wheel
 # ownership. Here we do the parts that are not plain file copies: create the
 # /proc mount point at boot, enable the daemon, and arm auto-load/auto-mount.

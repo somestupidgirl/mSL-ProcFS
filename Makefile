@@ -146,12 +146,12 @@ kextfs:
 
 endif
 
-# Userspace tools: the daemon (procfsd) and the symbol stager (procfs_ksyms).
+# Userspace tool: the daemon (procfsd).
 tools:
 	@mkdir -p $(OUT)
 	$(MAKE) -C tools
-	mv tools/procfsd tools/procfs_ksyms $(OUT)/
-	-mv tools/procfsd.dSYM tools/procfs_ksyms.dSYM $(OUT)/ 2>/dev/null || true
+	mv tools/procfsd $(OUT)/
+	-mv tools/procfsd.dSYM $(OUT)/ 2>/dev/null || true
 
 # LaunchDaemon plist(s).
 plists:
@@ -182,7 +182,7 @@ pkg: all
 	           $(OUT)/pkgroot/Applications $(OUT)/pkgroot/Library/PreferencePanes
 	cp -R $(OUT)/procfs.kext          $(OUT)/pkgroot/Library/Extensions/
 	cp -R $(OUT)/procfs.fs            $(OUT)/pkgroot/Library/Filesystems/
-	cp    $(OUT)/procfsd $(OUT)/procfs_ksyms $(OUT)/pkgroot/usr/local/sbin/
+	cp    $(OUT)/procfsd $(OUT)/pkgroot/usr/local/sbin/
 	cp    $(OUT)/$(DAEMON_PLIST)      $(OUT)/pkgroot/Library/LaunchDaemons/
 	cp -R $(OUT)/ProcFS.app           $(OUT)/pkgroot/Applications/
 	cp -R $(OUT)/ProcFS.prefPane      $(OUT)/pkgroot/Library/PreferencePanes/
@@ -237,7 +237,7 @@ require-root:
 
 require-built:
 	@[ -d "$(OUT)/procfs.kext" ] && [ -d "$(OUT)/procfs.fs" ] && \
-	 [ -x "$(OUT)/procfsd" ] && [ -x "$(OUT)/procfs_ksyms" ] && \
+	 [ -x "$(OUT)/procfsd" ] && \
 	 [ -f "$(OUT)/$(DAEMON_PLIST)" ] && [ -d "$(OUT)/ProcFS.app" ] || \
 		{ echo "error: build artifacts missing in $(OUT)/. Run 'make' first."; exit 1; }
 
@@ -264,15 +264,10 @@ install-fs:
 	chmod -R 755 $(FS_DIR)/procfs.fs
 
 # procfsd serves proc_pidinfo data to the kext over the kernel-control bridge,
-# stages kernel symbols, optionally loads the kext, and mounts /proc - all as
-# root. procfs_ksyms decompresses the booted kernelcache and writes
-# $(KSYMS_FILE), from which the kext resolves private symbols. They are DISTINCT
-# binaries: procfsd execs procfs_ksyms as its stager, so installing procfsd over
-# procfs_ksyms makes procfsd recursively re-exec itself and fork-bombs the host.
+# optionally loads the kext, and mounts /proc - all as root.
 install-tools:
 	install -d -m 755 -o root -g wheel $(SBIN_DIR)
 	install -m 755 -o root -g wheel $(OUT)/procfsd      $(SBIN_DIR)/procfsd
-	install -m 755 -o root -g wheel $(OUT)/procfs_ksyms $(SBIN_DIR)/procfs_ksyms
 
 # The LaunchDaemon is RunAtLoad, so procfsd starts on the next boot. Auto-load
 # of the kext and auto-mount of /proc stay DISARMED until the operator creates

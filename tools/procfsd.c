@@ -58,7 +58,6 @@ extern char **environ;
 /* Boot orchestration paths. */
 #define PROCFS_BUNDLE_ID  "com.beako.filesystems.procfs"
 #define PROCFS_KEXT_PATH  "/Library/Extensions/procfs.kext"  /* load by path at boot */
-#define PROCFS_STAGER     "/usr/local/sbin/procfs_ksyms"   /* symbol-staging helper */
 #define PROCFS_ARM_FLAG   "/var/db/procfs.enabled"         /* gate for auto-loading the kext */
 #define PROCFS_LINUX_CONF "/var/db/procfs.linux"           /* persisted procfs.linux mode */
 #define PROCFS_LINUX_VER_CONF "/var/db/procfs.linux_version" /* persisted spoof-version idx */
@@ -77,8 +76,7 @@ run_to_completion(const char *path, char *const argv[])
 }
 
 /*
- * Boot bootstrap: stage the kernel symbols (so the kext's libklookup features
- * work), then - only if armed - load the kext. The arm flag is absent by
+ * Boot bootstrap: only if armed, load the kext. The arm flag is absent by
  * default so a kext panic during development cannot boot-loop the machine; the
  * operator creates PROCFS_ARM_FLAG to enable auto-load. Mounting is left to the
  * per-user login agent (the mount lives in the user's ~/proc).
@@ -86,14 +84,6 @@ run_to_completion(const char *path, char *const argv[])
 static void
 procfsd_bootstrap(void)
 {
-    if (access(PROCFS_STAGER, X_OK) == 0) {
-        fprintf(stderr, "procfsd: staging kernel symbols (%s)\n", PROCFS_STAGER);
-        char *argv[] = { (char *)PROCFS_STAGER, NULL };
-        run_to_completion(PROCFS_STAGER, argv);
-    } else {
-        fprintf(stderr, "procfsd: stager %s not found; skipping symbol staging\n", PROCFS_STAGER);
-    }
-
     if (access(PROCFS_ARM_FLAG, F_OK) == 0) {
         fprintf(stderr, "procfsd: armed (%s present) - loading kext %s\n",
             PROCFS_ARM_FLAG, PROCFS_KEXT_PATH);
@@ -1397,27 +1387,9 @@ apply_persisted_linux_mode(void)
 }
 
 int
-main(int argc, char **argv)
+main(__unused int argc, __unused char **argv)
 {
-    /*
-     * Defense in depth against a catastrophic mis-install. procfsd_bootstrap()
-     * execs the symbol stager at PROCFS_STAGER (/usr/local/sbin/procfs_ksyms).
-     * If a procfsd binary is ever installed there by mistake, exec'ing "the
-     * stager" runs procfsd again, which bootstraps and execs "the stager"
-     * again - unbounded recursion that fork-bombs the machine. Guard against it:
-     * if we were invoked under the stager's name, we are NOT the stager, so
-     * refuse to act as the daemon and exit instead of recursing.
-     */
-    const char *base = (argc > 0 && argv[0]) ? strrchr(argv[0], '/') : NULL;
-    base = base ? base + 1 : (argc > 0 ? argv[0] : "");
-    if (base && strcmp(base, "procfs_ksyms") == 0) {
-        fprintf(stderr, "procfsd: invoked as the symbol stager (%s) but this is "
-            "procfsd, not procfs_ksyms - refusing to run (mis-install?)\n",
-            argv[0] ? argv[0] : "?");
-        return 2;
-    }
-
-    procfsd_bootstrap();        /* stage symbols, gated kext load */
+    procfsd_bootstrap();        /* gated kext auto-load */
 
     /* Keep the console user's ~/proc mounted (root; gated by the arm flag). */
     pthread_t mt;
