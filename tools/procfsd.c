@@ -217,6 +217,8 @@ static char  *g_dev_blob = NULL;   /* Linux format (/proc/devices) */
 static size_t g_dev_blob_len = 0;
 static char  *g_alloc_blob = NULL; /* Linux format (/proc/allocinfo) */
 static size_t g_alloc_blob_len = 0;
+static char  *g_vmalloc_blob = NULL; /* Linux format (/proc/vmallocinfo) */
+static size_t g_vmalloc_blob_len = 0;
 static char  *g_pci_blob = NULL;   /* Linux format (/proc/bus/pci/devices) */
 static size_t g_pci_blob_len = 0;
 static char  *g_fb_blob = NULL;    /* Linux format (/proc/fb) */
@@ -565,6 +567,99 @@ build_allocinfo_blob(char **blobp, size_t *lenp)
         namesCnt * sizeof(*names));
     vm_deallocate(mach_task_self(), (vm_address_t)info,
         infoCnt * sizeof(*info));
+}
+
+/*
+ * /proc/vmallocinfo support. Linux lists the kernel's vmalloc'd (virtually-
+ * contiguous, non-zone) areas: "<addr-range> <size> <caller> <flags>". macOS has
+ * no vmalloc; the nearest analog is XNU's kernel VM allocations tagged by site,
+ * which mach_memory_info() reports (the data behind `zprint -v`). Emit one line
+ * per site with a nonzero size, sorted by size descending. macOS does not expose
+ * per-site kernel virtual addresses to userspace, so the address range is
+ * 0x0-0x0 and the size + site name (or VM tag) carry the real information.
+ * mach_memory_info needs the privileged host port (root).
+ */
+struct vmallocrow {
+    uint64_t size;
+    uint64_t mapped;
+    char     name[MACH_MEMORY_INFO_NAME_MAX_LEN];
+};
+
+static int
+vmallocrow_cmp(const void *a, const void *b)
+{
+    uint64_t sa = ((const struct vmallocrow *)a)->size;
+    uint64_t sb = ((const struct vmallocrow *)b)->size;
+    return (sa < sb) - (sa > sb);       /* descending */
+}
+
+static void
+build_vmallocinfo_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    host_priv_t hp = HOST_PRIV_NULL;
+    if (host_get_host_priv_port(mach_host_self(), &hp) != KERN_SUCCESS ||
+        hp == HOST_PRIV_NULL) {
+        return;                         /* not privileged -> empty node */
+    }
+
+    mach_zone_name_t      *names = NULL;
+    mach_msg_type_number_t namesCnt = 0;
+    mach_zone_info_t      *info = NULL;
+    mach_msg_type_number_t infoCnt = 0;
+    mach_memory_info_t    *meminfo = NULL;
+    mach_msg_type_number_t meminfoCnt = 0;
+    if (mach_memory_info(hp, &names, &namesCnt, &info, &infoCnt,
+            &meminfo, &meminfoCnt) != KERN_SUCCESS) {
+        return;
+    }
+
+    struct vmallocrow     *rows  = calloc(meminfoCnt, sizeof(*rows));
+    mach_msg_type_number_t nrows = 0;
+    if (rows != NULL) {
+        for (mach_msg_type_number_t i = 0; i < meminfoCnt; i++) {
+            if (meminfo[i].size == 0) {
+                continue;
+            }
+            rows[nrows].size   = meminfo[i].size;
+            rows[nrows].mapped = meminfo[i].mapped;
+            if (meminfo[i].name[0] != '\0') {
+                strlcpy(rows[nrows].name, meminfo[i].name, sizeof(rows[nrows].name));
+            } else {
+                snprintf(rows[nrows].name, sizeof(rows[nrows].name),
+                    "tag-%u", (unsigned)meminfo[i].tag);
+            }
+            nrows++;
+        }
+        qsort(rows, nrows, sizeof(*rows), vmallocrow_cmp);
+
+        char  *buf = NULL;
+        size_t sz  = 0;
+        FILE  *f   = open_memstream(&buf, &sz);
+        if (f != NULL) {
+            for (mach_msg_type_number_t i = 0; i < nrows; i++) {
+                fprintf(f, "0x0000000000000000-0x0000000000000000 %10llu %s vmalloc",
+                    (unsigned long long)rows[i].size, rows[i].name);
+                if (rows[i].mapped > 0) {
+                    fprintf(f, " pages=%llu",
+                        (unsigned long long)(rows[i].mapped / vm_page_size));
+                }
+                fprintf(f, "\n");
+            }
+            fclose(f);
+            *blobp = buf;
+            *lenp = sz;
+        }
+        free(rows);
+    }
+
+    vm_deallocate(mach_task_self(), (vm_address_t)names, namesCnt * sizeof(*names));
+    vm_deallocate(mach_task_self(), (vm_address_t)info, infoCnt * sizeof(*info));
+    vm_deallocate(mach_task_self(), (vm_address_t)meminfo,
+        meminfoCnt * sizeof(*meminfo));
 }
 
 /*
@@ -1590,6 +1685,14 @@ main(__unused int argc, __unused char **argv)
                 build_allocinfo_blob(&g_alloc_blob, &g_alloc_blob_len);
             }
             blob_slice(g_alloc_blob, g_alloc_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_VMALLOCINFO: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_vmallocinfo_blob(&g_vmalloc_blob, &g_vmalloc_blob_len);
+            }
+            blob_slice(g_vmalloc_blob, g_vmalloc_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_APM: {

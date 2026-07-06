@@ -80,6 +80,7 @@ procfs_allocvp(pfstype pfs_type)
     case PFSsoftirqs:       /* FALLTHROUGH */
     case PFSkcmdline:       /* FALLTHROUGH */
     case PFSide:            /* FALLTHROUGH */
+    case PFSvmallocinfo:    /* FALLTHROUGH */
         return VREG;
 
     case PFSprocnamedir:    /* FALLTHROUGH */
@@ -142,7 +143,8 @@ procfs_node_type_has_pid(pfstype node_type)
         && node_type != PFSinterrupts && node_type != PFSirq
         && node_type != PFStty && node_type != PFSioports
         && node_type != PFSiomem && node_type != PFSsoftirqs
-        && node_type != PFSkcmdline && node_type != PFSide;
+        && node_type != PFSkcmdline && node_type != PFSide
+        && node_type != PFSvmallocinfo;
 }
 
 /*

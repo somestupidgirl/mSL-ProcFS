@@ -71,6 +71,7 @@ Linux-compatible files and helpers:
 |`uptime`      | Linux-style uptime (seconds since boot; idle field `0.00`)          |
 |`version`     | Kernel version string (text)                                        |
 |`video/`      | Legacy `bttv` (Bt848/878 capture-card) subsystem directory; macOS has no bttv/Video4Linux subsystem (video capture is CoreMediaIO/AVFoundation), so `video/bttv/` is an empty directory with no per-card entries, as on a Linux host with the bttv module present but no capture hardware |
+|`vmallocinfo` | Kernel virtually-allocated areas; macOS has no `vmalloc`, so this shows XNU's non-zone kernel VM allocations by tagged site (`mach_memory_info`, the data behind `zprint -v`, via the `procfsd` daemon) — real sizes and site names, sorted by size, with `0x0` address ranges since macOS does not expose per-site kernel virtual addresses (complements `allocinfo`, which covers the zone allocator) |
 |`vmstat`      | Linux-style virtual-memory statistics (daemon-backed `host_statistics64`; see below) |
 
 ### Per-process files

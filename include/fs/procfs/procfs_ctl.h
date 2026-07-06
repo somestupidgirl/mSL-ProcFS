@@ -97,6 +97,11 @@ enum {
                                  * reply, then splits the sections. Backs
                                  * cmdline/environ/auxv. Uses a root sysctl (no
                                  * task_for_pid), so protected targets still work. */
+    PROCFS_REQ_VMALLOCINFO = 29, /* arg = byte offset; same chunked transfer as
+                                 * PROCFS_REQ_ALLOCINFO, Linux /proc/vmallocinfo
+                                 * format (kernel VM allocations by tagged site via
+                                 * mach_memory_info; addresses unavailable on
+                                 * macOS, so ranges are 0). */
 };
 
 /*

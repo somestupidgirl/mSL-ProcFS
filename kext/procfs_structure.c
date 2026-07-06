@@ -160,6 +160,11 @@ procfs_structure_init(void)
         pfssnode_t *allocinfo = add_node(root_node, "allocinfo",
                         PFSallocinfo, next_node_id++, 0, 0, NULL, procfs_doallocinfo);
 
+        // Linux-style /proc/vmallocinfo - the kernel's non-zone VM allocations by
+        // tagged site (mach_memory_info via procfsd).
+        pfssnode_t *vmallocinfo = add_node(root_node, "vmallocinfo",
+                        PFSvmallocinfo, next_node_id++, 0, 0, NULL, procfs_dovmallocinfo);
+
         // Linux-style /proc/apm (power/battery state via IOKit power sources in procfsd).
         pfssnode_t *apm = add_node(root_node, "apm",
                         PFSapm, next_node_id++, 0, 0, NULL, procfs_doapm);
