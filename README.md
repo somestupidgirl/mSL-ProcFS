@@ -61,6 +61,7 @@ Linux-compatible files and helpers:
 |`mounts`      | The Linux name for the same mounted-filesystem table as `mtab`       |
 |`mtab`        | Linux-style mounted-filesystem table (`/etc/mtab` format: `device mountpoint fstype options 0 0`) |
 |`net/dev`     | Linux-style per-interface network statistics (in-kernel via the `ifnet` KPIs; fifo/frame/compressed/carrier columns are 0 — macOS keeps no such counters) |
+|`pagetypeinfo`| Additional buddy-allocator info: free pages and pageblocks by page-migrate type. macOS is not a buddy allocator and has no migrate types, so (like `buddyinfo`) the daemon's free-page count is decomposed into buddy orders and reported under the default `Movable` type (others 0); block counts derive from `hw.memsize`. One synthetic `Node 0, zone Normal` |
 |`partitions`  | Linux-style partition table (text; all block devices via IOKit — see below) |
 |`rtc`         | Linux-style real-time-clock state; `rtc_time`/`rtc_date` are the UTC calendar time (`clock_get_calendar_microtime`), alarm/IRQ fields report their inactive defaults |
 |`scsi/`       | SCSI subsystem directory; `scsi/scsi` is the attached-device list — macOS SCSI-protocol peripherals (USB/external/Thunderbolt storage through the SCSI Architecture Model, `IOSCSIPeripheralDeviceType*` via the `procfsd` daemon) in the Linux `Host:`/`Vendor:`/`Type:` layout. Internal NVMe is not SCSI and is excluded, so a Mac with no external SCSI storage shows just `Attached devices:` |

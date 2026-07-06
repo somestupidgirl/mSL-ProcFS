@@ -746,6 +746,87 @@ procfs_dobuddyinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ct
 }
 
 /*
+ * Linux-style /proc/pagetypeinfo - the buddy allocator's free pages and blocks
+ * broken down by page-migrate type. macOS is not a buddy allocator and has no
+ * migrate types, so - like /proc/buddyinfo - the free page count (from the
+ * daemon's host_statistics64) is decomposed greedily into buddy orders and
+ * reported under the default "Movable" type (the other types are 0). The block
+ * counts derive from physical memory (hw.memsize). One synthetic "Node 0, zone
+ * Normal". Column layout matches Linux's mm/vmstat.c. Zeros without a daemon.
+ */
+#define PROCFS_PAGEBLOCK_ORDER 9        /* synthetic: 2^9 = 512 pages per block */
+
+int
+procfs_dopagetypeinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char *const mtype[] = {
+        "Unmovable", "Movable", "Reclaimable", "HighAtomic", "Isolate"
+    };
+    const int nmtype = (int)(sizeof(mtype) / sizeof(mtype[0]));
+    const int MOVABLE = 1;              /* index of "Movable" in mtype[] */
+
+    /* Free page count from host_statistics64 via the daemon (as buddyinfo). */
+    vm_statistics64_data_t vm;
+    bzero(&vm, sizeof(vm));
+    uint32_t got = 0;
+    (void)procfs_ctl_request(PROCFS_REQ_VMSTAT, 0, 0, &vm, sizeof(vm), &got);
+
+    uint64_t remaining = (uint64_t)vm.free_count;
+    uint64_t count[PROCFS_BUDDY_ORDERS];
+    for (int order = PROCFS_BUDDY_ORDERS - 1; order >= 0; order--) {
+        uint64_t blk = (uint64_t)1 << order;
+        count[order] = remaining / blk;
+        remaining   %= blk;
+    }
+
+    /* Total pageblocks from physical memory (hw.* sysctls work in kernel). */
+    uint64_t memsize = 0;
+    size_t   msz = sizeof(memsize);
+    (void)sysctlbyname("hw.memsize", &memsize, &msz, NULL, 0);
+    uint64_t blocks = (memsize / PAGE_SIZE) >> PROCFS_PAGEBLOCK_ORDER;
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 1024, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    sbuf_printf(&sb, "Page block order: %d\n", PROCFS_PAGEBLOCK_ORDER);
+    sbuf_printf(&sb, "Pages per block:  %lu\n\n",
+        (unsigned long)((uint64_t)1 << PROCFS_PAGEBLOCK_ORDER));
+
+    sbuf_printf(&sb, "Free pages count per migrate type at order ");
+    for (int order = 0; order < PROCFS_BUDDY_ORDERS; order++) {
+        sbuf_printf(&sb, "%6d ", order);
+    }
+    sbuf_printf(&sb, "\n");
+    for (int t = 0; t < nmtype; t++) {
+        sbuf_printf(&sb, "Node    0, zone   Normal, type %12s ", mtype[t]);
+        for (int order = 0; order < PROCFS_BUDDY_ORDERS; order++) {
+            sbuf_printf(&sb, "%6llu ",
+                (t == MOVABLE) ? (unsigned long long)count[order] : 0ULL);
+        }
+        sbuf_printf(&sb, "\n");
+    }
+
+    sbuf_printf(&sb, "\nNumber of blocks type ");
+    for (int t = 0; t < nmtype; t++) {
+        sbuf_printf(&sb, "%12s ", mtype[t]);
+    }
+    sbuf_printf(&sb, "\n");
+    sbuf_printf(&sb, "Node 0, zone   Normal ");
+    for (int t = 0; t < nmtype; t++) {
+        sbuf_printf(&sb, "%12llu ",
+            (t == MOVABLE) ? (unsigned long long)blocks : 0ULL);
+    }
+    sbuf_printf(&sb, "\n");
+
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/dma - Linux's list of ISA DMA channels in use (one "%2d: <owner>" line
  * per busy channel of the legacy 8237 controller). This is an x86-only concept:
  * on x86 the DMA subsystem always reserves channel 4 as the cascade between the
