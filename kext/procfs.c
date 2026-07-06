@@ -22,7 +22,6 @@
 #pragma mark -
 #pragma mark External References
 
-extern kern_return_t resolve_symbols(void);
 extern struct vfs_fsentry procfs_vfsentry;
 extern vfstable_t procfs_vfs_table_ref;
 
@@ -98,12 +97,6 @@ procfs_start(kmod_info_t *ki, __unused void *d)
     ret = libkext_vma_uuid(ki->address, uuid);
     kassert(ret == 0);
     os_log(OS_LOG_DEFAULT, "kext executable uuid %s \n", uuid);
-
-    ret = resolve_symbols();
-    if (ret != KERN_SUCCESS) {
-        os_log(OS_LOG_DEFAULT, "resolve_symbols() failed errno:  %d \n", ret);
-        return KERN_FAILURE;
-    }
 
     ret = procfs_init(vfsc);
     if (ret != 0) {

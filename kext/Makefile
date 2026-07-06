@@ -146,11 +146,10 @@ LDFLAGS+= -target $(TARGET_TRIPLE) \
 
 LIBS+= -L$(KERNEL_LIBDIR) \
        -L../lib/libkext \
-       -L../lib/libklookup \
        -L../lib/libkprocfs \
        -L../lib/libreadfile
 
-LIBS+= -lkmod -lkext -lklookup -lkprocfs
+LIBS+= -lkmod -lkext -lkprocfs
 
 KLFLAGS+= -xml -c -undef-symbols
 
