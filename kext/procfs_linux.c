@@ -2492,6 +2492,34 @@ procfs_doisapnp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/scsi/scsi - Linux's attached-SCSI-device list. macOS SCSI-protocol
+ * peripherals (USB/external/Thunderbolt storage through the SCSI Architecture
+ * Model) are enumerated from IOKit by the procfsd daemon and formatted in the
+ * Linux layout (Host/Channel/Id/Lun + Vendor/Model/Rev + Type). Internal NVMe is
+ * not SCSI and is excluded. Without a connected daemon the node is empty (the
+ * daemon always emits at least the "Attached devices:" header when connected).
+ */
+int
+procfs_doscsi(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 2048, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_SCSI, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon

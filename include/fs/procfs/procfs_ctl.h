@@ -102,6 +102,10 @@ enum {
                                  * format (kernel VM allocations by tagged site via
                                  * mach_memory_info; addresses unavailable on
                                  * macOS, so ranges are 0). */
+    PROCFS_REQ_SCSI       = 30, /* arg = byte offset; same chunked transfer as
+                                 * PROCFS_REQ_ALLOCINFO, Linux /proc/scsi/scsi
+                                 * format (attached SCSI peripheral devices via
+                                 * IOKit IOSCSIPeripheralDeviceType*). */
 };
 
 /*

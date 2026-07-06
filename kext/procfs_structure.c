@@ -257,6 +257,15 @@ procfs_structure_init(void)
         pfssnode_t *isapnp = add_node(root_node, "isapnp",
                         PFSisapnp, next_node_id++, 0, 0, NULL, procfs_doisapnp);
 
+        // Linux-style /proc/scsi/ - SCSI subsystem info. /proc/scsi/scsi is the
+        // attached-device list; macOS SCSI-protocol peripherals (USB/external
+        // storage via the SCSI Architecture Model) come from IOKit through the
+        // procfsd daemon. Empty "Attached devices:" listing when none present.
+        pfssnode_t *scsi_dir = add_directory(root_node, "scsi",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *scsi_scsi = add_node(scsi_dir, "scsi",
+                        PFSscsi, next_node_id++, 0, 0, NULL, procfs_doscsi);
+
         // Linux-style /proc/fs/ - filesystem parameters. Currently /proc/fs/nfs/exports,
         // the NFS export table (macOS /etc/exports, read by procfsd).
         pfssnode_t *fs_dir = add_directory(root_node, "fs",

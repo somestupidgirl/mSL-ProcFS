@@ -63,6 +63,7 @@ Linux-compatible files and helpers:
 |`net/dev`     | Linux-style per-interface network statistics (in-kernel via the `ifnet` KPIs; fifo/frame/compressed/carrier columns are 0 — macOS keeps no such counters) |
 |`partitions`  | Linux-style partition table (text; all block devices via IOKit — see below) |
 |`rtc`         | Linux-style real-time-clock state; `rtc_time`/`rtc_date` are the UTC calendar time (`clock_get_calendar_microtime`), alarm/IRQ fields report their inactive defaults |
+|`scsi/`       | SCSI subsystem directory; `scsi/scsi` is the attached-device list — macOS SCSI-protocol peripherals (USB/external/Thunderbolt storage through the SCSI Architecture Model, `IOSCSIPeripheralDeviceType*` via the `procfsd` daemon) in the Linux `Host:`/`Vendor:`/`Type:` layout. Internal NVMe is not SCSI and is excluded, so a Mac with no external SCSI storage shows just `Attached devices:` |
 |`self/`        | Symbolic link to the calling process's directory (Linux name)       |
 |`softirqs`    | Linux-style per-CPU softirq counts; XNU has no softirqs, but `libkprocfs/cpu.c` maps the daemon's per-CPU timer/IPI counters (`host_processor_info`) onto the vectors, so `TIMER`/`HRTIMER`/`SCHED` carry real counts (others 0) |
 |`stat`        | Linux-style kernel/system statistics (`cpu`/`cpuN` ticks, `btime`, `processes`; see below) |

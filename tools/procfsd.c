@@ -221,6 +221,8 @@ static char  *g_vmalloc_blob = NULL; /* Linux format (/proc/vmallocinfo) */
 static size_t g_vmalloc_blob_len = 0;
 static char  *g_pci_blob = NULL;   /* Linux format (/proc/bus/pci/devices) */
 static size_t g_pci_blob_len = 0;
+static char  *g_scsi_blob = NULL;  /* Linux format (/proc/scsi/scsi) */
+static size_t g_scsi_blob_len = 0;
 static char  *g_fb_blob = NULL;    /* Linux format (/proc/fb) */
 static size_t g_fb_blob_len = 0;
 static char  *g_nfs_blob = NULL;   /* NFS exports (/proc/fs/nfs/exports) */
@@ -783,6 +785,95 @@ build_pci_blob(char **blobp, size_t *lenp)
         *lenp = sz;
     }
     free(rows);
+}
+
+/* Linux /proc/scsi/scsi peripheral-device-type name for a SCSI PDT code. */
+static const char *
+scsi_type_name(int pdt)
+{
+    switch (pdt) {
+    case 0x00: return "Direct-Access";
+    case 0x01: return "Sequential-Access";
+    case 0x02: return "Printer";
+    case 0x03: return "Processor";
+    case 0x04: return "WORM";
+    case 0x05: return "CD-ROM";
+    case 0x06: return "Scanner";
+    case 0x07: return "Optical Device";
+    case 0x08: return "Medium Changer";
+    case 0x0e: return "RBC Device";
+    default:   return "Unknown";
+    }
+}
+
+/*
+ * /proc/scsi/scsi support. Linux lists attached SCSI logical units. macOS
+ * represents SCSI-protocol peripherals (USB/external/Thunderbolt storage that
+ * goes through the SCSI Architecture Model) as IOSCSIPeripheralDeviceType* nubs
+ * carrying the SCSI INQUIRY properties; enumerate those and emit the Linux
+ * format. Internal NVMe is not SCSI and is intentionally excluded. The
+ * "Attached devices:" header is always emitted, so with no SCSI devices the
+ * output matches a SCSI-less Linux host. Channel/Id/Lun are 00 (macOS does not
+ * expose the SCSI address the same way).
+ */
+static void
+build_scsi_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f == NULL) {
+        return;
+    }
+    fprintf(f, "Attached devices:\n");
+
+    static const char *const classes[] = {
+        "IOSCSIPeripheralDeviceType00",  /* direct-access (disk)   */
+        "IOSCSIPeripheralDeviceType05",  /* CD/DVD                 */
+        "IOSCSIPeripheralDeviceType07",  /* optical memory         */
+        "IOSCSIPeripheralDeviceType0E",  /* simplified block (RBC) */
+    };
+    int host = 0;
+    for (size_t c = 0; c < sizeof(classes) / sizeof(classes[0]); c++) {
+        io_iterator_t it = MACH_PORT_NULL;
+        if (IOServiceGetMatchingServices(kIOMainPortDefault,
+                IOServiceMatching(classes[c]), &it) != KERN_SUCCESS) {
+            continue;
+        }
+        io_registry_entry_t e;
+        while ((e = IOIteratorNext(it)) != MACH_PORT_NULL) {
+            char vendor[64] = "", model[64] = "", rev[64] = "";
+            pci_cfstr(e, CFSTR("Vendor Identification"),  vendor, sizeof(vendor));
+            pci_cfstr(e, CFSTR("Product Identification"), model,  sizeof(model));
+            pci_cfstr(e, CFSTR("Product Revision Level"), rev,    sizeof(rev));
+
+            int pdt = 0;
+            CFTypeRef p = IORegistryEntryCreateCFProperty(e,
+                CFSTR("Peripheral Device Type"), kCFAllocatorDefault, 0);
+            if (p != NULL) {
+                if (CFGetTypeID(p) == CFNumberGetTypeID()) {
+                    CFNumberGetValue((CFNumberRef)p, kCFNumberIntType, &pdt);
+                }
+                CFRelease(p);
+            }
+
+            fprintf(f, "Host: scsi%d Channel: 00 Id: 00 Lun: 00\n", host++);
+            fprintf(f, "  Vendor: %-8s Model: %-16s Rev: %-4s\n", vendor, model, rev);
+            fprintf(f, "  Type:   %-33s ANSI  SCSI revision: 05\n",
+                scsi_type_name(pdt));
+
+            IOObjectRelease(e);
+        }
+        IOObjectRelease(it);
+    }
+
+    fclose(f);
+    *blobp = buf;
+    *lenp = sz;
 }
 
 /*
@@ -1708,6 +1799,14 @@ main(__unused int argc, __unused char **argv)
                 build_pci_blob(&g_pci_blob, &g_pci_blob_len);
             }
             blob_slice(g_pci_blob, g_pci_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_SCSI: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_scsi_blob(&g_scsi_blob, &g_scsi_blob_len);
+            }
+            blob_slice(g_scsi_blob, g_scsi_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_FBDEVICES: {
