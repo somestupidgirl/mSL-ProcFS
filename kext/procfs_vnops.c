@@ -610,7 +610,8 @@ procfs_vnop_readdir(struct vnop_readdir_args *ap)
             case PFSsoftirqs:       /* FALLTHROUGH */
             case PFSkcmdline:       /* FALLTHROUGH */
             case PFSide:            /* FALLTHROUGH */
-            case PFSvmallocinfo:
+            case PFSvmallocinfo:    /* FALLTHROUGH */
+            case PFSisapnp:
                 type = DT_REG;
                 break;
 
@@ -961,7 +962,8 @@ procfs_vnop_getattr(struct vnop_getattr_args *ap)
      && node_type != PFSirq && node_type != PFStty
      && node_type != PFSioports && node_type != PFSiomem
      && node_type != PFSsoftirqs && node_type != PFSkcmdline
-     && node_type != PFSide && node_type != PFSvmallocinfo) {
+     && node_type != PFSide && node_type != PFSvmallocinfo
+     && node_type != PFSisapnp) {
         // Get the process pid and proc_t for the target vnode.
         // Returns ENOENT if the process does not exist. For the
         // root vnode, p is zero and pid is PRNODE_NO_PID, but the
@@ -1060,7 +1062,8 @@ procfs_vnop_getattr(struct vnop_getattr_args *ap)
     case PFSsoftirqs:       /* FALLTHROUGH */
     case PFSkcmdline:       /* FALLTHROUGH */
     case PFSide:            /* FALLTHROUGH */
-    case PFSvmallocinfo:
+    case PFSvmallocinfo:    /* FALLTHROUGH */
+    case PFSisapnp:
         VATTR_RETURN(vap, va_mode, READ_EXECUTE_ALL & modemask);
         break;
 

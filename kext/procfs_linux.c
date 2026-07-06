@@ -2480,6 +2480,18 @@ procfs_doide_drivers(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
 }
 
 /*
+ * /proc/isapnp - Linux's ISA Plug-and-Play device listing (detected ISA PnP
+ * cards and their logical devices/resources). The ISA bus is long obsolete and
+ * macOS has no ISA or ISA-PnP support on any platform, so there are no ISA PnP
+ * cards and this file is empty, as on a modern Linux host with no ISA hardware.
+ */
+int
+procfs_doisapnp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    return procfs_copy_data("", 0, uio);
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon

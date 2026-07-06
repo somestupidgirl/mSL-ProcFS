@@ -54,6 +54,7 @@ Linux-compatible files and helpers:
 |`iomem`       | Linux-style physical memory map; `System RAM` + `Reserved` sized from `hw.memsize`/`hw.memsize_usable` (macOS publishes no full physical map, so the base is nominal) |
 |`ioports`     | Linux-style I/O port map; an x86-only concept — the fixed legacy PC ports on x86, empty on Apple Silicon (ARM has no port-mapped I/O) |
 |`irq/`        | IRQ-to-CPU affinity directory; `default_smp_affinity`/`_list` (all online CPUs). macOS routes IRQs via the AIC with no user-settable per-IRQ affinity, so per-IRQ subdirectories are omitted |
+|`isapnp`      | ISA Plug-and-Play device listing; the ISA bus is obsolete and macOS has no ISA/ISA-PnP support on any platform, so this is empty, as on a modern Linux host with no ISA hardware |
 |`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
 |`modules`     | Linux-style `/proc/modules` view of the same loaded kexts (`name size refcount deps state address`) |

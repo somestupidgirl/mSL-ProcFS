@@ -251,6 +251,12 @@ procfs_structure_init(void)
         pfssnode_t *bttv_dir = add_directory(video_dir, "bttv",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
 
+        // Linux-style /proc/isapnp - the ISA Plug-and-Play device listing. The
+        // ISA bus is long obsolete and macOS has no ISA/ISA-PnP support at all, so
+        // (like a modern Linux host with no ISA PnP cards) the file is empty.
+        pfssnode_t *isapnp = add_node(root_node, "isapnp",
+                        PFSisapnp, next_node_id++, 0, 0, NULL, procfs_doisapnp);
+
         // Linux-style /proc/fs/ - filesystem parameters. Currently /proc/fs/nfs/exports,
         // the NFS export table (macOS /etc/exports, read by procfsd).
         pfssnode_t *fs_dir = add_directory(root_node, "fs",
