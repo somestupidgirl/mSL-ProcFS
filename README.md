@@ -70,6 +70,7 @@ Linux-compatible files and helpers:
 |`tty/`        | TTY info directory: `tty/drivers` (the tty driver table, derived from `/dev` by the `procfsd` daemon) and `tty/ldiscs` (line disciplines) |
 |`uptime`      | Linux-style uptime (seconds since boot; idle field `0.00`)          |
 |`version`     | Kernel version string (text)                                        |
+|`video/`      | Legacy `bttv` (Bt848/878 capture-card) subsystem directory; macOS has no bttv/Video4Linux subsystem (video capture is CoreMediaIO/AVFoundation), so `video/bttv/` is an empty directory with no per-card entries, as on a Linux host with the bttv module present but no capture hardware |
 |`vmstat`      | Linux-style virtual-memory statistics (daemon-backed `host_statistics64`; see below) |
 
 ### Per-process files

@@ -235,6 +235,17 @@ procfs_structure_init(void)
         pfssnode_t *ide_drv = add_node(ide_dir, "drivers",
                         PFSide, next_node_id++, 0, 0, NULL, procfs_doide_drivers);
 
+        // Linux-style /proc/video/ - the legacy bttv (Bt848/878 capture-card)
+        // proc tree, home of /proc/video/bttv/<cardN>. macOS has no bttv /
+        // Video4Linux subsystem (video capture is CoreMediaIO/AVFoundation, not
+        // V4L), so /proc/video/bttv is an empty directory with no per-card
+        // entries, as on a Linux host with the bttv module present but no Bt8x8
+        // hardware.
+        pfssnode_t *video_dir = add_directory(root_node, "video",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *bttv_dir = add_directory(video_dir, "bttv",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+
         // Linux-style /proc/fs/ - filesystem parameters. Currently /proc/fs/nfs/exports,
         // the NFS export table (macOS /etc/exports, read by procfsd).
         pfssnode_t *fs_dir = add_directory(root_node, "fs",
