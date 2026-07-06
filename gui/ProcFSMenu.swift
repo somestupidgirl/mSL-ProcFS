@@ -91,6 +91,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
 
+        // On the very first launch, register to open at login so the icon comes
+        // back automatically after a reboot (installer launches us once).
+        registerLoginItemOnFirstLaunch()
+
         // Automatic update check on launch, when enabled in the preference pane.
         if ProcFSUpdater.checkOnStartup {
             let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
@@ -250,6 +254,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return SMAppService.mainApp.status == .enabled
         }
         return false
+    }
+
+    // Register "Open at Login" exactly once, on the first launch, so a fresh
+    // install (which launches us once) auto-starts on later reboots. Tracked in
+    // UserDefaults so it happens only once - a user who later turns it off is
+    // respected and never silently re-enabled. Best-effort and silent: it can
+    // fail when the app is run from outside /Applications, which is fine.
+    private func registerLoginItemOnFirstLaunch() {
+        guard #available(macOS 13.0, *) else { return }
+        let key = "ProcFSDidAutoRegisterLoginItem"
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: key) else { return }
+        defaults.set(true, forKey: key)
+        if SMAppService.mainApp.status != .enabled {
+            try? SMAppService.mainApp.register()
+        }
     }
 
     @objc private func toggleLoginItem() {

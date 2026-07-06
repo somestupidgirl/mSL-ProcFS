@@ -191,6 +191,7 @@ pkg: all
 	@echo "==> Building component package"
 	pkgbuild --root $(OUT)/pkgroot --identifier $(PKG_ID) --version $(VERSION) \
 	         --scripts installer/scripts --ownership recommended \
+	         --component-plist installer/procfs-component.plist \
 	         --install-location / $(PKG_COMP)
 	@echo "==> Building product archive"
 	mkdir -p $(OUT)/pkgres
