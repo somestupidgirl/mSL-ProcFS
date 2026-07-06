@@ -15,11 +15,14 @@ Tested on:
 
 > **Note on Apple Silicon:** under Pointer Authentication (PAC) the kernel's
 > private symbols cannot be linked from a kext, and the in-memory symbol table is
-> jettisoned after boot. Affected features are recovered either by forward-porting
-> (e.g. `fd/`, `threads/`, `cmdline`) or by resolving the needed private symbols
-> from the on-disk kernel collection via libklookup (e.g. `tty`). Anything still
-> out of reach degrades gracefully (returns `ENOTSUP`/empty) rather than failing
-> the mount. See [Feature status](#feature-status) below.
+> jettisoned after boot. Affected features are recovered by one of three routes,
+> in order of preference: a public KPI (or public sysctl), an in-kext
+> forward-port against public interfaces (e.g. `fd/`, `threads/`), or the
+> **`procfsd` userspace daemon**, which supplies data the kext cannot obtain
+> in-kernel (full task/VM/argument/register info, per-CPU counters, IOKit) via
+> ordinary userspace APIs. Anything still out of reach degrades gracefully
+> (returns `ENOTSUP`/`EPERM`/empty) rather than failing the mount. See
+> [Feature status](#feature-status) below.
 
 ### Root directory
 
@@ -216,64 +219,67 @@ Verified with `tests/test_features.sh`.
     without a daemon (see below)
   - `auxv` — XNU's auxiliary-vector equivalent: dyld's `apple[]` array
     (`executable_path=`, `stack_guard=`, `dyld_file=`, `malloc_entropy=`,
-    `arm64e_abi=`, …), read from the target's user stack via its pmap
+    `arm64e_abi=`, …), from the daemon's `KERN_PROCARGS2` region
 
-`cmdline`, `fd/` and `threads/` required forward-porting work to function under
-PAC on Apple Silicon rather than relying on the unavailable private KPIs: `fd/`
-walks the process's file-descriptor table directly, `threads/` enumerates threads
-via the BSD `proc->p_uthlist` instead of the inaccessible Mach `task->threads`
-queue, and `cmdline` reads the target's user-stack arguments through its pmap
-(the `KERN_PROCARGS2` `vm_map_copyin` path is `com.apple.kpi.private`).
+`fd/` and `threads/` required forward-porting work to function under PAC on Apple
+Silicon rather than relying on the unavailable private KPIs: `fd/` walks the
+process's file-descriptor table directly, and `threads/` enumerates threads via
+the BSD `proc->p_uthlist` instead of the inaccessible Mach `task->threads` queue.
 
-`tty` takes a different route. Its accessor `proc_gettty` is
-`com.apple.kpi.private` and reaches the terminal through the SMR-protected
-`p->p_pgrp`, so it cannot be linked or safely forward-ported. Instead it is
-resolved at load time from the on-disk kernel collection (libklookup, fed by the
-`procfs_ksyms` staging helper run at install) and called directly — its SMR and
-session locking run inside the kernel's own code, so the resolved call is safe.
+Everything the kext cannot reach in-kernel is delegated to the **`procfsd`
+daemon** (see [The `procfsd` daemon](#the-procfsd-daemon)), which obtains it
+through ordinary userspace APIs. The nodes below are its main consumers.
 
-`loadavg`'s load values come from the `procfsd` daemon's `getloadavg()` — the
-kernel's true 1/5/15-minute averages — when it is connected. They are not
-reachable from the kext itself: `averunnable`, `compute_averunnable`,
-`host_statistics` and `processor_set_info` are all stripped from the kernel and
-unexported. So without a daemon the node falls back to a CPU-utilisation
-approximation: a `thread_call` samples per-CPU tick counts via the exported
-`processor_info(PROCESSOR_CPU_LOAD_INFO)` (with a `processor_t` from the
-libklookup-resolved `cpu_to_processor()`) every 5 seconds and feeds
-`utilisation × ncpu` through the standard load-average EWMA. That approximation
-tracks CPU utilisation rather than run-queue depth, so it saturates near the CPU
-count and under-reports a genuinely overloaded machine; it reads `0.00` if
-libklookup cannot resolve `cpu_to_processor` either.
+`cmdline`, `environ` and `auxv` come from the argument region the daemon reads
+with the `KERN_PROCARGS2` sysctl (the in-kernel `vm_map_copyin` path is
+`com.apple.kpi.private`). The kext requests the flattened region and splits it
+into the `argv` / `envp` / `apple[]` sections. Because `KERN_PROCARGS2` is a root
+sysctl rather than `task_for_pid`, these three keep working even for
+SIP/AMFI-protected and hardened processes. Without a daemon, `cmdline` falls back
+to the parenthesised command name and `environ`/`auxv` are empty.
+
+`tty` returns the controlling terminal. Its in-kernel accessor `proc_gettty`
+reaches the terminal through the SMR-protected `p->p_pgrp` and is
+`com.apple.kpi.private`, so the daemon reads the device from
+`proc_pidinfo(PROC_PIDTBSDINFO)`'s `e_tdev` and maps it to its `/dev` path
+(`devname`) instead. Empty when the process has no controlling terminal;
+`ENOTSUP` without a daemon.
+
+`loadavg`'s load values come from the daemon's `getloadavg()` — the kernel's true
+1/5/15-minute averages. They are not reachable from the kext itself
+(`averunnable`, `compute_averunnable`, `host_statistics` and `processor_set_info`
+are all stripped and unexported), so without a connected daemon the node reads
+`0.00`.
 
 `meminfo` reports `MemTotal` from the `hw.memsize` sysctl and `MemFree` using
 FreeBSD's `linprocfs_domeminfo` estimate (`MemFree = MemTotal − wired`). The
-wired-page count comes from the kernel's `vm_page_wire_count` global resolved
-via libklookup, because the `vm.*` page-count sysctls are not readable from
-kernel context and most `vm_page_*_count` globals are stripped on arm64.
-`Cached`, `Buffers` and swap have no kernel-reachable source there and read 0
-(`MemFree` reads 0 if libklookup cannot resolve the wired count).
+wired-page count comes from the daemon's `host_statistics64(HOST_VM_INFO64)`,
+because the `vm.*` page-count sysctls are not readable from kernel context and
+most `vm_page_*_count` globals are stripped on arm64. `Cached`, `Buffers` and
+swap have no kernel-reachable source there and read 0 (`MemFree` reads 0 without
+a daemon).
 
-`mem` reads the target's memory through its pmap (`get_task_pmap`,
-`pmap_find_phys`, `ml_phys_read`) — the same physical-aperture path `cmdline`
-uses — since the BSD faulting path (`vm_map_copyin`) is `com.apple.kpi.private`.
-A consequence of not faulting is that only resident pages are returned: reading
-an unmapped or paged-out address (including offset 0, the NULL page) returns
-`EIO`, and a read stops cleanly at the first hole. Access is gated by the same
+`mem` reads the target's memory through the daemon's
+`task_for_pid()` + `mach_vm_read_overwrite()`, page by page. Only resident memory
+is returned: reading an unmapped or paged-out address (including offset 0, the
+NULL page) returns `EIO`, and a read stops cleanly at the first hole. Because it
+needs `task_for_pid`, `mem` returns `EPERM` for SIP/AMFI-protected and hardened
+processes; `ENOTSUP` without a daemon. Access is also gated by the same
 credential check as the rest of the filesystem.
 
-`map` and `maps` enumerate the process's VM regions through the libklookup-
-resolved `mach_vm_region()` (with `get_task_map()`): macOS exports no region-
-enumeration KPI a kext may link, and the internal walkers are stripped on
-arm64. `mach_vm_region()` takes the map's read lock itself, so this needs no
-struct-walking or manual locking. Both nodes share one walk and differ only in
-formatting (`map` NetBSD-style, `maps` Linux-style). Backing-file paths (the
-trailing Linux column) are not resolved — the region's object→vnode is not
+`map` and `maps` enumerate the process's VM regions through the daemon's
+`task_for_pid()` + `mach_vm_region()` walk (macOS exports no region-enumeration
+KPI a kext may link, and the internal walkers are stripped on arm64). The daemon
+returns the raw region records and the kext formats them; both nodes share one
+walk and differ only in formatting (`map` NetBSD-style, `maps` Linux-style). Like
+`mem`, they return `EPERM` for protected/hardened processes. Backing-file paths
+(the trailing Linux column) are not resolved — the region's object→vnode is not
 reachable here — so the device/inode/path columns read `00:00 0`.
 
 `regs` and `fpregs` expose a thread's register state. `thread_get_state()` is
-neither a bindable KPI symbol nor present in the arm64 kernelcache symbol table
-(so it can be neither linked *nor* resolved via libklookup), so the kext cannot
-read register state itself. The `procfsd` daemon does it from userspace instead —
+neither a bindable KPI symbol nor present in the arm64 kernelcache symbol table,
+so the kext cannot read register state itself. The `procfsd` daemon does it from
+userspace instead —
 `task_for_pid()` + `task_threads()` + `thread_get_state()` on the process's
 representative thread — and returns the native Mach state struct over the
 kernel-control bridge. Because `task_for_pid` is denied to root for Apple
@@ -283,11 +289,10 @@ their PAC bits and are emitted raw, leaving stripping to the consumer.
 
 `auxv` reports XNU's equivalent of the ELF auxiliary vector. macOS binaries are
 Mach-O, so there is no `AT_*` array on the stack; the closest analog is dyld's
-`apple[]` array — the `key=value` strings the kernel places after `argv`/`envp`.
-The node finds them by skipping the `argc` slot and the `argv`/`envp` pointer
-arrays on the target's user stack (read through its pmap, as `cmdline` does) and
-following each `apple` pointer to its string. Zombies and system processes report
-empty.
+`apple[]` array — the `key=value` strings the kernel places after `argv`/`envp`,
+which the node emits from the tail of the `KERN_PROCARGS2` region described
+above. Zombies and system processes report empty. In Linux presentation mode it
+synthesises the familiar `AT_*` key/value lines instead.
 
 `partitions` enumerates block devices through IOKit, matching the `IOMedia`
 class — every whole disk and partition, mounted or not, exactly as Linux's
@@ -518,18 +523,28 @@ data lives in per-CPU/`recount` structures with no linkable accessor. The
 privileged `PF_SYSTEM` kernel control (`procfs_ctl.c`): a node read sends a
 request and the daemon replies. So `taskinfo` (all 18 fields exact),
 `task/<tid>/{info,comm,stat,status,sched}`, `vmstat`, the `sys/` sysctl values
-and the `extensions`/`modules` kext listings are fully populated when the daemon runs, and
-fall back to the kext's best-effort values (or zero, the `CTLFLAG_KERN` sysctl
-subset, or an empty node) when it does not. The daemon also stages the libklookup symbol file at boot and,
-when armed, loads the kext; see *Installing*. `taskinfo`'s `pti_resident_size`
-is then the exact `phys_footprint` from the daemon (the kext's own estimate is
-only the fallback). Without the daemon the per-thread `info` reads zero
-(`fill_taskthreadinfo` is stripped from the arm64 kernel).
+and the `extensions`/`modules` kext listings are fully populated when the daemon
+runs, and fall back to the kext's best-effort values (or zero, the `CTLFLAG_KERN`
+sysctl subset, or an empty node) when it does not. `taskinfo`'s
+`pti_resident_size` is then the exact `phys_footprint` from the daemon (the
+kext's own estimate is only the fallback). Without the daemon the per-thread
+`info` reads zero (`fill_taskthreadinfo` is stripped from the arm64 kernel).
 
-The daemon is also the *only* source for the `regs`/`fpregs` register nodes:
-`thread_get_state()` is unreachable from the kext (neither bindable nor in the
-kernelcache symtab), so those nodes require a connected daemon and return
-`ENOTSUP` without one, or `EPERM` for a `task_for_pid`-denied (SIP/AMFI) target.
+The daemon's role expanded over time until it became the sole route for
+everything the kext cannot reach in-kernel: besides the fields above it serves
+`maps`/`map`/`smaps` (region walk), `mem` (memory read), `cmdline`/`environ`/`auxv`
+(`KERN_PROCARGS2`), `tty`, `loadavg`, `stat`/`softirqs`/`interrupts` (per-CPU
+counters), `partitions`/`diskstats`/`apm`/`bus/` (IOKit), and the `regs`/`fpregs`
+register nodes — all described above. This is what made it possible to remove the
+kernel-symbol-resolution machinery the project used to rely on (see
+[Feature status](#feature-status)). When armed, the daemon also loads the kext
+and keeps `/proc` mounted; see *Installing*.
+
+The register nodes are a good example of the `task_for_pid` coverage limit:
+`thread_get_state()` is unreachable from the kext, so `regs`/`fpregs` require a
+connected daemon (`task_for_pid` + `thread_get_state`) and return `ENOTSUP`
+without one, or `EPERM` for a `task_for_pid`-denied (SIP/AMFI/hardened) target —
+as do `mem` and the `maps` family, which need the same task port.
 
 `note` is a writable per-process node (NetBSD `procfs_donote()` lineage). macOS
 has no native "note" primitive, so — following the Plan 9 origin of procfs notes,
@@ -638,9 +653,9 @@ to `/Library/PreferencePanes` by `sudo make install` (removed by
 the menu-bar app through the `com.beako.filesystems.procfs` preferences domain.
 
 ## How to build procfs
-`make` builds the kext, the `procfs.fs` mount bundle, the userspace tools
-(`procfsd`, `procfs_ksyms`), the LaunchDaemon plist and the `ProcFS.app`
-menu-bar app into `bin/`:
+`make` builds the kext, the `procfs.fs` mount bundle, the `procfsd` daemon, the
+LaunchDaemon plist, the `ProcFS.app` menu-bar app and the preference pane into
+`bin/`:
 
     make                    # native arch (arm64e on Apple Silicon)
     make ARCH=universal     # fat arm64e + x86_64
@@ -655,12 +670,12 @@ To build and install in one step, use the install script — it runs
 compiles, so `bin/` and the build tree stay owned by you and `make clean` never
 needs sudo). It installs, with `root:wheel`/`755`: the kext to
 `/Library/Extensions`, the `procfs.fs` bundle to `/Library/Filesystems`,
-`procfsd`/`procfs_ksyms` to `/usr/local/sbin`, the LaunchDaemon plist to
+`procfsd` to `/usr/local/sbin`, the LaunchDaemon plist to
 `/Library/LaunchDaemons`, and `ProcFS.app` to `/Applications`. It also adds
-`proc` to `/etc/synthetic.conf` (so `/proc`
-is created at boot) and enables the LaunchDaemon. `sudo make uninstall` reverses
-all of this — unmounts, unloads the kext, clears the staging cache, and removes
-the installed files.
+`proc` to `/etc/synthetic.conf` (so `/proc` is created at boot), enables the
+LaunchDaemon, and launches `ProcFS.app` so its menu-bar icon appears. `sudo make
+uninstall` reverses all of this — unmounts, unloads the kext, and removes the
+installed files and daemon state.
 
 Code signing is optional; the kext is ad-hoc signed by default. To sign with
 your own certificate instead, edit `Makefile.inc` and set the `SIGNCERT`
@@ -673,8 +688,7 @@ machine:
     sudo touch /var/db/procfs.enabled
     sudo reboot
 
-After the reboot, `procfsd` stages the kernel symbols, loads the kext, and mounts
-`/proc` for all users.
+After the reboot, `procfsd` loads the kext and mounts `/proc` for all users.
 
 ### Loading the kext (Apple Silicon, macOS 26)
 
@@ -731,13 +745,13 @@ through `hexdump` to read the raw contents:
 ## Issues
 Currently known issues:
 
-- On Apple Silicon, `cmdline`, `fd/`, `threads/` and `tty` previously required private kernel symbols unavailable under PAC; they now work (the first three forward-ported, `tty` via libklookup-resolved `proc_gettty`). `tty` depends on the `procfs_ksyms` staging helper having run (it does during `make install`); if the staged symbol file is missing or stale for the running kernel, `tty` falls back to `ENOTSUP`.
+- On Apple Silicon, `cmdline`, `fd/`, `threads/` and `tty` need private kernel state unavailable to a kext under PAC. `fd/` and `threads/` are forward-ported against public interfaces; `cmdline` and `tty` are served by the `procfsd` daemon (via `KERN_PROCARGS2` and `proc_pidinfo(PROC_PIDTBSDINFO)` respectively). Without a connected daemon, `cmdline` falls back to the parenthesised command name and `tty` to `ENOTSUP`.
 - `taskinfo` and per-thread `info` are populated by the `procfsd` daemon (`proc_pidinfo`); they read the kext fallback / zero only when no daemon is connected, since the private `fill_taskprocinfo` / `fill_taskthreadinfo` are stripped from the arm64 kernel.
 - `note` is writable: a note is delivered to the process as a signal (Plan 9 semantics — recognised name or numeric signal via `proc_signal()`, else `EINVAL`); reads return `EINVAL`. Gated by the node's owner/group write mode.
-- `regs`/`fpregs` require the `procfsd` daemon (`thread_get_state` is unreachable from the kext — neither a bindable KPI nor in the arm64 kernelcache symtab) and return `EPERM` for Apple platform/hardened binaries, whose task ports `task_for_pid` denies even to root under SIP/AMFI — analogous to `ptrace` permissions on Linux.
+- `regs`/`fpregs`, `mem` and the `maps` family require the `procfsd` daemon (they need a task port the kext cannot get: `thread_get_state`/`mach_vm_region`/`mach_vm_read` are unreachable in-kernel) and return `EPERM` for Apple platform/hardened binaries, whose task ports `task_for_pid` denies even to root under SIP/AMFI — analogous to `ptrace` permissions on Linux. `cmdline`/`environ`/`auxv` avoid this because their daemon path is a root sysctl (`KERN_PROCARGS2`), not `task_for_pid`.
 - `partitions` now enumerates all block devices (whole disks and partitions, mounted or not) via IOKit's `IOMedia` class (`kext/procfs_iokit.cpp`, the kext's one C++ file). It falls back to the mounted-filesystem list (`vfs_iterate`) only if IOKit matching fails.
 - The x86 `/proc/cpuinfo` `bugs` and `power management` fields are now populated (`kext/lib/cpu.c`): `bugs` from `IA32_ARCH_CAPABILITIES` plus CPU vendor/family (the common speculative-execution/errata classes; Linux's full per-model whitelist tables are not reproduced), and `power management` from CPUID `0x80000007`. The x86 flag getters (`get_cpu_flags` etc.) were also rewritten to use proper static buffers, fixing the earlier dangling-stack-pointer bug where flags did not "stick."
-- AMD CPUs now emit their extended feature flags: on AMD the `flags` line is built from CPUID `0x80000001` EDX/ECX (`get_amd_feature_flags`/`get_amd_feature2_flags` - `svm`, `sse4a`, `3dnowprefetch`, `xop`, `fma4`, `tbm`, `topoext`, `perfctr_core`, `mwaitx`, `nx`, `lm`, ...) with Linux-compatible names, replacing the generic Intel-named extended getter for that vendor. AMD leaf-7 extended features are also read now (Zen, family >= 23), and the previously non-functional `set_microcode_version()` no longer dereferences a NULL `i386_cpu_info`.
+- AMD CPUs now emit their extended feature flags: on AMD the `flags` line is built from CPUID `0x80000001` EDX/ECX (`get_amd_feature_flags`/`get_amd_feature2_flags` - `svm`, `sse4a`, `3dnowprefetch`, `xop`, `fma4`, `tbm`, `topoext`, `perfctr_core`, `mwaitx`, `nx`, `lm`, ...) with Linux-compatible names, replacing the generic Intel-named extended getter for that vendor. AMD leaf-7 extended features are also read now (Zen, family >= 23). The x86 `/proc/cpuinfo` fills its `i386_cpu_info` from an in-kext `cpuid`-instruction forward-port (`procfs_cpuid_info` in `cpu.c`) plus `machdep.cpu.*`/`machdep.tsc.frequency` sysctls, since the kernel's own `cpuid_info()` is not exported to kexts; `set_microcode_version()` reads that struct rather than the earlier null stub.
 
 ## Contributing and Bug Reporting
 If you wish to contribute to this project then feel free to make a pull request. If you encounter any undocumented bugs then you may also file an issue under the "Issues" tab.
@@ -749,7 +763,7 @@ This project builds on the work of others, with thanks to:
   <https://github.com/kimtopley/ProcFS>
 - **leiless** — the `libkext` kernel-extension helper library.
   <https://github.com/leiless/libkext>
-- **Syncretic** — the `klookup` kernel symbol-resolution code, from the `latebloom` project (0BSD).
+- **Syncretic** — the `klookup` kernel symbol-resolution code from the `latebloom` project (0BSD), which earlier versions used to reach private kernel symbols on Apple Silicon; since removed in favour of the `procfsd` daemon, but gratefully acknowledged.
   <https://github.com/reenigneorcim/latebloom>
 - **Linus Henze** - for filesystem code pulled from his `Unrootless-Kext`
   <https://github.com/LinusHenze/Unrootless-Kext>
