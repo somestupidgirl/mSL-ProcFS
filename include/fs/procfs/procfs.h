@@ -132,6 +132,7 @@ typedef enum {
     PFSscsi,        /* Linux-style /proc/scsi/scsi (attached SCSI devices) */
     PFSsysvipc,     /* Linux-style /proc/sysvipc/{msg,sem,shm} (SysV IPC tables) */
     PFSpagetypeinfo,/* Linux-style /proc/pagetypeinfo (buddy allocator by type) */
+    PFSslabinfo,    /* Linux-style /proc/slabinfo (zone allocator caches) */
 } pfstype;
 
 typedef struct pfsnode pfsnode_t;
@@ -482,7 +483,7 @@ procfs_is_directory_type(pfstype type)
         && type != PFSkcmdline && type != PFSide
         && type != PFSvmallocinfo && type != PFSisapnp
         && type != PFSscsi && type != PFSsysvipc
-        && type != PFSpagetypeinfo;
+        && type != PFSpagetypeinfo && type != PFSslabinfo;
 }
 
 /* Gets the pid_t for the process corresponding to a pfsnode_t. */
@@ -687,6 +688,7 @@ extern int procfs_doisapnp(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doscsi(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosysvipc_msg(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dopagetypeinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doslabinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosysvipc_sem(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosysvipc_shm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);

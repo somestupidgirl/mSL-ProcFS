@@ -113,6 +113,9 @@ enum {
                                   * (semaphore sets, kern.sysv.ipcs.sem). */
     PROCFS_REQ_SYSVIPC_MSG = 33, /* arg = byte offset; chunked /proc/sysvipc/msg
                                   * (message queues, kern.sysv.ipcs.msg). */
+    PROCFS_REQ_SLABINFO   = 34, /* arg = byte offset; chunked Linux /proc/slabinfo
+                                 * - one row per zone allocator zone (mach_zone_info,
+                                 * the data behind zprint), needs host priv port. */
 };
 
 /*

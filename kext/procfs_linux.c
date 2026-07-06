@@ -2547,6 +2547,36 @@ procfs_dovmallocinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
 }
 
 /*
+ * /proc/slabinfo - Linux's per-cache statistics for the SLAB/SLUB allocator.
+ * macOS has no slab allocator, but its zone allocator (zalloc) is the direct
+ * analog: every zone is a cache of fixed-size elements. The procfsd daemon
+ * enumerates the zones via mach_zone_info (the data behind zprint) and maps them
+ * onto the slabinfo columns (active/total objects, object size, objects and
+ * pages per allocation chunk, slab counts); the SLUB tunables have no zone
+ * equivalent and are 0. Empty without a connected daemon (or without root, since
+ * mach_zone_info needs the host privilege port). Chunked transfer like allocinfo.
+ */
+int
+procfs_doslabinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_SLABINFO, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/ide/drivers - the registered IDE (ATA/PATA) driver modules. macOS has no
  * IDE subsystem: internal storage is NVMe, and other block devices (AHCI/SATA,
  * USB, Thunderbolt) are handled through IOKit and surfaced by /proc/partitions

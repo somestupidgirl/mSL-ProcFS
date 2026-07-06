@@ -233,6 +233,8 @@ static char  *g_sem_blob = NULL;   /* Linux format (/proc/sysvipc/sem) */
 static size_t g_sem_blob_len = 0;
 static char  *g_msg_blob = NULL;   /* Linux format (/proc/sysvipc/msg) */
 static size_t g_msg_blob_len = 0;
+static char  *g_slab_blob = NULL;  /* Linux format (/proc/slabinfo) */
+static size_t g_slab_blob_len = 0;
 static char  *g_fb_blob = NULL;    /* Linux format (/proc/fb) */
 static size_t g_fb_blob_len = 0;
 static char  *g_nfs_blob = NULL;   /* NFS exports (/proc/fs/nfs/exports) */
@@ -573,6 +575,94 @@ build_allocinfo_blob(char **blobp, size_t *lenp)
             *lenp = sz;
         }
         free(rows);
+    }
+
+    vm_deallocate(mach_task_self(), (vm_address_t)names,
+        namesCnt * sizeof(*names));
+    vm_deallocate(mach_task_self(), (vm_address_t)info,
+        infoCnt * sizeof(*info));
+}
+
+/*
+ * /proc/slabinfo support. Linux reports the SLAB/SLUB allocator's per-cache
+ * statistics; macOS has no slab allocator, but its zone allocator (zalloc) is
+ * the direct analog - each zone is a cache of fixed-size elements, exactly like
+ * a slab cache. mach_zone_info() (the data behind zprint) supplies each zone's
+ * live-object count, current/allocation sizes and element size, which map onto
+ * the slabinfo columns as follows:
+ *
+ *   active_objs   = mzi_count                       (elements in use)
+ *   num_objs      = mzi_cur_size / mzi_elem_size    (elements backed by memory)
+ *   objsize       = mzi_elem_size
+ *   objperslab    = mzi_alloc_size / mzi_elem_size  (elements per alloc chunk)
+ *   pagesperslab  = mzi_alloc_size / page_size
+ *   active/num_slabs = mzi_cur_size / mzi_alloc_size
+ *
+ * The SLUB tunables (limit/batchcount/sharedfactor) and sharedavail have no zone
+ * equivalent and are reported as 0. mach_zone_info needs the privileged host
+ * port (root); without it the node is empty. Version line matches Linux's 2.1.
+ */
+static void
+build_slabinfo_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    host_priv_t hp = HOST_PRIV_NULL;
+    if (host_get_host_priv_port(mach_host_self(), &hp) != KERN_SUCCESS ||
+        hp == HOST_PRIV_NULL) {
+        return;                         /* not privileged -> empty node */
+    }
+
+    mach_zone_name_t      *names = NULL;
+    mach_msg_type_number_t namesCnt = 0;
+    mach_zone_info_t      *info = NULL;
+    mach_msg_type_number_t infoCnt = 0;
+    if (mach_zone_info(hp, &names, &namesCnt, &info, &infoCnt) != KERN_SUCCESS) {
+        return;
+    }
+
+    uint64_t pagesize = (uint64_t)getpagesize();
+    mach_msg_type_number_t n = (namesCnt < infoCnt) ? namesCnt : infoCnt;
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f != NULL) {
+        fprintf(f, "slabinfo - version: 2.1\n");
+        fprintf(f, "# name            <active_objs> <num_objs> <objsize>"
+            " <objperslab> <pagesperslab>"
+            " : tunables <limit> <batchcount> <sharedfactor>"
+            " : slabdata <active_slabs> <num_slabs> <sharedavail>\n");
+        for (mach_msg_type_number_t i = 0; i < n; i++) {
+            uint64_t elem  = info[i].mzi_elem_size;
+            uint64_t alloc = info[i].mzi_alloc_size;
+            uint64_t cur   = info[i].mzi_cur_size;
+            uint64_t active_objs   = info[i].mzi_count;
+            uint64_t num_objs      = elem  ? cur   / elem  : 0;
+            uint64_t objperslab    = elem  ? alloc / elem  : 0;
+            uint64_t pagesperslab  = pagesize ? alloc / pagesize : 0;
+            uint64_t num_slabs     = alloc ? cur   / alloc : 0;
+
+            /* Linux left-justifies the name to a 17-char field. */
+            fprintf(f, "%-17s %6llu %6llu %6llu %4llu %4llu"
+                " : tunables %4d %4d %4d"
+                " : slabdata %6llu %6llu %6d\n",
+                names[i].mzn_name,
+                (unsigned long long)active_objs,
+                (unsigned long long)num_objs,
+                (unsigned long long)elem,
+                (unsigned long long)objperslab,
+                (unsigned long long)pagesperslab,
+                0, 0, 0,
+                (unsigned long long)num_slabs,
+                (unsigned long long)num_slabs,
+                0);
+        }
+        fclose(f);
+        *blobp = buf;
+        *lenp = sz;
     }
 
     vm_deallocate(mach_task_self(), (vm_address_t)names,
@@ -2003,6 +2093,14 @@ main(__unused int argc, __unused char **argv)
                 build_sysvipc_msg_blob(&g_msg_blob, &g_msg_blob_len);
             }
             blob_slice(g_msg_blob, g_msg_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_SLABINFO: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_slabinfo_blob(&g_slab_blob, &g_slab_blob_len);
+            }
+            blob_slice(g_slab_blob, g_slab_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_FBDEVICES: {
