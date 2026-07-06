@@ -1,7 +1,8 @@
-bin/
 out/
 rnd/
 wip/
+gui/ProcFS.app/
+gui/ProcFS.prefPane/
 test/test_mount
 test/test_readdir
 test/test_getdents
