@@ -17,11 +17,10 @@
 #include <sys/proc_info.h>
 #include <sys/proc_internal.h>
 #include <sys/stat.h>
+#include <sys/vm.h>          /* current_proc() */
 #include <sys/vnode.h>
 
 #include <fs/procfs/procfs.h>
-
-#include <libkprocfs/symbols.h>
 
 #pragma mark -
 #pragma mark Local Definitions

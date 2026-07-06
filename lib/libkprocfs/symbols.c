@@ -1,65 +1,33 @@
 /*
- * symbols.c - Private KPI symbol resolution
+ * symbols.c - libklookup staged-symbol validation
  *
- * On ARM64 macOS, kernel memory scanning is not possible due to PAC
- * (Pointer Authentication Code) enforcement. All private symbols are
- * stubbed as NULL. Public KPI alternatives are used where available.
+ * No private kernel symbols are resolved through libklookup anymore: every
+ * former consumer has moved to public KPIs, forward-ports, or the procfsd
+ * daemon. resolve_symbols() only validates that the staged kernel-symbol file
+ * matches the running kernel; it is vestigial and removed with the staging
+ * pipeline.
  *
  * Copyright (c) 2022-2026 Sunneva N. Mariu
  */
 #include <mach/kern_return.h>
 #include <libkern/libkern.h>
-#include <ptrauth.h>
 #include "symbols.h"
 
-/* libklookup: resolves private kernel functions from the on-disk kernelcache
- * symbol table (applying the KASLR slide), reaching symbols absent from every
- * .exports and jettisoned from the running kernel's __LINKEDIT. */
+/* libklookup: resolves symbols from the on-disk kernelcache symbol table
+ * (applying the KASLR slide). Only the "_version" anchor is looked up now. */
 extern int klookup_resolve(const char *const *names, void **out, int count);
 extern const char version[];
 
-/* Set once at load if libklookup validates (in resolve_symbols). Code that uses
- * a klookup-resolved private symbol should gate on this. */
+/* Set once at load if the staged symbol file validates. */
 boolean_t procfs_klookup_ok = FALSE;
-
-/*
- * Make a klookup-resolved raw function address callable under the arm64e kernel
- * ABI. Sign it with key IA and discriminator 0; the subsequent assignment to a
- * typed function pointer triggers clang's void*->fnptr conversion, which auths
- * with disc 0 and re-signs with that pointer type's discriminator - i.e. the
- * scheme the call site expects. (Signing with the type discriminator directly is
- * wrong: the conversion's auth uses disc 0 and would corrupt the pointer.) On
- * non-ptrauth targets this is a plain cast.
- */
-#if __has_feature(ptrauth_calls)
-#define KL_SIGN_FN(addr) \
-    ptrauth_sign_unauthenticated((void *)(addr), ptrauth_key_function_pointer, 0)
-#else
-#define KL_SIGN_FN(addr) ((void *)(addr))
-#endif
-
-#define SYM_INIT(sym) \
-	__typeof(_##sym) _##sym = NULL
-
-/*
- * x86-only NULL stubs, never assigned: the x86 /proc/cpuinfo path guards on
- * `_sym != NULL` and takes a zeroed fallback. These are the last symbols.h
- * consumers, migrated to the procfsd daemon next.
- */
-#if defined(__x86_64__)
-SYM_INIT(tscFreq);
-SYM_INIT(cpuid_info);
-#endif
 
 kern_return_t
 resolve_symbols(void)
 {
     /*
-     * No private symbols are resolved through libklookup anymore - every former
-     * consumer now goes through the procfsd daemon. This only validates that the
-     * staged kernel-symbol file matches the running kernel ("_version" is the
-     * slide anchor, validated by construction) and is kept as a vestigial gate
-     * until the staging pipeline is removed.
+     * "_version" is the slide anchor and validates by construction; a
+     * non-matching staged file yields a mismatch and we simply leave
+     * procfs_klookup_ok FALSE. Nothing else depends on it.
      */
     enum { I_VERSION, N_SYMS };
     static const char *const names[N_SYMS] = {

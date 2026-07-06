@@ -36,7 +36,6 @@
 #include <sys/types.h>
 
 #include "cpu.h"
-#include "symbols.h"
 
 /* ============================================================
  * x86_64 implementation
@@ -102,6 +101,95 @@ is_intel_cpu(void)
     }
 
     return FALSE;
+}
+
+/*
+ * Forward-ported cpuid_info(): fill an i386_cpu_info_t by executing the cpuid
+ * instruction directly (do_cpuid), plus public sysctls for the core count and
+ * L2 cache size. This replaces the kernel's private cpuid_info() (declared in
+ * <i386/cpuid.h> but not exported for third-party kext linkage), keeping all the
+ * existing feature-bit decoding in this file and procfs_linux.c working. The
+ * result is cached in a persistent static so set_microcode_version() can write
+ * cpuid_microcode_version into it.
+ */
+i386_cpu_info_t *
+procfs_cpuid_info(void)
+{
+    static i386_cpu_info_t info;
+    static boolean_t       inited = FALSE;
+    if (inited) {
+        return &info;
+    }
+
+    uint32_t reg[4];
+
+    /* Leaf 0: max basic leaf + vendor string (EBX, EDX, ECX). */
+    do_cpuid(0, reg);
+    info.cpuid_max_basic = reg[eax];
+    memcpy(&info.cpuid_vendor[0], &reg[ebx], 4);
+    memcpy(&info.cpuid_vendor[4], &reg[edx], 4);
+    memcpy(&info.cpuid_vendor[8], &reg[ecx], 4);
+    info.cpuid_vendor[12] = '\0';
+
+    /* Leaf 1: signature (family/model/stepping) + feature bits (EDX:ECX). */
+    do_cpuid(1, reg);
+    info.cpuid_signature = reg[eax];
+    info.cpuid_stepping  = (uint8_t)(reg[eax] & 0xf);
+    info.cpuid_model     = (uint8_t)((reg[eax] >> 4) & 0xf);
+    info.cpuid_family    = (uint8_t)((reg[eax] >> 8) & 0xf);
+    info.cpuid_extmodel  = (uint8_t)((reg[eax] >> 16) & 0xf);
+    info.cpuid_extfamily = (uint8_t)((reg[eax] >> 20) & 0xff);
+    info.cpuid_features  = quad(reg[ecx], reg[edx]);
+    info.cache_linesize  = ((reg[ebx] >> 8) & 0xff) * 8;    /* CLFLUSH line size */
+
+    /* Leaf 7 (subleaf 0): structured extended features (EBX:ECX, EDX). */
+    if (info.cpuid_max_basic >= 7) {
+        do_cpuid(7, reg);
+        info.cpuid_leaf7_features    = quad(reg[ecx], reg[ebx]);
+        info.cpuid_leaf7_extfeatures = reg[edx];
+    }
+
+    /* Extended leaves. */
+    do_cpuid(0x80000000, reg);
+    info.cpuid_max_ext = reg[eax];
+
+    if (info.cpuid_max_ext >= 0x80000001) {
+        do_cpuid(0x80000001, reg);
+        info.cpuid_extfeatures = quad(reg[ecx], reg[edx]);
+    }
+    if (info.cpuid_max_ext >= 0x80000004) {
+        uint32_t *bp = (uint32_t *)info.cpuid_brand_string;
+        do_cpuid(0x80000002, &bp[0]);
+        do_cpuid(0x80000003, &bp[4]);
+        do_cpuid(0x80000004, &bp[8]);
+        info.cpuid_brand_string[sizeof(info.cpuid_brand_string) - 1] = '\0';
+    }
+    if (info.cpuid_max_ext >= 0x80000006) {
+        do_cpuid(0x80000006, reg);
+        info.cpuid_cache_size = ((reg[ecx] >> 16) & 0xffff) * 1024;  /* L2, bytes */
+        if ((reg[ecx] & 0xff) != 0) {
+            info.cache_linesize = reg[ecx] & 0xff;
+        }
+    }
+    if (info.cpuid_max_ext >= 0x80000008) {
+        do_cpuid(0x80000008, reg);
+        info.cpuid_address_bits_physical = reg[eax] & 0xff;
+        info.cpuid_address_bits_virtual  = (reg[eax] >> 8) & 0xff;
+    }
+
+    /* Core count and L2 size are cleaner from the public sysctls. */
+    uint32_t v;
+    size_t   sz = sizeof(v);
+    if (sysctlbyname("machdep.cpu.core_count", &v, &sz, NULL, 0) == 0 && v != 0) {
+        info.core_count = v;
+    }
+    sz = sizeof(v);
+    if (sysctlbyname("hw.l2cachesize", &v, &sz, NULL, 0) == 0 && v != 0) {
+        info.cpuid_cache_size = v;
+    }
+
+    inited = TRUE;
+    return &info;
 }
 
 /*

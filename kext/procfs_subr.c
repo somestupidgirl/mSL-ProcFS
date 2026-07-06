@@ -27,8 +27,6 @@
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_ctl.h>
 
-#include <libkprocfs/symbols.h>
-
 /* 
  * Allocate a pfsnode/vnode pair. Gets the vnode type that is appropriate
  * for a given structure node type.

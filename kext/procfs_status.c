@@ -26,7 +26,6 @@
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_ctl.h>
 
-#include <libkprocfs/symbols.h>
 #include <libkprocfs/kern.h>
 
 /*

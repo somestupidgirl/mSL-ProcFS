@@ -69,7 +69,6 @@
 #include <fs/procfs/procfs_iokit.h>
 #include <fs/procfs/procfs_ctl.h>
 
-#include <libkprocfs/symbols.h>
 #include <libkprocfs/kern.h>
 #include <libkprocfs/cpu.h>
 
@@ -189,9 +188,12 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 #if defined(__x86_64__)
 
     /*
-     * Initialize the TSC frequency variables.
+     * TSC frequency from the public machdep.tsc.frequency sysctl (the kernel's
+     * tscFreq global is not linkable).
      */
-    uint64_t freq = tscFreq;
+    uint64_t freq = 0;
+    size_t   freq_sz = sizeof(freq);
+    sysctlbyname("machdep.tsc.frequency", &freq, &freq_sz, NULL, 0);
     int fqmhz = 0, fqkhz = 0;
 
     /* 

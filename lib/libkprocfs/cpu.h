@@ -95,6 +95,17 @@ extern void procfs_cpu_softirq_map(const struct procfs_cpu_stat *st,
 extern int procfs_cpu_clusters(char *out, uint32_t ncpu);
 
 #if defined(__x86_64__)
+#include <i386/cpuid.h>
+
+/*
+ * Forward-ported cpuid_info(): fills an i386_cpu_info_t from the cpuid
+ * instruction (do_cpuid) plus a couple of public sysctls, in place of the
+ * kernel's private cpuid_info() (not linkable by a third-party kext). Used
+ * through the cpuid_info() macro by cpu.c and procfs_linux.c's x86 /proc/cpuinfo.
+ */
+extern i386_cpu_info_t *procfs_cpuid_info(void);
+#define cpuid_info() procfs_cpuid_info()
+
 /* x86-only: power-management line (CPUID 0x80000007) and CPU bug classes
  * (IA32_ARCH_CAPABILITIES + vendor/family). */
 extern char        *get_pm_flags(void);
