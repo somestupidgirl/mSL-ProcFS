@@ -49,6 +49,7 @@ Linux-compatible files and helpers:
 |`fb`          | Linux-style framebuffer device list (`<index> <name>`); macOS IOKit framebuffers (`IOFramebuffer`/`IOMobileFramebuffer`) via the `procfsd` daemon |
 |`filesystems` | Linux-style filesystem-type list (the mounted types, deduped; `nodev` for device-less) |
 |`fs/`         | Filesystem-parameters directory; currently `fs/nfs/exports`, the NFS export table (macOS `/etc/exports`, read by the `procfsd` daemon) |
+|`ide/`        | IDE (ATA/PATA) subsystem directory; macOS has no IDE subsystem (storage is NVMe/AHCI/USB, handled via IOKit — see `partitions`/`diskstats`), so `ide/drivers` is empty and there are no `ideN`/`hdX` subdirectories, as on a Linux host with no IDE hardware |
 |`interrupts`  | Linux-style interrupt table (IRQ → controller → device, via the `procfsd` daemon); per-device counts are 0, but the `LOC`/`RES` summary lines carry real per-CPU timer/IPI counts from the softirq layer (`libkprocfs/cpu.c`, via the daemon) |
 |`iomem`       | Linux-style physical memory map; `System RAM` + `Reserved` sized from `hw.memsize`/`hw.memsize_usable` (macOS publishes no full physical map, so the base is nominal) |
 |`ioports`     | Linux-style I/O port map; an x86-only concept — the fixed legacy PC ports on x86, empty on Apple Silicon (ARM has no port-mapped I/O) |

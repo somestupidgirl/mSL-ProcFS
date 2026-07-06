@@ -2437,6 +2437,20 @@ procfs_dotty_ldiscs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
 }
 
 /*
+ * /proc/ide/drivers - the registered IDE (ATA/PATA) driver modules. macOS has no
+ * IDE subsystem: internal storage is NVMe, and other block devices (AHCI/SATA,
+ * USB, Thunderbolt) are handled through IOKit and surfaced by /proc/partitions
+ * and /proc/diskstats. So there are no IDE drivers and this file is empty - and
+ * /proc/ide itself has no channel (ideN) or drive (hdX) subdirectories - exactly
+ * as on a Linux host with the IDE core present but no IDE hardware attached.
+ */
+int
+procfs_doide_drivers(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    return procfs_copy_data("", 0, uio);
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon

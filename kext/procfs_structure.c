@@ -226,6 +226,15 @@ procfs_structure_init(void)
         pfssnode_t *tty_ld = add_node(tty_dir, "ldiscs",
                         PFStty, next_node_id++, 0, 0, NULL, procfs_dotty_ldiscs);
 
+        // Linux-style /proc/ide/ - the IDE (ATA/PATA) subsystem. macOS has no IDE
+        // subsystem, so the directory is present for compatibility with an empty
+        // drivers file and no drive entries (as on a Linux host with no IDE
+        // hardware).
+        pfssnode_t *ide_dir = add_directory(root_node, "ide",
+                        PFSdir, next_node_id++, 0, 0, NULL, NULL);
+        pfssnode_t *ide_drv = add_node(ide_dir, "drivers",
+                        PFSide, next_node_id++, 0, 0, NULL, procfs_doide_drivers);
+
         // Linux-style /proc/fs/ - filesystem parameters. Currently /proc/fs/nfs/exports,
         // the NFS export table (macOS /etc/exports, read by procfsd).
         pfssnode_t *fs_dir = add_directory(root_node, "fs",
