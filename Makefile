@@ -281,6 +281,13 @@ install-gui:
 	cp -R $(OUT)/ProcFS.prefPane $(PREFPANE_DIR)/ProcFS.prefPane
 	chown -R root:wheel $(PREFPANE_DIR)/ProcFS.prefPane
 	chmod -R 755 $(PREFPANE_DIR)/ProcFS.prefPane
+	@# Launch the menu-bar app in the console user's GUI session so its icon
+	@# shows immediately. Best-effort (root install -> hop to the logged-in user).
+	-@u=$$(stat -f '%Su' /dev/console 2>/dev/null); \
+	  uid=$$(id -u "$$u" 2>/dev/null); \
+	  if [ -n "$$uid" ] && [ "$$u" != "root" ] && [ "$$u" != "loginwindow" ]; then \
+	      launchctl asuser "$$uid" sudo -u "$$u" open "$(APP_DIR)/ProcFS.app" >/dev/null 2>&1 || true; \
+	  fi
 
 install-plists:
 	install -m 644 -o root -g wheel $(OUT)/$(DAEMON_PLIST) $(DAEMON_DIR)/$(DAEMON_PLIST)
@@ -294,7 +301,7 @@ install-plists:
 	@echo "procfs: ensured 'proc' in $(SYNTHETIC_CONF) -> /proc is created at boot."
 
 postinstall:
-	@echo "procfs: installed kext, fs, daemon, stager and LaunchDaemon."
+	@echo "procfs: installed kext, fs, daemon, app and LaunchDaemon."
 	@echo "procfs: auto-load + auto-mount stay DISARMED. To arm them:"
 	@echo "          sudo touch $(ARM_FLAG)"
 	@echo "procfs: then REBOOT (creates /proc, loads kext, procfsd mounts /proc)."

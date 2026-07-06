@@ -28,4 +28,18 @@ launchctl enable "system/$DAEMON" 2>/dev/null || true
 # `make install`; the user would then `sudo touch $ARM_FLAG` manually.)
 touch "$ARM_FLAG"
 
+# Launch the menu-bar app so its icon appears immediately (the payload put it in
+# /Applications). postinstall runs as root, so hop into the logged-in user's GUI
+# session to open it as them. Best-effort: if nobody is logged in (remote or
+# automated install) we skip it - the app then starts at the user's next login
+# if they have enabled "Open at Login". Never fail the install over this.
+APP="/Applications/ProcFS.app"
+CONSOLE_USER=$(stat -f '%Su' /dev/console 2>/dev/null || true)
+CONSOLE_UID=$(id -u "$CONSOLE_USER" 2>/dev/null || true)
+if [ -d "$APP" ] && [ -n "$CONSOLE_UID" ] && \
+   [ "$CONSOLE_USER" != "root" ] && [ "$CONSOLE_USER" != "loginwindow" ]; then
+    launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" open "$APP" \
+        >/dev/null 2>&1 || true
+fi
+
 exit 0
