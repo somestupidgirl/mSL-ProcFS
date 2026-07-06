@@ -55,7 +55,7 @@ Linux-compatible files and helpers:
 |`ioports`     | Linux-style I/O port map; an x86-only concept — the fixed legacy PC ports on x86, empty on Apple Silicon (ARM has no port-mapped I/O) |
 |`irq/`        | IRQ-to-CPU affinity directory; `default_smp_affinity`/`_list` (all online CPUs). macOS routes IRQs via the AIC with no user-settable per-IRQ affinity, so per-IRQ subdirectories are omitted |
 |`isapnp`      | ISA Plug-and-Play device listing; the ISA bus is obsolete and macOS has no ISA/ISA-PnP support on any platform, so this is empty, as on a modern Linux host with no ISA hardware |
-|`loadavg`     | Linux-style load averages (text; true values via the `procfsd` daemon, CPU-utilisation approximation as fallback — see below) |
+|`loadavg`     | Linux-style load averages (text; the kernel's true 1/5/15-minute values via the `procfsd` daemon's `getloadavg`, `0.00` without a connected daemon — see below) |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
 |`modules`     | Linux-style `/proc/modules` view of the same loaded kexts (`name size refcount deps state address`) |
 |`mounts`      | The Linux name for the same mounted-filesystem table as `mtab`       |
@@ -143,8 +143,8 @@ Verified with `tests/test_features.sh`.
     With Linux compatibility on, `Features` are ordered like a real
     `/proc/cpuinfo` (AArch64 HWCAP order)
   - `loadavg` — process count plus the true 1/5/15-minute load averages from the
-    `procfsd` daemon (`getloadavg`); falls back to a CPU-utilisation approximation
-    when no daemon is connected (see Apple Silicon note)
+    `procfsd` daemon (`getloadavg`); the load values read `0.00` when no daemon is
+    connected (see Apple Silicon note)
   - `meminfo` — Linux-style memory summary; `MemTotal` and `MemFree` are
     populated (`MemFree` via the FreeBSD non-wired estimate — see Apple Silicon note)
   - `partitions` — Linux-style table of block devices via IOKit (`IOMedia`):
