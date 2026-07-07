@@ -2858,15 +2858,32 @@ procfs_doide_drivers(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
 /*
  * /proc/misc - Linux's registry of miscellaneous character devices: the drivers
  * that share the misc major (10), one "<minor> <name>" line each (rtc, hpet,
- * fuse, kvm, watchdog, ...). macOS has no misc-device framework - its character
- * devices are spread across dynamically assigned majors with no shared "misc"
- * registry - so nothing maps here and the file is empty, as on a Linux host with
- * no misc drivers registered. (System-wide device majors are in /proc/devices.)
+ * fuse, kvm, watchdog, ...). macOS has no misc-device framework, but it has many
+ * miscellaneous single-purpose character devices (autofs, bpf, dtrace, fsevents,
+ * klog, oslog, pf, auditpipe, ...). XNU keeps no in-kernel named-device registry
+ * - device names live in devfs - so, as for /proc/devices and /proc/tty/drivers,
+ * the procfsd daemon enumerates them from /dev (one row per driver family,
+ * excluding the tty/disk/mem families that belong to other majors on Linux).
+ * Empty without a connected daemon. Chunked transfer like /proc/devices.
  */
 int
 procfs_domisc(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    return procfs_copy_data("", 0, uio);
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 1024, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_MISC, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
 }
 
 /*

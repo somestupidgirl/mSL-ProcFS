@@ -132,6 +132,10 @@ enum {
                                  * from the XNU source (emitted with address 0,
                                  * as the stripped kernel has no address for
                                  * them). Linux /proc/kallsyms. */
+    PROCFS_REQ_MISC       = 39, /* arg = byte offset; chunked "<minor> <name>"
+                                 * list of macOS's miscellaneous character devices
+                                 * (derived from /dev, as XNU has no misc-device
+                                 * registry). Linux /proc/misc. */
 };
 
 /*

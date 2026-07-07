@@ -228,6 +228,8 @@ static char  *g_mod_blob = NULL;   /* Linux format (/proc/modules) */
 static size_t g_mod_blob_len = 0;
 static char  *g_dev_blob = NULL;   /* Linux format (/proc/devices) */
 static size_t g_dev_blob_len = 0;
+static char  *g_misc_blob = NULL;  /* Linux format (/proc/misc) */
+static size_t g_misc_blob_len = 0;
 static char  *g_alloc_blob = NULL; /* Linux format (/proc/allocinfo) */
 static size_t g_alloc_blob_len = 0;
 static char  *g_vmalloc_blob = NULL; /* Linux format (/proc/vmallocinfo) */
@@ -516,6 +518,133 @@ build_devices_blob(char **blobp, size_t *lenp)
             if (rows[i].is_block) {
                 fprintf(f, "%3d %s\n", rows[i].major, rows[i].name);
             }
+        }
+        fclose(f);
+        *blobp = buf;
+        *lenp = sz;
+    }
+    free(rows);
+}
+
+/*
+ * /proc/misc support. Linux's /proc/misc lists the miscellaneous character-
+ * device drivers registered under the shared misc major (10), one "<minor>
+ * <name>" line each. macOS has no misc-device framework, but it does have plenty
+ * of miscellaneous single-purpose character devices (autofs, bpf, dtrace,
+ * fsevents, klog, oslog, pf, auditpipe, ...); like /proc/devices we recover them
+ * from /dev. We list one row per driver family (the device name truncated at its
+ * first digit), excluding the families that belong to other subsystems - block/
+ * disk, tty/pty, and the standard mem/std streams (which Linux keeps under their
+ * own majors, not misc). The minor is the family's lowest device minor.
+ */
+struct miscrow {
+    int  minor;
+    char name[64];
+};
+
+/* True for device families that are NOT miscellaneous (handled by tty, disk, or
+ * mem majors on Linux, so excluded from /proc/misc). */
+static int
+misc_excluded(const char *fam)
+{
+    static const char *const prefixes[] = {
+        "tty", "pty", "cu", "disk", "rdisk", NULL
+    };
+    static const char *const exact[] = {
+        "null", "zero", "mem", "kmem", "random", "urandom", "console", "ptmx",
+        "stdin", "stdout", "stderr", "fd", NULL
+    };
+    for (int i = 0; prefixes[i] != NULL; i++) {
+        if (strncmp(fam, prefixes[i], strlen(prefixes[i])) == 0) {
+            return 1;
+        }
+    }
+    for (int i = 0; exact[i] != NULL; i++) {
+        if (strcmp(fam, exact[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int
+miscrow_cmp(const void *a, const void *b)
+{
+    const struct miscrow *ra = a, *rb = b;
+    if (ra->minor != rb->minor) {
+        return (ra->minor > rb->minor) - (ra->minor < rb->minor);
+    }
+    return strcmp(ra->name, rb->name);
+}
+
+static void
+build_misc_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    DIR *dir = opendir("/dev");
+    if (dir == NULL) {
+        return;
+    }
+
+    struct miscrow *rows = NULL;
+    size_t nrows = 0, cap = 0;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL) {
+        if (de->d_name[0] == '.') {
+            continue;
+        }
+        char path[1100];
+        snprintf(path, sizeof(path), "/dev/%s", de->d_name);
+        struct stat st;
+        if (lstat(path, &st) != 0 || !S_ISCHR(st.st_mode)) {
+            continue;                   /* misc devices are character devices */
+        }
+
+        char fam[64];
+        dev_family(de->d_name, fam, sizeof(fam));
+        if (fam[0] == '\0' || misc_excluded(fam)) {
+            continue;
+        }
+
+        int dmin = minor(st.st_rdev);
+        /* One row per family, keeping the lowest minor. */
+        size_t j;
+        for (j = 0; j < nrows; j++) {
+            if (strcmp(rows[j].name, fam) == 0) {
+                if (dmin < rows[j].minor) {
+                    rows[j].minor = dmin;
+                }
+                break;
+            }
+        }
+        if (j == nrows) {
+            if (nrows == cap) {
+                size_t ncap = (cap == 0) ? 32 : cap * 2;
+                struct miscrow *nr = realloc(rows, ncap * sizeof(*nr));
+                if (nr == NULL) {
+                    break;
+                }
+                rows = nr;
+                cap = ncap;
+            }
+            rows[nrows].minor = dmin;
+            strlcpy(rows[nrows].name, fam, sizeof(rows[nrows].name));
+            nrows++;
+        }
+    }
+    closedir(dir);
+
+    qsort(rows, nrows, sizeof(*rows), miscrow_cmp);
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *f   = open_memstream(&buf, &sz);
+    if (f != NULL) {
+        for (size_t i = 0; i < nrows; i++) {
+            fprintf(f, "%3d %s\n", rows[i].minor, rows[i].name);
         }
         fclose(f);
         *blobp = buf;
@@ -2424,6 +2553,14 @@ main(__unused int argc, __unused char **argv)
                 build_devices_blob(&g_dev_blob, &g_dev_blob_len);
             }
             blob_slice(g_dev_blob, g_dev_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_MISC: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_misc_blob(&g_misc_blob, &g_misc_blob_len);
+            }
+            blob_slice(g_misc_blob, g_misc_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_ALLOCINFO: {
