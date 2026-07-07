@@ -2360,8 +2360,9 @@ procfs_dodevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
  * /proc/bus/pci/devices - Linux PCI device table. macOS exposes PCI through the
  * IORegistry (IOPCIDevice), not a /proc-style table, so the procfsd daemon
  * enumerates those devices and formats the Linux line for each - bus/devfn,
- * vendor/device id and the device name from IOKit. IRQ, base addresses and
- * region sizes are not read from IOKit here and report 0. Streamed in chunks
+ * vendor/device id, the device name, and the base addresses/region sizes
+ * (BAR0..5 + expansion ROM, with region flags) from IOKit's assigned-addresses.
+ * IRQ reports 0 (macOS has no legacy per-device IRQ line). Streamed in chunks
  * like /proc/devices.
  */
 int

@@ -35,7 +35,7 @@ Linux-compatible files and helpers:
 |`apm`         | Linux-style advanced-power-management line (AC status, battery charge %, time remaining) mapped from IOKit power sources via the `procfsd` daemon |
 |`bootconfig`  | Linux-style boot configuration; macOS has no bootconfig blob, so this is the boot loader's boot-args (`kern.bootargs`) with the Linux `# Parameters from bootloader:` note |
 |`buddyinfo`   | Linux-style buddy-allocator free-block counts; macOS is not a buddy allocator, so the free page count is decomposed into buddy orders (maximally coalesced) — one `Node 0, zone Normal` line |
-|`bus/`        | Bus-specific info directory; macOS provides PCI via IOKit — `bus/pci/devices` is the Linux PCI device table (bus/devfn, vendor:device, name from `IOPCIDevice`; via the `procfsd` daemon) |
+|`bus/`        | Bus-specific info directory; macOS provides PCI via IOKit — `bus/pci/devices` is the Linux PCI device table (bus/devfn, vendor:device, name, and BAR base addresses/sizes from `IOPCIDevice`; via the `procfsd` daemon) |
 |`byname/`     | Directory of symbolic links, one per process, named by command name |
 |`cmdline`     | Kernel boot command line (macOS boot-args / `kern.bootargs`; Linux's root `/proc/cmdline`) |
 |`cpuinfo`     | Linux-style CPU information (text)                                   |
@@ -417,10 +417,13 @@ line; all-zero without a connected daemon.
 `bus/pci/devices`, the PCI device table. macOS exposes PCI through the IORegistry
 (`IOPCIDevice`) rather than a `/proc` table, so the `procfsd` daemon enumerates
 those devices and formats the Linux line for each: `bus/devfn`, `vendor/device`
-id (from the little-endian `vendor-id`/`device-id` properties) and the device
-name (from `IOName`), in the standard 18-field layout. IRQ, base addresses and
-region sizes are not read from IOKit and report 0. `/proc/bus` and `/proc/bus/pci`
-are plain directories; the `devices` listing is empty without a connected daemon.
+id (from the little-endian `vendor-id`/`device-id` properties), the device name
+(from `IOName`), and the base addresses and region sizes — BAR0–5 plus the
+expansion ROM, with the PCI region flags (I/O, 64-bit, prefetchable) in the low
+bits — decoded from IOKit's `assigned-addresses` property, in the standard
+18-field layout. IRQ reports 0: macOS routes PCI interrupts via MSI/GIC with no
+legacy per-device IRQ line to report. `/proc/bus` and `/proc/bus/pci` are plain
+directories; the `devices` listing is empty without a connected daemon.
 
 `dma` lists the ISA DMA channels in use (one `%2d: <owner>` line per busy channel
 of the legacy 8237 controller). This is an x86-only concept: on x86 the DMA

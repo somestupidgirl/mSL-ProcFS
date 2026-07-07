@@ -1291,16 +1291,89 @@ build_vmallocinfo_blob(char **blobp, size_t *lenp)
  * /proc/bus/pci/devices support. macOS exposes PCI devices through the
  * IORegistry (IOPCIDevice), not a /proc table, so enumerate them and format the
  * Linux line for each. bus/dev/func come from the "pcidebug" property, the ids
- * from the little-endian "vendor-id"/"device-id" CFData, and the name from
- * "IOName". IRQ, base addresses and sizes are not read here and report 0.
+ * from the little-endian "vendor-id"/"device-id" CFData, the name from "IOName",
+ * and the base addresses/sizes (BAR0..5 + expansion ROM, with region flags) from
+ * the "assigned-addresses" property (see pci_read_bars). IRQ reports 0: macOS
+ * routes PCI interrupts (MSI/GIC) with no legacy per-device IRQ line to report.
  */
 struct pcirow {
     uint32_t bus;       /* PCI bus number */
     uint32_t devfn;     /* (device << 3) | function */
     uint32_t vendor;
     uint32_t device;
+    uint64_t base[7];   /* BAR0..5 + expansion ROM, low bits = region flags */
+    uint64_t size[7];   /* matching region sizes */
     char     name[64];
 };
+
+/* Little-endian 32-bit load from a byte pointer. */
+static uint32_t
+pci_le32(const UInt8 *b)
+{
+    return (uint32_t)b[0] | ((uint32_t)b[1] << 8) |
+           ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+}
+
+/*
+ * Fill base[]/size[] (BAR0..5 + expansion ROM) from an IOPCIDevice's IOKit
+ * "assigned-addresses" property - an array of OpenFirmware PCI address tuples
+ * (five 32-bit cells each: phys.hi with the BAR register in its low byte and the
+ * space/prefetch flags up top, then the 64-bit address and 64-bit size, low cell
+ * first). The base value carries the Linux/PCI BAR low-bit flags (bit0 = I/O
+ * space, bit2 = 64-bit memory, bit3 = prefetchable) as /proc/bus/pci expects.
+ */
+static void
+pci_read_bars(io_registry_entry_t e, uint64_t base[7], uint64_t size[7])
+{
+    for (int i = 0; i < 7; i++) {
+        base[i] = 0;
+        size[i] = 0;
+    }
+    CFTypeRef p = IORegistryEntryCreateCFProperty(e, CFSTR("assigned-addresses"),
+        kCFAllocatorDefault, 0);
+    if (p == NULL) {
+        return;
+    }
+    if (CFGetTypeID(p) == CFDataGetTypeID()) {
+        CFDataRef d = (CFDataRef)p;
+        CFIndex n = CFDataGetLength(d);
+        const UInt8 *b = CFDataGetBytePtr(d);
+        for (CFIndex off = 0; off + 20 <= n; off += 20) {
+            uint32_t c0 = pci_le32(b + off);
+            uint64_t addr = (uint64_t)pci_le32(b + off + 4) |
+                            ((uint64_t)pci_le32(b + off + 8) << 32);
+            uint64_t sz   = (uint64_t)pci_le32(b + off + 12) |
+                            ((uint64_t)pci_le32(b + off + 16) << 32);
+            uint32_t reg      = c0 & 0xff;
+            uint32_t space    = (c0 >> 24) & 0x3;   /* 1=I/O 2=mem32 3=mem64 */
+            uint32_t prefetch = (c0 >> 30) & 0x1;
+
+            int idx = -1;
+            if (reg >= 0x10 && reg <= 0x24 && ((reg - 0x10) & 0x3) == 0) {
+                idx = (int)((reg - 0x10) / 4);      /* BAR0..5 */
+            } else if (reg == 0x30) {
+                idx = 6;                            /* expansion ROM */
+            }
+            if (idx < 0) {
+                continue;
+            }
+            uint64_t flags = 0;
+            if (space == 1) {
+                flags |= 0x1;                       /* PCI_BASE_ADDRESS_SPACE_IO */
+            } else {
+                if (space == 3) {
+                    flags |= 0x4;                   /* MEM_TYPE_64 */
+                }
+                if (prefetch) {
+                    flags |= 0x8;                   /* MEM_PREFETCH */
+                }
+            }
+            base[idx] = addr | flags;
+            size[idx] = sz;
+        }
+    }
+    CFRelease(p);
+}
 
 /* Read a little-endian CFData registry property (vendor-id etc.) as a u32. */
 static uint32_t
@@ -1383,6 +1456,7 @@ build_pci_blob(char **blobp, size_t *lenp)
         r->devfn  = ((dev & 0x1f) << 3) | (func & 0x07);
         r->vendor = pci_cfdata_le32(e, CFSTR("vendor-id")) & 0xffff;
         r->device = pci_cfdata_le32(e, CFSTR("device-id")) & 0xffff;
+        pci_read_bars(e, r->base, r->size);
         pci_cfstr(e, CFSTR("IOName"), r->name, sizeof(r->name));
 
         IOObjectRelease(e);
@@ -1399,8 +1473,12 @@ build_pci_blob(char **blobp, size_t *lenp)
             struct pcirow *r = &rows[i];
             fprintf(f, "%02x%02x\t%04x%04x\t%x",
                 r->bus, r->devfn, r->vendor, r->device, 0 /* irq */);
-            for (int j = 0; j < 7; j++) { fprintf(f, "\t%16llx", 0ULL); }  /* base addrs */
-            for (int j = 0; j < 7; j++) { fprintf(f, "\t%16llx", 0ULL); }  /* sizes */
+            for (int j = 0; j < 7; j++) {
+                fprintf(f, "\t%16llx", (unsigned long long)r->base[j]);
+            }
+            for (int j = 0; j < 7; j++) {
+                fprintf(f, "\t%16llx", (unsigned long long)r->size[j]);
+            }
             fprintf(f, "\t%s\n", r->name);
         }
         fclose(f);
