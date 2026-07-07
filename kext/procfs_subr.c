@@ -90,6 +90,7 @@ procfs_allocvp(pfstype pfs_type)
     case PFSkcore:          /* FALLTHROUGH */
     case PFSkmsg:           /* FALLTHROUGH */
     case PFSlastkmsg:       /* FALLTHROUGH */
+    case PFSksyms:          /* FALLTHROUGH */
         return VREG;
 
     case PFSprocnamedir:    /* FALLTHROUGH */
@@ -157,7 +158,8 @@ procfs_node_type_has_pid(pfstype node_type)
         && node_type != PFSscsi && node_type != PFSsysvipc
         && node_type != PFSpagetypeinfo && node_type != PFSslabinfo
         && node_type != PFSlocks && node_type != PFSkcore
-        && node_type != PFSkmsg && node_type != PFSlastkmsg;
+        && node_type != PFSkmsg && node_type != PFSlastkmsg
+        && node_type != PFSksyms;
 }
 
 /*

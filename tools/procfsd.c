@@ -30,6 +30,13 @@
 #include <sys/mount.h>
 #include <dirent.h>
 #include <limits.h>
+#include <ctype.h>
+#include <sys/mman.h>
+#include <mach-o/loader.h>
+#include <mach-o/nlist.h>
+#include <mach-o/fat.h>
+#include <mach/machine.h>
+#include <libkern/OSByteOrder.h>
 #include <libproc.h>
 #include <sys/proc_info.h>
 #include <sys/sysctl.h>
@@ -240,6 +247,8 @@ static char  *g_kmsg_blob = NULL;  /* kernel message buffer snapshot (/proc/kmsg
 static size_t g_kmsg_blob_len = 0;
 static char  *g_lastkmsg_blob = NULL; /* newest kernel panic report (/proc/last_kmsg) */
 static size_t g_lastkmsg_blob_len = 0;
+static char  *g_ksyms_blob = NULL; /* kernel symbol table, nm-style (/proc/ksyms) */
+static size_t g_ksyms_blob_len = 0;
 static char  *g_fb_blob = NULL;    /* Linux format (/proc/fb) */
 static size_t g_fb_blob_len = 0;
 static char  *g_nfs_blob = NULL;   /* NFS exports (/proc/fs/nfs/exports) */
@@ -790,6 +799,222 @@ build_last_kmsg_blob(char **blobp, size_t *lenp)
     }
     *blobp = buf;
     *lenp  = got;
+}
+
+/*
+ * /proc/ksyms support. Linux's /proc/ksyms (and the modern /proc/kallsyms) list
+ * the kernel symbol table as "address type name" lines. macOS does not expose
+ * the running kernel's symbols at runtime (KASLR/SIP), but it ships the exact
+ * on-disk kernel image whose symbol table we can read: on Apple Silicon each SoC
+ * has its own thin arm64e Mach-O at /System/Library/Kernels/kernel.release.<soc>
+ * (the running one is named in kern.version, e.g. RELEASE_ARM64_T8103 -> t8103);
+ * on Intel it is the thin x86_64 /System/Library/Kernels/kernel. We parse that
+ * image's LC_SYMTAB and emit nm-style lines. These are the static (unslid) link
+ * addresses - KASLR still holds - and are already public in the world-readable
+ * kernel image. The kext zeroes the address column for non-root readers, mirror-
+ * ing Linux's kptr_restrict. Only symbols whose Mach-O cputype matches the
+ * daemon's (== the running kernel's) architecture are emitted.
+ */
+#if defined(__arm64__)
+#define PROCFS_NATIVE_CPUTYPE   CPU_TYPE_ARM64
+#elif defined(__x86_64__)
+#define PROCFS_NATIVE_CPUTYPE   CPU_TYPE_X86_64
+#else
+#define PROCFS_NATIVE_CPUTYPE   0
+#endif
+
+/* Path of the on-disk image for the running kernel, arch/SoC-specific. */
+static void
+ksyms_kernel_path(char *out, size_t outsz)
+{
+    out[0] = '\0';
+
+    /* The running kernel names its SoC in kern.version ("...ARM64_T8103"). The
+     * matching image is kernel.release.<soc> (lowercased). */
+    char   ver[512];
+    size_t vs = sizeof(ver);
+    if (sysctlbyname("kern.version", ver, &vs, NULL, 0) == 0) {
+        char *m = strstr(ver, "ARM64_");
+        if (m != NULL) {
+            m += 6;
+            char soc[32];
+            int  j = 0;
+            while (*m != '\0' && isalnum((unsigned char)*m) &&
+                   j < (int)sizeof(soc) - 1) {
+                soc[j++] = (char)tolower((unsigned char)*m++);
+            }
+            soc[j] = '\0';
+            if (j > 0) {
+                snprintf(out, outsz,
+                    "/System/Library/Kernels/kernel.release.%s", soc);
+                struct stat st;
+                if (stat(out, &st) == 0) {
+                    return;
+                }
+                out[0] = '\0';
+            }
+        }
+    }
+
+    /* Fallback: the plain kernel image (native on Intel; on Apple Silicon it is
+     * the x86_64 build, which ksyms_emit_macho() rejects on arch mismatch). */
+    snprintf(out, outsz, "/System/Library/Kernels/kernel");
+}
+
+/* Emit nm-style "address type name" lines for a thin Mach-O in [base, base+size). */
+static void
+ksyms_emit_macho(const uint8_t *base, size_t size, FILE *out)
+{
+    if (size < sizeof(struct mach_header_64)) {
+        return;
+    }
+    const struct mach_header_64 *mh = (const void *)base;
+    if (mh->magic != MH_MAGIC_64 ||
+        mh->cputype != PROCFS_NATIVE_CPUTYPE) {
+        return;                         /* wrong format or wrong architecture */
+    }
+
+    /* First pass: map 1-based section index -> nm type letter, find LC_SYMTAB. */
+    char section_type[256];
+    memset(section_type, 't', sizeof(section_type));
+    int nsect = 0;
+    const struct symtab_command *st = NULL;
+
+    const uint8_t *p   = base + sizeof(*mh);
+    const uint8_t *end = base + size;
+    for (uint32_t i = 0; i < mh->ncmds; i++) {
+        if (p + sizeof(struct load_command) > end) {
+            break;
+        }
+        const struct load_command *lc = (const void *)p;
+        if (lc->cmdsize < sizeof(*lc) || p + lc->cmdsize > end) {
+            break;
+        }
+        if (lc->cmd == LC_SYMTAB) {
+            st = (const void *)p;
+        } else if (lc->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *sg = (const void *)p;
+            const struct section_64 *sec = (const void *)(sg + 1);
+            for (uint32_t s = 0; s < sg->nsects; s++) {
+                nsect++;
+                if (nsect < 256) {
+                    char t = 't';
+                    if (strncmp(sec[s].segname, "__DATA", 6) == 0) {
+                        t = (strstr(sec[s].sectname, "bss") != NULL ||
+                             strstr(sec[s].sectname, "common") != NULL)
+                            ? 'b' : 'd';
+                    }
+                    section_type[nsect] = t;
+                }
+            }
+        }
+        p += lc->cmdsize;
+    }
+
+    if (st == NULL || st->nsyms == 0 ||
+        (size_t)st->symoff + (size_t)st->nsyms * sizeof(struct nlist_64) > size ||
+        (size_t)st->stroff + st->strsize > size) {
+        return;
+    }
+
+    const struct nlist_64 *syms = (const void *)(base + st->symoff);
+    const char            *strs = (const char *)(base + st->stroff);
+
+    for (uint32_t i = 0; i < st->nsyms; i++) {
+        const struct nlist_64 *n = &syms[i];
+        if ((n->n_type & N_STAB) != 0) {
+            continue;                   /* debug symbol */
+        }
+        uint32_t strx = n->n_un.n_strx;
+        if (strx == 0 || strx >= st->strsize) {
+            continue;
+        }
+        const char *name = strs + strx;
+        if (name[0] == '\0') {
+            continue;
+        }
+
+        char    type;
+        uint8_t ntype = n->n_type & N_TYPE;
+        if (ntype == N_UNDF || ntype == N_PBUD) {
+            continue;                   /* undefined - not listed */
+        } else if (ntype == N_ABS) {
+            type = 'a';
+        } else if (ntype == N_INDR) {
+            type = 'i';
+        } else if (ntype == N_SECT) {
+            type = section_type[n->n_sect];   /* n_sect is uint8_t, 0..255 */
+        } else {
+            type = '?';
+        }
+        if ((n->n_type & N_EXT) != 0) {
+            type = (char)toupper((unsigned char)type);
+        }
+
+        fprintf(out, "%016llx %c %s\n",
+            (unsigned long long)n->n_value, type, name);
+    }
+}
+
+static void
+build_ksyms_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    char path[PATH_MAX];
+    ksyms_kernel_path(path, sizeof(path));
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        return;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || st.st_size <= 0) {
+        close(fd);
+        return;
+    }
+    uint8_t *base = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (base == MAP_FAILED) {
+        return;
+    }
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *out = open_memstream(&buf, &sz);
+    if (out != NULL) {
+        uint32_t magic = *(const uint32_t *)base;
+        if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
+            /* Universal image: pick the slice matching the running arch. */
+            const struct fat_header *fh = (const void *)base;
+            uint32_t nfat = OSSwapBigToHostInt32(fh->nfat_arch);
+            const struct fat_arch *fa = (const void *)(base + sizeof(*fh));
+            for (uint32_t i = 0; i < nfat; i++) {
+                cpu_type_t ct = (cpu_type_t)OSSwapBigToHostInt32(fa[i].cputype);
+                if (ct == PROCFS_NATIVE_CPUTYPE) {
+                    uint32_t off = OSSwapBigToHostInt32(fa[i].offset);
+                    uint32_t asz = OSSwapBigToHostInt32(fa[i].size);
+                    if ((size_t)off + asz <= (size_t)st.st_size) {
+                        ksyms_emit_macho(base + off, asz, out);
+                    }
+                    break;
+                }
+            }
+        } else if (magic == MH_MAGIC_64) {
+            ksyms_emit_macho(base, (size_t)st.st_size, out);
+        }
+        fclose(out);
+    }
+    munmap(base, (size_t)st.st_size);
+
+    if (buf != NULL && sz > 0) {
+        *blobp = buf;
+        *lenp  = sz;
+    } else {
+        free(buf);
+    }
 }
 
 /*
@@ -2238,6 +2463,14 @@ main(__unused int argc, __unused char **argv)
                 build_last_kmsg_blob(&g_lastkmsg_blob, &g_lastkmsg_blob_len);
             }
             blob_slice(g_lastkmsg_blob, g_lastkmsg_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_KSYMS: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_ksyms_blob(&g_ksyms_blob, &g_ksyms_blob_len);
+            }
+            blob_slice(g_ksyms_blob, g_ksyms_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_FBDEVICES: {

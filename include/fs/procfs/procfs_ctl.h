@@ -122,6 +122,11 @@ enum {
     PROCFS_REQ_LAST_KMSG  = 36, /* arg = byte offset; chunked contents of the
                                  * newest kernel panic report - macOS's only
                                  * cross-boot kernel log. Linux /proc/last_kmsg. */
+    PROCFS_REQ_KSYMS      = 37, /* arg = byte offset; chunked "addr type name"
+                                 * symbol table of the running kernel image
+                                 * (arch/SoC-specific Mach-O). Linux /proc/ksyms.
+                                 * Real addresses; the kext zeroes them for
+                                 * non-root readers (kptr_restrict). */
 };
 
 /*

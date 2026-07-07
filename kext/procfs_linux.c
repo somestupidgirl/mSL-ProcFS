@@ -2725,6 +2725,61 @@ procfs_dolast_kmsg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ct
 }
 
 /*
+ * /proc/ksyms - Linux's kernel symbol table ("address type name" per line; the
+ * modern name is /proc/kallsyms). macOS does not expose the running kernel's
+ * symbols at runtime (KASLR/SIP), but the procfsd daemon reads the symbol table
+ * from the running kernel's on-disk image (the arch/SoC-specific Mach-O under
+ * /System/Library/Kernels) and returns nm-style lines with the static (unslid)
+ * link addresses. To mirror Linux's kptr_restrict we apply the reader's
+ * privilege here: root sees the real addresses; every other reader gets the
+ * address column zeroed (symbol names and types remain). Empty without a
+ * connected daemon. Chunked transfer like /proc/vmallocinfo.
+ */
+int
+procfs_doksyms(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_KSYMS, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+
+    /*
+     * kptr_restrict: only root sees real kernel addresses. For any other reader,
+     * zero the 16-hex address that begins every "address type name" line.
+     */
+    kauth_cred_t cred = vfs_context_ucred(ctx);
+    if (cred == NULL || kauth_cred_getuid(cred) != 0) {
+        char *d = sbuf_data(&sb);
+        int   n = sbuf_len(&sb);
+        boolean_t at_line_start = TRUE;
+        for (int i = 0; i < n; i++) {
+            if (at_line_start && d[i] != '\n') {
+                for (int k = 0; k < 16 && (i + k) < n &&
+                     d[i + k] != ' ' && d[i + k] != '\n'; k++) {
+                    d[i + k] = '0';
+                }
+                at_line_start = FALSE;
+            }
+            if (d[i] == '\n') {
+                at_line_start = TRUE;
+            }
+        }
+    }
+
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/ide/drivers - the registered IDE (ATA/PATA) driver modules. macOS has no
  * IDE subsystem: internal storage is NVMe, and other block devices (AHCI/SATA,
  * USB, Thunderbolt) are handled through IOKit and surfaced by /proc/partitions

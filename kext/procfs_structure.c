@@ -106,6 +106,10 @@ procfs_structure_init(void)
         pfssnode_t *last_kmsg = add_node(root_node, "last_kmsg",
                         PFSlastkmsg, next_node_id++, 0, 0, NULL, procfs_dolast_kmsg);
 
+        // Linux-style /proc/ksyms (kernel symbol table via procfsd; kptr_restrict).
+        pfssnode_t *ksyms = add_node(root_node, "ksyms",
+                        PFSksyms, next_node_id++, 0, 0, NULL, procfs_doksyms);
+
         // Linux-style /proc/locks (held byte-range file locks, walked per-vnode).
         pfssnode_t *locks = add_node(root_node, "locks",
                         PFSlocks, next_node_id++, 0, 0, NULL, procfs_dolocks);
