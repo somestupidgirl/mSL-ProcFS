@@ -21,7 +21,7 @@ private let kLinuxVerConf = "/var/db/procfs.linux_version"  // persisted spoof-v
 
 // Spoofable Linux kernel releases. Order MUST match procfs_linux_versions[] in
 // the kext (index here + 1 == the procfs.linux_version sysctl value; 0 = None).
-private let kLinuxVersions = ["6.12.0", "6.6.0", "6.1.0", "5.15.0", "5.10.0"]
+private let kLinuxVersions = ["6.12.0", "6.6.0", "6.1.0", "5.15.0", "5.10.0", "2.5.47"]
 
 // MARK: - Shell helpers
 

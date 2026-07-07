@@ -607,6 +607,7 @@ extern void procfs_sysctl_unregister(void);
 extern int         procfs_linux_version;
 extern const char *procfs_spoofed_release(void);          /* release str or NULL */
 extern int         procfs_build_linux_version(char *buf, size_t sz); /* len, or 0 */
+extern boolean_t   procfs_node_version_hidden(const char *name);     /* ksyms/kallsyms gate */
 
 /*
  * Functions that return the data size for a node.

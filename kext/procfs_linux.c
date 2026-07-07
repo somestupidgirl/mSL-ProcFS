@@ -1756,6 +1756,7 @@ static const char *const procfs_linux_versions[] = {
     "6.1.0",
     "5.15.0",
     "5.10.0",
+    "2.5.47",       /* pre-kallsyms era: exposes /proc/ksyms, not /proc/kallsyms */
 };
 #define PROCFS_LINUX_NVERSIONS \
     (int)(sizeof(procfs_linux_versions) / sizeof(procfs_linux_versions[0]))
@@ -1768,6 +1769,46 @@ procfs_spoofed_release(void)
         return procfs_linux_versions[v];
     }
     return NULL;
+}
+
+/* Dotted-decimal version compare: returns <0, 0, or >0. */
+static int
+procfs_vercmp(const char *a, const char *b)
+{
+    while (*a != '\0' || *b != '\0') {
+        int na = 0, nb = 0;
+        while (*a >= '0' && *a <= '9') { na = na * 10 + (*a++ - '0'); }
+        while (*b >= '0' && *b <= '9') { nb = nb * 10 + (*b++ - '0'); }
+        if (na != nb) { return na - nb; }
+        if (*a == '.') { a++; }
+        if (*b == '.') { b++; }
+    }
+    return 0;
+}
+
+/*
+ * Version-spoof gating for the kernel symbol-table nodes. Linux renamed
+ * /proc/ksyms to /proc/kallsyms after 2.5.47, so when a Linux release is spoofed
+ * we expose only the era-appropriate name: <= 2.5.47 shows ksyms (hides
+ * kallsyms), > 2.5.47 shows kallsyms (hides ksyms). With no spoof (native
+ * Darwin) both nodes are visible. Other nodes are never hidden.
+ */
+boolean_t
+procfs_node_version_hidden(const char *name)
+{
+    const char *rel = procfs_spoofed_release();
+    if (rel == NULL) {
+        return FALSE;                       /* spoof off -> show both */
+    }
+    boolean_t is_ksyms    = (strcmp(name, "ksyms") == 0);
+    boolean_t is_kallsyms = (strcmp(name, "kallsyms") == 0);
+    if (!is_ksyms && !is_kallsyms) {
+        return FALSE;
+    }
+    if (procfs_vercmp(rel, "2.5.47") <= 0) {
+        return is_kallsyms;                 /* ksyms era: hide kallsyms */
+    }
+    return is_ksyms;                        /* kallsyms era: hide ksyms */
 }
 
 int

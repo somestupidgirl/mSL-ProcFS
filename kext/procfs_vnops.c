@@ -301,6 +301,12 @@ procfs_vnop_lookup(struct vnop_lookup_args *ap)
         TAILQ_FOREACH(match_node, &dir_snode->psn_children, psn_next) {
             assert(error == 0);
             pfstype node_type = match_node->psn_node_type;
+            // A version-spoofed release hides ksyms or kallsyms; a hidden node
+            // must not resolve (looks up as ENOENT), matching its absence in
+            // readdir.
+            if (procfs_node_version_hidden(match_node->psn_name)) {
+                continue;
+            }
             if (strcmp(name, match_node->psn_name) == 0) {
                 // Name matched. This is the droid we are looking for. Construct the
                 // node_id from the matched node and the pid and object id of the
@@ -522,6 +528,14 @@ procfs_vnop_readdir(struct vnop_readdir_args *ap)
 
     pfssnode_t *snode = TAILQ_FIRST(&dir_snode->psn_children);
     while (snode != NULL && uio_resid(uio) > 0) {
+        // A version-spoofed release hides ksyms or kallsyms. Skip a hidden node
+        // entirely (it contributes nothing to the directory offset), so it is
+        // consistently absent across resumed readdir calls.
+        if (procfs_node_version_hidden(snode->psn_name)) {
+            snode = TAILQ_NEXT(snode, psn_next);
+            continue;
+        }
+
         // We inherit the parent directory's pid and thread id for
         // most cases. This is overridden only for entries of type
         // PROCFS_PROCDIR and PROCFS_THREADDIR.
