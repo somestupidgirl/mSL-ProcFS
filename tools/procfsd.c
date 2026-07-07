@@ -29,6 +29,7 @@
 #include <sys/resource.h>
 #include <sys/mount.h>
 #include <dirent.h>
+#include <limits.h>
 #include <libproc.h>
 #include <sys/proc_info.h>
 #include <sys/sysctl.h>
@@ -237,6 +238,8 @@ static char  *g_slab_blob = NULL;  /* Linux format (/proc/slabinfo) */
 static size_t g_slab_blob_len = 0;
 static char  *g_kmsg_blob = NULL;  /* kernel message buffer snapshot (/proc/kmsg) */
 static size_t g_kmsg_blob_len = 0;
+static char  *g_lastkmsg_blob = NULL; /* newest kernel panic report (/proc/last_kmsg) */
+static size_t g_lastkmsg_blob_len = 0;
 static char  *g_fb_blob = NULL;    /* Linux format (/proc/fb) */
 static size_t g_fb_blob_len = 0;
 static char  *g_nfs_blob = NULL;   /* NFS exports (/proc/fs/nfs/exports) */
@@ -710,6 +713,83 @@ build_kmsg_blob(char **blobp, size_t *lenp)
     } else {
         free(buf);
     }
+}
+
+/*
+ * /proc/last_kmsg support. Linux/Android's /proc/last_kmsg is the kernel log
+ * from before the last reboot, preserved in a persistent RAM console. macOS has
+ * no such per-reboot RAM console, but it does persist one cross-boot kernel log:
+ * the kernel panic report. So we return the newest panic report from
+ * /Library/Logs/DiagnosticReports (the "panic-full-*.panic" files, world-
+ * readable), which is exactly what last_kmsg is used for - diagnosing the prior
+ * crash. Empty when the machine has no panic report (a clean history), matching
+ * a Linux box with no preserved previous-boot log.
+ */
+#define PROCFS_PANIC_DIR "/Library/Logs/DiagnosticReports"
+
+static void
+build_last_kmsg_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    DIR *d = opendir(PROCFS_PANIC_DIR);
+    if (d == NULL) {
+        return;
+    }
+
+    char   newest[PATH_MAX] = { 0 };
+    time_t newest_mtime = 0;
+    struct dirent *de;
+    while ((de = readdir(d)) != NULL) {
+        if (de->d_name[0] == '.') {
+            continue;               /* skip ., .., and .contents.panic index */
+        }
+        size_t nl = strlen(de->d_name);
+        if (nl < 6 || strcmp(de->d_name + nl - 6, ".panic") != 0) {
+            continue;               /* kernel panics are the *.panic reports */
+        }
+
+        char path[PATH_MAX];
+        snprintf(path, sizeof(path), "%s/%s", PROCFS_PANIC_DIR, de->d_name);
+        struct stat st;
+        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+            continue;
+        }
+        if (st.st_mtime >= newest_mtime) {
+            newest_mtime = st.st_mtime;
+            strlcpy(newest, path, sizeof(newest));
+        }
+    }
+    closedir(d);
+
+    if (newest[0] == '\0') {
+        return;                     /* no panic report -> empty node */
+    }
+
+    struct stat st;
+    if (stat(newest, &st) != 0 || st.st_size <= 0) {
+        return;
+    }
+    char *buf = malloc((size_t)st.st_size);
+    if (buf == NULL) {
+        return;
+    }
+    FILE *f = fopen(newest, "rb");
+    if (f == NULL) {
+        free(buf);
+        return;
+    }
+    size_t got = fread(buf, 1, (size_t)st.st_size, f);
+    fclose(f);
+
+    if (got == 0) {
+        free(buf);
+        return;
+    }
+    *blobp = buf;
+    *lenp  = got;
 }
 
 /*
@@ -2150,6 +2230,14 @@ main(__unused int argc, __unused char **argv)
                 build_kmsg_blob(&g_kmsg_blob, &g_kmsg_blob_len);
             }
             blob_slice(g_kmsg_blob, g_kmsg_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_LAST_KMSG: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_last_kmsg_blob(&g_lastkmsg_blob, &g_lastkmsg_blob_len);
+            }
+            blob_slice(g_lastkmsg_blob, g_lastkmsg_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_FBDEVICES: {

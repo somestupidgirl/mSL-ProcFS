@@ -119,6 +119,9 @@ enum {
     PROCFS_REQ_KMSG       = 35, /* arg = byte offset; chunked snapshot of the
                                  * kernel message buffer (proc_kmsgbuf, the data
                                  * behind dmesg), needs root. Linux /proc/kmsg. */
+    PROCFS_REQ_LAST_KMSG  = 36, /* arg = byte offset; chunked contents of the
+                                 * newest kernel panic report - macOS's only
+                                 * cross-boot kernel log. Linux /proc/last_kmsg. */
 };
 
 /*

@@ -136,6 +136,7 @@ typedef enum {
     PFSlocks,       /* Linux-style /proc/locks (held byte-range file locks) */
     PFSkcore,       /* Linux-style /proc/kcore (ELF64 core header; no memory) */
     PFSkmsg,        /* Linux-style /proc/kmsg (kernel message buffer snapshot) */
+    PFSlastkmsg,    /* Linux-style /proc/last_kmsg (newest kernel panic report) */
 } pfstype;
 
 typedef struct pfsnode pfsnode_t;
@@ -488,7 +489,7 @@ procfs_is_directory_type(pfstype type)
         && type != PFSscsi && type != PFSsysvipc
         && type != PFSpagetypeinfo && type != PFSslabinfo
         && type != PFSlocks && type != PFSkcore
-        && type != PFSkmsg;
+        && type != PFSkmsg && type != PFSlastkmsg;
 }
 
 /* Gets the pid_t for the process corresponding to a pfsnode_t. */
@@ -697,6 +698,7 @@ extern int procfs_doslabinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dolocks(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dokcore(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dokmsg(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dolast_kmsg(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosysvipc_sem(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosysvipc_shm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);

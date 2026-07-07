@@ -2696,6 +2696,35 @@ procfs_dokmsg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/last_kmsg - Linux/Android's kernel log from before the last reboot. macOS
+ * has no per-reboot RAM console, but it does persist one cross-boot kernel log:
+ * the kernel panic report. The procfsd daemon returns the newest panic report
+ * (the world-readable panic-full-*.panic files under /Library/Logs/
+ * DiagnosticReports) - exactly what last_kmsg is used for, diagnosing the prior
+ * crash. Empty when there is no panic report (or without a connected daemon).
+ * Chunked transfer like /proc/kmsg.
+ */
+int
+procfs_dolast_kmsg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_LAST_KMSG, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/ide/drivers - the registered IDE (ATA/PATA) driver modules. macOS has no
  * IDE subsystem: internal storage is NVMe, and other block devices (AHCI/SATA,
  * USB, Thunderbolt) are handled through IOKit and surfaced by /proc/partitions

@@ -102,6 +102,10 @@ procfs_structure_init(void)
         pfssnode_t *kmsg = add_node(root_node, "kmsg",
                         PFSkmsg, next_node_id++, 0, 0, NULL, procfs_dokmsg);
 
+        // Linux-style /proc/last_kmsg (newest kernel panic report via procfsd).
+        pfssnode_t *last_kmsg = add_node(root_node, "last_kmsg",
+                        PFSlastkmsg, next_node_id++, 0, 0, NULL, procfs_dolast_kmsg);
+
         // Linux-style /proc/locks (held byte-range file locks, walked per-vnode).
         pfssnode_t *locks = add_node(root_node, "locks",
                         PFSlocks, next_node_id++, 0, 0, NULL, procfs_dolocks);
