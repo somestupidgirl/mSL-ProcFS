@@ -124,6 +124,7 @@ Each directory named for a process id represents one process on the system. By d
 |`taskinfo` | Info for the process’s Mach task | `struct proc_taskinfo` — exact via the `procfsd` daemon; falls back to the kext’s partial fill without it (see Feature status) |
 |`threads/`   | Thread directory (BSD name), one subdirectory per thread id | directory |
 |`tty`      | Controlling terminal device path (e.g. `/dev/ttys001`) | text |
+|`wchan`    | Linux (`CONFIG_KALLSYMS`) shows the kernel symbol a task is blocked in, or `0` if not blocked. Resolving it needs the blocked thread's kernel PC symbolized; macOS exposes no supported way for a third-party kext to obtain it (`struct thread` is opaque, and this filesystem avoids its config-fragile field offsets), so this always reports `0` — the value Linux gives for a task that is not blocked | text (no trailing newline) |
 
 The `fd` directory contains one entry for each file that the process has open. Each entry is a directory that’s numbered for the corresponding file descriptor. Within each subdirectory you’ll find two files called `details` and `socket`. The `details` file contains a `vnode_fdinfowithpath` structure, which contains information about the file including its path name if it is a file system file. If the file is a socket endpoint, you can read a `socket_fdinfo` structure from the `socket` file.
 

@@ -2189,6 +2189,23 @@ procfs_docpu(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/<pid>/wchan - on Linux (with CONFIG_KALLSYMS) this is the kernel symbol a
+ * task is blocked in, or "0" if it is running/not blocked. Resolving it needs the
+ * blocked thread's kernel PC (or continuation) symbolized against the kernel
+ * symbol table. macOS exposes no supported way for a third-party kext to obtain a
+ * task's blocked kernel PC: struct thread is opaque, and this filesystem
+ * deliberately avoids its config-fragile field offsets (the thread enumerator in
+ * procfs_subr.c walks the BSD uthread list and uses only the thread_tid() KPI,
+ * never a struct thread field). So we report "0" - the value Linux gives for a
+ * task that is not blocked - with no trailing newline, matching Linux's format.
+ */
+int
+procfs_dowchan(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    return procfs_copy_data("0", 1, uio);
+}
+
+/*
  * /proc/<pid>/status in Linux text form - the linux-mode rendering of the status
  * node (native mode emits the binary proc_bsdshortinfo). Reuses procfs_pctx for
  * the process context and the credential for the Uid/Gid rows.

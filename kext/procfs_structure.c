@@ -444,6 +444,7 @@ procfs_structure_init(void)
 
         // Auxiliary vector (XNU's apple[] array - the macOS auxv equivalent).
         add_file(one_proc_dir, "auxv", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doauxv);
+        add_file(one_proc_dir, "wchan", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dowchan);
 
         // --- Per thread files.
         add_file(one_thread_dir, "info", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, sizeof(struct proc_threadinfo), NULL, procfs_dothreadinfo);
