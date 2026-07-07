@@ -94,6 +94,10 @@ procfs_structure_init(void)
         pfssnode_t *loadavg = add_node(root_node, "loadavg",
                         PFSloadavg, next_node_id++, 0, 0, NULL, procfs_doloadavg);
 
+        // Linux-style /proc/kcore (ELF64 core header only; no kernel memory).
+        pfssnode_t *kcore = add_node(root_node, "kcore",
+                        PFSkcore, next_node_id++, 0, 0, NULL, procfs_dokcore);
+
         // Linux-style /proc/locks (held byte-range file locks, walked per-vnode).
         pfssnode_t *locks = add_node(root_node, "locks",
                         PFSlocks, next_node_id++, 0, 0, NULL, procfs_dolocks);

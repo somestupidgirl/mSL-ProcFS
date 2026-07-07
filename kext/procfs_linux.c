@@ -2579,10 +2579,10 @@ procfs_doslabinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
 /*
  * /proc/locks - Linux's table of the byte-range (advisory) file locks the kernel
  * currently holds. XNU stores these per-vnode (vp->v_lockf) with no global
- * registry, so libkprocfs walks every process's open descriptors down to their
- * vnodes and emits each vnode's lock list once - an in-kernel forward-port over
- * the same proc->fd->vnode path as /proc/<pid>/fd. macOS has no mandatory
- * locking, so every lock is reported ADVISORY. Empty (no locks held) is normal.
+ * registry, so libkprocfs enumerates every vnode with the public VFS iterators
+ * (vfs_iterate over mounts, vnode_iterate over each mount's vnodes) and emits
+ * each vnode's lock list - a fully in-kernel forward-port. macOS has no
+ * mandatory locking, so every lock is reported ADVISORY. Empty is normal.
  */
 int
 procfs_dolocks(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
@@ -2598,6 +2598,73 @@ procfs_dolocks(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
     return error;
+}
+
+/*
+ * /proc/kcore - on Linux this is an ELF core image of the running kernel's
+ * virtual memory, used by debuggers (gdb/crash) to inspect the live kernel.
+ * macOS deliberately does not expose kernel memory to userspace: SIP, KASLR and
+ * PPL/KTRR protect it, there is no KPI to enumerate or safely read arbitrary
+ * kernel VM, and doing so would defeat the kernel's security model. So we emit a
+ * well-formed but empty core: a valid ELF64 ET_CORE header for the running
+ * architecture with zero program headers, i.e. no PT_LOAD segments and no memory
+ * exposed. Tools still recognise it (`file`/`readelf -h` report an ELF 64-bit
+ * core file), matching a hardened/lockdown Linux where /proc/kcore is present
+ * but restricted. This is the whole file - 64 bytes, the ELF header alone.
+ */
+
+/* ELF constants (avoid depending on <elf.h> in the kext build). */
+#define PROCFS_ET_CORE       4
+#define PROCFS_EV_CURRENT    1
+#define PROCFS_ELFCLASS64    2
+#define PROCFS_ELFDATA2LSB   1
+#if defined(__arm64__) || defined(__aarch64__)
+#define PROCFS_EM_NATIVE     183         /* EM_AARCH64 */
+#elif defined(__x86_64__)
+#define PROCFS_EM_NATIVE     62          /* EM_X86_64 */
+#else
+#define PROCFS_EM_NATIVE     0           /* EM_NONE */
+#endif
+
+struct procfs_elf64_ehdr {
+    uint8_t  e_ident[16];
+    uint16_t e_type;
+    uint16_t e_machine;
+    uint32_t e_version;
+    uint64_t e_entry;
+    uint64_t e_phoff;
+    uint64_t e_shoff;
+    uint32_t e_flags;
+    uint16_t e_ehsize;
+    uint16_t e_phentsize;
+    uint16_t e_phnum;
+    uint16_t e_shentsize;
+    uint16_t e_shnum;
+    uint16_t e_shstrndx;
+} __attribute__((packed));
+
+int
+procfs_dokcore(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct procfs_elf64_ehdr eh;
+    bzero(&eh, sizeof(eh));
+
+    eh.e_ident[0] = 0x7f;               /* ELF magic */
+    eh.e_ident[1] = 'E';
+    eh.e_ident[2] = 'L';
+    eh.e_ident[3] = 'F';
+    eh.e_ident[4] = PROCFS_ELFCLASS64;
+    eh.e_ident[5] = PROCFS_ELFDATA2LSB;
+    eh.e_ident[6] = PROCFS_EV_CURRENT;
+    /* e_ident[7..15] (OS/ABI + padding) stay zero. */
+
+    eh.e_type    = PROCFS_ET_CORE;
+    eh.e_machine = PROCFS_EM_NATIVE;
+    eh.e_version = PROCFS_EV_CURRENT;
+    eh.e_ehsize  = (uint16_t)sizeof(eh);
+    /* No program/section headers: no kernel memory is exposed. */
+
+    return procfs_copy_data((const char *)&eh, sizeof(eh), uio);
 }
 
 /*
