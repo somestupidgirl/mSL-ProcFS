@@ -614,17 +614,20 @@ procfs_fd_socket(proc_t p, int fd, socket_t *sop, struct proc_fileinfo *fi)
 /*
  * procfs_build_locks() - render Linux's /proc/locks: the byte-range (advisory)
  * file locks the kernel currently holds. XNU keeps these per-vnode on
- * vp->v_lockf with no global registry, so - reusing the same proc->fd->vnode
- * path as the /proc/<pid>/fd forward-port - we walk every process's open
- * descriptors and, for each vnode-backed one whose vnode carries locks, emit
- * that vnode's lock list once (vnodes are de-duplicated: many descriptors and
- * processes can share a file). The v_lockf list is protected by the vnode mutex
- * vp->v_lock, which we take with the public lck_mtx KPI - this forward-ports
- * vnode_lock(), which is exactly lck_mtx_lock(&vp->v_lock), rather than linking
- * the private symbol. We snapshot the locks under the mutex, drop it, then
- * format outside it (sbuf and vnode_getattr must not run under v_lock). The line
- * layout mirrors Linux's fs/locks.c; XNU has no mandatory locking, so every lock
- * is ADVISORY:
+ * vp->v_lockf with no global registry. Rather than the fd-table walk (whose
+ * struct filedesc offsets drift across kernel point-releases - which is why
+ * /proc/<pid>/fd itself prefers the daemon), we enumerate vnodes directly with
+ * the public VFS iterators: vfs_iterate() over every mount, vnode_iterate() over
+ * each mount's vnodes. Each vnode is visited once (no de-dup needed) with a
+ * reference held for the duration of the callout, so we can safely read its
+ * v_lockf list and, if non-empty, resolve its identity with vnode_getattr().
+ *
+ * The v_lockf list is protected by the vnode mutex vp->v_lock, which we take
+ * with the public lck_mtx KPI - this forward-ports vnode_lock(), which is
+ * exactly lck_mtx_lock(&vp->v_lock), rather than linking the private symbol. We
+ * snapshot the locks under the mutex, drop it, then format outside it (sbuf and
+ * vnode_getattr must not run under v_lock). The line layout mirrors Linux's
+ * fs/locks.c; XNU has no mandatory locking, so every lock is ADVISORY:
  *
  *   <n>: <POSIX|FLOCK|OFDLCK>  ADVISORY  <READ|WRITE>  <pid>  <maj:min:ino> <start> <end|EOF>
  *
@@ -640,150 +643,111 @@ struct procfs_lockrec {
 
 #define PROCFS_LOCKS_MAX          1024   /* global cap on emitted lock lines */
 #define PROCFS_LOCKS_PER_VNODE    128    /* cap on locks snapshotted per vnode */
-#define PROCFS_LOCKS_MAX_VNODES   256    /* de-dup table size for locked vnodes */
-#define PROCFS_LOCKS_MAX_PID      99999  /* macOS pid range, as procfs_get_pids */
 
 /* Defined by the kext (procfs_node.c); libkprocfs links into the same kext. */
 extern OSMallocTag procfs_osmalloc_tag;
 
+struct procfs_locks_ctx {
+    struct sbuf           *sb;
+    vfs_context_t          ctx;
+    struct procfs_lockrec *recs;    /* scratch: PROCFS_LOCKS_PER_VNODE entries */
+    int                    emitted;
+};
+
+/* Called by vnode_iterate() for each vnode of a mount, with a reference held. */
+static int
+procfs_locks_vnode_cb(struct vnode *vp, void *arg)
+{
+    struct procfs_locks_ctx *c = arg;
+
+    if (c->emitted >= PROCFS_LOCKS_MAX) {
+        return VNODE_RETURNED_DONE;
+    }
+
+    /* Snapshot this vnode's lock list under the vnode mutex. */
+    int nrec = 0;
+    lck_mtx_lock(&vp->v_lock);
+    if (vp->v_lockf != NULL) {
+        for (struct lockf *lf = vp->v_lockf;
+             lf != NULL && nrec < PROCFS_LOCKS_PER_VNODE;
+             lf = lf->lf_next) {
+            c->recs[nrec].flags = lf->lf_flags;
+            c->recs[nrec].type  = lf->lf_type;
+            c->recs[nrec].start = lf->lf_start;
+            c->recs[nrec].end   = lf->lf_end;
+            c->recs[nrec].pid   = (lf->lf_owner != NULL)
+                ? proc_pid(lf->lf_owner) : -1;
+            nrec++;
+        }
+    }
+    lck_mtx_unlock(&vp->v_lock);
+
+    if (nrec > 0) {
+        /* maj:min:inode of the file, resolved once per vnode. */
+        uint32_t vmaj = 0, vmin = 0;
+        uint64_t ino  = 0;
+        struct vnode_attr va;
+        VATTR_INIT(&va);
+        VATTR_WANTED(&va, va_fileid);
+        VATTR_WANTED(&va, va_fsid);
+        if (vnode_getattr(vp, &va, c->ctx) == 0) {
+            if (VATTR_IS_SUPPORTED(&va, va_fileid)) {
+                ino = va.va_fileid;
+            }
+            if (VATTR_IS_SUPPORTED(&va, va_fsid)) {
+                vmaj = major(va.va_fsid);
+                vmin = minor(va.va_fsid);
+            }
+        }
+
+        for (int r = 0; r < nrec && c->emitted < PROCFS_LOCKS_MAX; r++) {
+            const char *class =
+                (c->recs[r].flags & F_OFD_LOCK) ? "OFDLCK" :
+                (c->recs[r].flags & F_FLOCK)    ? "FLOCK " : "POSIX ";
+            const char *mode =
+                (c->recs[r].type == F_WRLCK) ? "WRITE" :
+                (c->recs[r].type == F_RDLCK) ? "READ"  : "UNLCK";
+
+            sbuf_printf(c->sb,
+                "%d: %s ADVISORY  %-5s %d %02x:%02x:%llu %lld ",
+                ++c->emitted, class, mode, (int)c->recs[r].pid,
+                vmaj, vmin, (unsigned long long)ino,
+                (long long)c->recs[r].start);
+            if (c->recs[r].end == -1) {
+                sbuf_printf(c->sb, "EOF\n");
+            } else {
+                sbuf_printf(c->sb, "%lld\n", (long long)c->recs[r].end);
+            }
+        }
+    }
+
+    return VNODE_RETURNED;   /* release the reference vnode_iterate holds */
+}
+
+/* Called by vfs_iterate() for each mount: iterate that mount's vnodes. */
+static int
+procfs_locks_mount_cb(struct mount *mp, void *arg)
+{
+    struct procfs_locks_ctx *c = arg;
+    (void)vnode_iterate(mp, 0, procfs_locks_vnode_cb, arg);
+    return (c->emitted >= PROCFS_LOCKS_MAX) ? VFS_RETURNED_DONE : VFS_RETURNED;
+}
+
 void
 procfs_build_locks(struct sbuf *sb, vfs_context_t ctx)
 {
-    const uint32_t seen_sz = PROCFS_LOCKS_MAX_VNODES * sizeof(vnode_t);
     const uint32_t recs_sz = PROCFS_LOCKS_PER_VNODE * sizeof(struct procfs_lockrec);
-    vnode_t *seen = OSMalloc(seen_sz, procfs_osmalloc_tag);
     struct procfs_lockrec *recs = OSMalloc(recs_sz, procfs_osmalloc_tag);
-    if (seen == NULL || recs == NULL) {
-        if (seen != NULL) {
-            OSFree(seen, seen_sz, procfs_osmalloc_tag);
-        }
-        if (recs != NULL) {
-            OSFree(recs, recs_sz, procfs_osmalloc_tag);
-        }
+    if (recs == NULL) {
         return;
     }
-    bzero(seen, seen_sz);
 
-    int nseen = 0;
-    int emitted = 0;
+    struct procfs_locks_ctx c = {
+        .sb = sb, .ctx = ctx, .recs = recs, .emitted = 0,
+    };
 
-    for (pid_t pid = 0;
-         pid <= PROCFS_LOCKS_MAX_PID && emitted < PROCFS_LOCKS_MAX; pid++) {
-        proc_t p = proc_find(pid);
-        if (p == PROC_NULL) {
-            continue;
-        }
+    (void)vfs_iterate(0, procfs_locks_mount_cb, &c);
 
-        size_t cap = 0;
-        if (proc_fdlist(p, NULL, &cap) != 0 || cap == 0) {
-            proc_rele(p);
-            continue;
-        }
-        uint32_t fdl_sz = (uint32_t)(cap * sizeof(struct proc_fdinfo));
-        struct proc_fdinfo *fdl = OSMalloc(fdl_sz, procfs_osmalloc_tag);
-        if (fdl == NULL) {
-            proc_rele(p);
-            continue;
-        }
-        size_t n = cap;
-        if (proc_fdlist(p, fdl, &n) != 0) {
-            n = 0;
-        }
-
-        for (size_t i = 0; i < n && emitted < PROCFS_LOCKS_MAX; i++) {
-            if (fdl[i].proc_fdtype != PROX_FDTYPE_VNODE) {
-                continue;
-            }
-
-            vnode_t  vp  = NULLVP;
-            uint32_t vid = 0;
-            struct proc_fileinfo fi;
-            if (procfs_fd_vnode_info(p, fdl[i].proc_fd, &vp, &vid, &fi) != 0) {
-                continue;
-            }
-            if (vnode_getwithvid(vp, vid) != 0) {
-                continue;               /* vnode reclaimed since capture */
-            }
-
-            /* Snapshot this vnode's lock list under the vnode mutex, once. */
-            int       nrec = 0;
-            boolean_t dup  = FALSE;
-
-            lck_mtx_lock(&vp->v_lock);
-            if (vp->v_lockf != NULL) {
-                for (int s = 0; s < nseen; s++) {
-                    if (seen[s] == vp) {
-                        dup = TRUE;
-                        break;
-                    }
-                }
-                if (!dup) {
-                    for (struct lockf *lf = vp->v_lockf;
-                         lf != NULL && nrec < PROCFS_LOCKS_PER_VNODE;
-                         lf = lf->lf_next) {
-                        recs[nrec].flags = lf->lf_flags;
-                        recs[nrec].type  = lf->lf_type;
-                        recs[nrec].start = lf->lf_start;
-                        recs[nrec].end   = lf->lf_end;
-                        recs[nrec].pid   = (lf->lf_owner != NULL)
-                            ? proc_pid(lf->lf_owner) : -1;
-                        nrec++;
-                    }
-                }
-            }
-            lck_mtx_unlock(&vp->v_lock);
-
-            if (!dup && nrec > 0 && nseen < PROCFS_LOCKS_MAX_VNODES) {
-                seen[nseen++] = vp;
-            }
-
-            if (nrec > 0) {
-                /* maj:min:inode of the file, resolved once per vnode. */
-                uint32_t vmaj = 0, vmin = 0;
-                uint64_t ino  = 0;
-                struct vnode_attr va;
-                VATTR_INIT(&va);
-                VATTR_WANTED(&va, va_fileid);
-                VATTR_WANTED(&va, va_fsid);
-                if (vnode_getattr(vp, &va, ctx) == 0) {
-                    if (VATTR_IS_SUPPORTED(&va, va_fileid)) {
-                        ino = va.va_fileid;
-                    }
-                    if (VATTR_IS_SUPPORTED(&va, va_fsid)) {
-                        vmaj = major(va.va_fsid);
-                        vmin = minor(va.va_fsid);
-                    }
-                }
-
-                for (int r = 0; r < nrec && emitted < PROCFS_LOCKS_MAX; r++) {
-                    const char *class =
-                        (recs[r].flags & F_OFD_LOCK) ? "OFDLCK" :
-                        (recs[r].flags & F_FLOCK)    ? "FLOCK " : "POSIX ";
-                    const char *mode =
-                        (recs[r].type == F_WRLCK) ? "WRITE" :
-                        (recs[r].type == F_RDLCK) ? "READ"  : "UNLCK";
-
-                    sbuf_printf(sb,
-                        "%d: %s ADVISORY  %-5s %d %02x:%02x:%llu %lld ",
-                        ++emitted, class, mode, (int)recs[r].pid,
-                        vmaj, vmin, (unsigned long long)ino,
-                        (long long)recs[r].start);
-                    if (recs[r].end == -1) {
-                        sbuf_printf(sb, "EOF\n");
-                    } else {
-                        sbuf_printf(sb, "%lld\n", (long long)recs[r].end);
-                    }
-                }
-            }
-
-            vnode_put(vp);
-        }
-
-        OSFree(fdl, fdl_sz, procfs_osmalloc_tag);
-        proc_rele(p);
-    }
-
-    OSFree(seen, seen_sz, procfs_osmalloc_tag);
     OSFree(recs, recs_sz, procfs_osmalloc_tag);
 }
 
