@@ -235,6 +235,8 @@ static char  *g_msg_blob = NULL;   /* Linux format (/proc/sysvipc/msg) */
 static size_t g_msg_blob_len = 0;
 static char  *g_slab_blob = NULL;  /* Linux format (/proc/slabinfo) */
 static size_t g_slab_blob_len = 0;
+static char  *g_kmsg_blob = NULL;  /* kernel message buffer snapshot (/proc/kmsg) */
+static size_t g_kmsg_blob_len = 0;
 static char  *g_fb_blob = NULL;    /* Linux format (/proc/fb) */
 static size_t g_fb_blob_len = 0;
 static char  *g_nfs_blob = NULL;   /* NFS exports (/proc/fs/nfs/exports) */
@@ -669,6 +671,45 @@ build_slabinfo_blob(char **blobp, size_t *lenp)
         namesCnt * sizeof(*names));
     vm_deallocate(mach_task_self(), (vm_address_t)info,
         infoCnt * sizeof(*info));
+}
+
+/*
+ * /proc/kmsg support. Linux's /proc/kmsg is the kernel log ring buffer (the data
+ * behind dmesg). macOS keeps the same classic kernel printf buffer; its size is
+ * kern.msgbuf and its contents are read with proc_kmsgbuf() - the root-only
+ * libproc call dmesg(1) uses (an unprivileged reader gets EPERM, which is why
+ * this goes through the daemon). We take a snapshot: read the whole buffer once
+ * and hand it back as text. This is not Linux's blocking/consuming interface -
+ * repeated reads return the current buffer, like `dmesg` rather than a drain.
+ */
+static void
+build_kmsg_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    int    bufsize = 0;
+    size_t osize   = sizeof(bufsize);
+    if (sysctlbyname("kern.msgbuf", &bufsize, &osize, NULL, 0) != 0 ||
+        bufsize <= 0) {
+        return;
+    }
+
+    char *buf = malloc((size_t)bufsize);
+    if (buf == NULL) {
+        return;
+    }
+
+    /* proc_kmsgbuf() fills buf with the message buffer and returns the byte
+     * count (0 or negative on failure, e.g. without root). */
+    int n = proc_kmsgbuf(buf, (uint32_t)bufsize);
+    if (n > 0) {
+        *blobp = buf;
+        *lenp  = (size_t)((n <= bufsize) ? n : bufsize);
+    } else {
+        free(buf);
+    }
 }
 
 /*
@@ -2101,6 +2142,14 @@ main(__unused int argc, __unused char **argv)
                 build_slabinfo_blob(&g_slab_blob, &g_slab_blob_len);
             }
             blob_slice(g_slab_blob, g_slab_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_KMSG: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_kmsg_blob(&g_kmsg_blob, &g_kmsg_blob_len);
+            }
+            blob_slice(g_kmsg_blob, g_kmsg_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_FBDEVICES: {

@@ -2668,6 +2668,34 @@ procfs_dokcore(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/kmsg - Linux's kernel log buffer (the data behind dmesg). macOS keeps
+ * the same classic kernel printf buffer, read with proc_kmsgbuf() - a root-only
+ * libproc call - so the procfsd daemon (running as root) takes a snapshot and
+ * streams it here. Unlike Linux's blocking/consuming interface, repeated reads
+ * return the current buffer (like `dmesg`, not a drain). Empty without a
+ * connected daemon. Chunked transfer like /proc/vmallocinfo.
+ */
+int
+procfs_dokmsg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(PROCFS_REQ_KMSG, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/ide/drivers - the registered IDE (ATA/PATA) driver modules. macOS has no
  * IDE subsystem: internal storage is NVMe, and other block devices (AHCI/SATA,
  * USB, Thunderbolt) are handled through IOKit and surfaced by /proc/partitions

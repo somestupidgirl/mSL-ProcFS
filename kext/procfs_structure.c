@@ -98,6 +98,10 @@ procfs_structure_init(void)
         pfssnode_t *kcore = add_node(root_node, "kcore",
                         PFSkcore, next_node_id++, 0, 0, NULL, procfs_dokcore);
 
+        // Linux-style /proc/kmsg (kernel message buffer snapshot via procfsd).
+        pfssnode_t *kmsg = add_node(root_node, "kmsg",
+                        PFSkmsg, next_node_id++, 0, 0, NULL, procfs_dokmsg);
+
         // Linux-style /proc/locks (held byte-range file locks, walked per-vnode).
         pfssnode_t *locks = add_node(root_node, "locks",
                         PFSlocks, next_node_id++, 0, 0, NULL, procfs_dolocks);

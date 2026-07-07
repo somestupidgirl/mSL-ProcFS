@@ -116,6 +116,9 @@ enum {
     PROCFS_REQ_SLABINFO   = 34, /* arg = byte offset; chunked Linux /proc/slabinfo
                                  * - one row per zone allocator zone (mach_zone_info,
                                  * the data behind zprint), needs host priv port. */
+    PROCFS_REQ_KMSG       = 35, /* arg = byte offset; chunked snapshot of the
+                                 * kernel message buffer (proc_kmsgbuf, the data
+                                 * behind dmesg), needs root. Linux /proc/kmsg. */
 };
 
 /*
