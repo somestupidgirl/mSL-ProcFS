@@ -2577,6 +2577,30 @@ procfs_doslabinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
 }
 
 /*
+ * /proc/locks - Linux's table of the byte-range (advisory) file locks the kernel
+ * currently holds. XNU stores these per-vnode (vp->v_lockf) with no global
+ * registry, so libkprocfs walks every process's open descriptors down to their
+ * vnodes and emits each vnode's lock list once - an in-kernel forward-port over
+ * the same proc->fd->vnode path as /proc/<pid>/fd. macOS has no mandatory
+ * locking, so every lock is reported ADVISORY. Empty (no locks held) is normal.
+ */
+int
+procfs_dolocks(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 2048, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    procfs_build_locks(&sb, ctx);
+
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/ide/drivers - the registered IDE (ATA/PATA) driver modules. macOS has no
  * IDE subsystem: internal storage is NVMe, and other block devices (AHCI/SATA,
  * USB, Thunderbolt) are handled through IOKit and surfaced by /proc/partitions

@@ -29,4 +29,13 @@ extern int procfs_fd_vnode_info(proc_t p, int fd, struct vnode **vpp, uint32_t *
  */
 extern int procfs_fd_socket(proc_t p, int fd, socket_t *sop, struct proc_fileinfo *fi);
 
+/*
+ * Enumerate the system's held byte-range file locks into an sbuf in Linux's
+ * /proc/locks format. Walks every process's descriptors down to their vnodes
+ * and emits each vnode's advisory-lock list once (de-duplicated), snapshotting
+ * under the vnode mutex. See procfs_build_locks() for details.
+ */
+struct sbuf;
+extern void procfs_build_locks(struct sbuf *sb, vfs_context_t ctx);
+
 #endif

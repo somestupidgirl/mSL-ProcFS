@@ -56,6 +56,7 @@ Linux-compatible files and helpers:
 |`irq/`        | IRQ-to-CPU affinity directory; `default_smp_affinity`/`_list` (all online CPUs). macOS routes IRQs via the AIC with no user-settable per-IRQ affinity, so per-IRQ subdirectories are omitted |
 |`isapnp`      | ISA Plug-and-Play device listing; the ISA bus is obsolete and macOS has no ISA/ISA-PnP support on any platform, so this is empty, as on a modern Linux host with no ISA hardware |
 |`loadavg`     | Linux-style load averages (text; the kernel's true 1/5/15-minute values via the `procfsd` daemon's `getloadavg`, `0.00` without a connected daemon — see below) |
+|`locks`       | Linux-style table of held byte-range (advisory) file locks. XNU keeps these per-vnode (`vp->v_lockf`) with no global registry, so `libkprocfs` walks every process's open descriptors down to their vnodes and emits each vnode's lock list once (de-duplicated), snapshotting under the vnode mutex — a fully in-kernel forward-port over the same `proc`→`fd`→`vnode` path as `/proc/<pid>/fd`. macOS has no mandatory locking, so every lock is `ADVISORY`. Empty (no locks held) is the normal result |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
 |`modules`     | Linux-style `/proc/modules` view of the same loaded kexts (`name size refcount deps state address`) |
 |`mounts`      | The Linux name for the same mounted-filesystem table as `mtab`       |

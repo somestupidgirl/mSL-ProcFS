@@ -94,6 +94,10 @@ procfs_structure_init(void)
         pfssnode_t *loadavg = add_node(root_node, "loadavg",
                         PFSloadavg, next_node_id++, 0, 0, NULL, procfs_doloadavg);
 
+        // Linux-style /proc/locks (held byte-range file locks, walked per-vnode).
+        pfssnode_t *locks = add_node(root_node, "locks",
+                        PFSlocks, next_node_id++, 0, 0, NULL, procfs_dolocks);
+
         // Linux-compatible /proc/meminfo
         pfssnode_t *meminfo = add_node(root_node, "meminfo",
                         PFSmeminfo, next_node_id++, 0, 0, NULL, procfs_domeminfo);
