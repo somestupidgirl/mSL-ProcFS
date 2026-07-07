@@ -2856,6 +2856,20 @@ procfs_doide_drivers(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
 }
 
 /*
+ * /proc/misc - Linux's registry of miscellaneous character devices: the drivers
+ * that share the misc major (10), one "<minor> <name>" line each (rtc, hpet,
+ * fuse, kvm, watchdog, ...). macOS has no misc-device framework - its character
+ * devices are spread across dynamically assigned majors with no shared "misc"
+ * registry - so nothing maps here and the file is empty, as on a Linux host with
+ * no misc drivers registered. (System-wide device majors are in /proc/devices.)
+ */
+int
+procfs_domisc(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    return procfs_copy_data("", 0, uio);
+}
+
+/*
  * /proc/isapnp - Linux's ISA Plug-and-Play device listing (detected ISA PnP
  * cards and their logical devices/resources). The ISA bus is long obsolete and
  * macOS has no ISA or ISA-PnP support on any platform, so there are no ISA PnP

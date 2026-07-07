@@ -124,6 +124,10 @@ procfs_structure_init(void)
         pfssnode_t *meminfo = add_node(root_node, "meminfo",
                         PFSmeminfo, next_node_id++, 0, 0, NULL, procfs_domeminfo);
 
+        // Linux-style /proc/misc (misc char-device registry; none on macOS).
+        pfssnode_t *misc = add_node(root_node, "misc",
+                        PFSmisc, next_node_id++, 0, 0, NULL, procfs_domisc);
+
         // Linux-compatible /proc/mtab
         pfssnode_t *mtab = add_node(root_node, "mtab",
                         PFSmtab, next_node_id++, 0, 0, NULL, procfs_domtab);

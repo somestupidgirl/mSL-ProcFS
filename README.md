@@ -63,6 +63,7 @@ Linux-compatible files and helpers:
 |`loadavg`     | Linux-style load averages (text; the kernel's true 1/5/15-minute values via the `procfsd` daemon's `getloadavg`, `0.00` without a connected daemon — see below) |
 |`locks`       | Linux-style table of held byte-range (advisory) file locks. XNU keeps these per-vnode (`vp->v_lockf`) with no global registry, so `libkprocfs` enumerates every vnode directly with the public VFS iterators (`vfs_iterate` over mounts, `vnode_iterate` over each mount's vnodes) and emits each vnode's lock list, snapshotting under the vnode mutex — a fully in-kernel forward-port. macOS has no mandatory locking, so every lock is `ADVISORY`. Empty (no locks held) is the normal result |
 |`meminfo`     | Linux-style memory summary (text; `MemFree` is the FreeBSD non-wired estimate on Apple Silicon — see below) |
+|`misc`        | Linux-style registry of miscellaneous character devices (the drivers sharing the misc major 10 — `rtc`, `hpet`, `fuse`, `kvm`, `watchdog`, …). macOS has no misc-device framework (its character devices span dynamically assigned majors with no shared "misc" registry), so this is empty, as on a Linux host with no misc drivers registered. System-wide device majors are in `/proc/devices` |
 |`modules`     | Linux-style `/proc/modules` view of the same loaded kexts (`name size refcount deps state address`) |
 |`mounts`      | The Linux name for the same mounted-filesystem table as `mtab`       |
 |`mtab`        | Linux-style mounted-filesystem table (`/etc/mtab` format: `device mountpoint fstype options 0 0`) |
