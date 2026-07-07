@@ -127,6 +127,11 @@ enum {
                                  * (arch/SoC-specific Mach-O). Linux /proc/ksyms.
                                  * Real addresses; the kext zeroes them for
                                  * non-root readers (kptr_restrict). */
+    PROCFS_REQ_KALLSYMS   = 38, /* arg = byte offset; like PROCFS_REQ_KSYMS but
+                                 * also the non-exported symbol names recovered
+                                 * from the XNU source (emitted with address 0,
+                                 * as the stripped kernel has no address for
+                                 * them). Linux /proc/kallsyms. */
 };
 
 /*

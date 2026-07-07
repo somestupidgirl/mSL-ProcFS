@@ -2735,15 +2735,21 @@ procfs_dolast_kmsg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ct
  * address column zeroed (symbol names and types remain). Empty without a
  * connected daemon. Chunked transfer like /proc/vmallocinfo.
  */
-int
-procfs_doksyms(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+/*
+ * Shared body for /proc/ksyms and /proc/kallsyms: fetch the symbol-table blob
+ * for req_type from the daemon and copy it out, applying kptr_restrict (only
+ * root sees real kernel addresses; every other reader gets the 16-hex address
+ * column zeroed - names and types remain).
+ */
+static int
+procfs_do_symtab(uio_t uio, vfs_context_t ctx, int req_type)
 {
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_KSYMS, &sb);
+    int error = procfs_ctl_request_blob(req_type, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
@@ -2751,10 +2757,6 @@ procfs_doksyms(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 
     sbuf_finish(&sb);
 
-    /*
-     * kptr_restrict: only root sees real kernel addresses. For any other reader,
-     * zero the 16-hex address that begins every "address type name" line.
-     */
     kauth_cred_t cred = vfs_context_ucred(ctx);
     if (cred == NULL || kauth_cred_getuid(cred) != 0) {
         char *d = sbuf_data(&sb);
@@ -2777,6 +2779,25 @@ procfs_doksyms(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
     return error;
+}
+
+int
+procfs_doksyms(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+{
+    return procfs_do_symtab(uio, ctx, PROCFS_REQ_KSYMS);
+}
+
+/*
+ * /proc/kallsyms - the modern, fuller symbol table. Same as /proc/ksyms (the
+ * exported kernel symbols with real addresses) plus the non-exported symbol
+ * names the daemon recovers from the XNU source; macOS ships the arm64 kernel
+ * stripped of those locals, so they carry address 0. kptr_restrict applies as
+ * for ksyms. Empty without a connected daemon.
+ */
+int
+procfs_dokallsyms(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+{
+    return procfs_do_symtab(uio, ctx, PROCFS_REQ_KALLSYMS);
 }
 
 /*

@@ -110,6 +110,12 @@ procfs_structure_init(void)
         pfssnode_t *ksyms = add_node(root_node, "ksyms",
                         PFSksyms, next_node_id++, 0, 0, NULL, procfs_doksyms);
 
+        // Modern Linux's /proc/kallsyms: the exported kernel symbols (as /proc/
+        // ksyms) plus the non-exported names recovered from the XNU source.
+        // Reuses the PFSksyms node class; its own handler serves the fuller set.
+        pfssnode_t *kallsyms = add_node(root_node, "kallsyms",
+                        PFSksyms, next_node_id++, 0, 0, NULL, procfs_dokallsyms);
+
         // Linux-style /proc/locks (held byte-range file locks, walked per-vnode).
         pfssnode_t *locks = add_node(root_node, "locks",
                         PFSlocks, next_node_id++, 0, 0, NULL, procfs_dolocks);

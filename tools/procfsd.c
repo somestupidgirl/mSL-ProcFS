@@ -38,6 +38,7 @@
 #include <mach/machine.h>
 #include <libkern/OSByteOrder.h>
 #include <libproc.h>
+#include "kallsyms_extra.h"     /* generated: non-exported names for /proc/kallsyms */
 #include <sys/proc_info.h>
 #include <sys/sysctl.h>
 #include <sys/ipc.h>
@@ -249,6 +250,8 @@ static char  *g_lastkmsg_blob = NULL; /* newest kernel panic report (/proc/last_
 static size_t g_lastkmsg_blob_len = 0;
 static char  *g_ksyms_blob = NULL; /* kernel symbol table, nm-style (/proc/ksyms) */
 static size_t g_ksyms_blob_len = 0;
+static char  *g_kallsyms_blob = NULL; /* ksyms + non-exported names (/proc/kallsyms) */
+static size_t g_kallsyms_blob_len = 0;
 static char  *g_fb_blob = NULL;    /* Linux format (/proc/fb) */
 static size_t g_fb_blob_len = 0;
 static char  *g_nfs_blob = NULL;   /* NFS exports (/proc/fs/nfs/exports) */
@@ -956,13 +959,11 @@ ksyms_emit_macho(const uint8_t *base, size_t size, FILE *out)
     }
 }
 
+/* Emit the running kernel image's symbol table (nm-style) to out. Shared by
+ * /proc/ksyms and /proc/kallsyms. */
 static void
-build_ksyms_blob(char **blobp, size_t *lenp)
+ksyms_emit_kernel(FILE *out)
 {
-    free(*blobp);
-    *blobp = NULL;
-    *lenp = 0;
-
     char path[PATH_MAX];
     ksyms_kernel_path(path, sizeof(path));
 
@@ -981,33 +982,80 @@ build_ksyms_blob(char **blobp, size_t *lenp)
         return;
     }
 
+    uint32_t magic = *(const uint32_t *)base;
+    if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
+        /* Universal image: pick the slice matching the running arch. */
+        const struct fat_header *fh = (const void *)base;
+        uint32_t nfat = OSSwapBigToHostInt32(fh->nfat_arch);
+        const struct fat_arch *fa = (const void *)(base + sizeof(*fh));
+        for (uint32_t i = 0; i < nfat; i++) {
+            cpu_type_t ct = (cpu_type_t)OSSwapBigToHostInt32(fa[i].cputype);
+            if (ct == PROCFS_NATIVE_CPUTYPE) {
+                uint32_t off = OSSwapBigToHostInt32(fa[i].offset);
+                uint32_t asz = OSSwapBigToHostInt32(fa[i].size);
+                if ((size_t)off + asz <= (size_t)st.st_size) {
+                    ksyms_emit_macho(base + off, asz, out);
+                }
+                break;
+            }
+        }
+    } else if (magic == MH_MAGIC_64) {
+        ksyms_emit_macho(base, (size_t)st.st_size, out);
+    }
+
+    munmap(base, (size_t)st.st_size);
+}
+
+static void
+build_ksyms_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
     char  *buf = NULL;
     size_t sz  = 0;
     FILE  *out = open_memstream(&buf, &sz);
     if (out != NULL) {
-        uint32_t magic = *(const uint32_t *)base;
-        if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
-            /* Universal image: pick the slice matching the running arch. */
-            const struct fat_header *fh = (const void *)base;
-            uint32_t nfat = OSSwapBigToHostInt32(fh->nfat_arch);
-            const struct fat_arch *fa = (const void *)(base + sizeof(*fh));
-            for (uint32_t i = 0; i < nfat; i++) {
-                cpu_type_t ct = (cpu_type_t)OSSwapBigToHostInt32(fa[i].cputype);
-                if (ct == PROCFS_NATIVE_CPUTYPE) {
-                    uint32_t off = OSSwapBigToHostInt32(fa[i].offset);
-                    uint32_t asz = OSSwapBigToHostInt32(fa[i].size);
-                    if ((size_t)off + asz <= (size_t)st.st_size) {
-                        ksyms_emit_macho(base + off, asz, out);
-                    }
-                    break;
-                }
-            }
-        } else if (magic == MH_MAGIC_64) {
-            ksyms_emit_macho(base, (size_t)st.st_size, out);
+        ksyms_emit_kernel(out);
+        fclose(out);
+    }
+
+    if (buf != NULL && sz > 0) {
+        *blobp = buf;
+        *lenp  = sz;
+    } else {
+        free(buf);
+    }
+}
+
+/*
+ * /proc/kallsyms - the modern, fuller symbol table: the exported kernel symbols
+ * (with their real addresses, as in /proc/ksyms) plus the non-exported symbol
+ * names recovered from the XNU source (kallsyms_extra.h). macOS ships the arm64
+ * kernel stripped of its local symbols, so those names have no address in the
+ * running image and are emitted with address 0 - which is also what the kext's
+ * kptr_restrict shows a non-root reader for every symbol. Format matches Linux
+ * ("address type name [module]"); macOS exposes no loadable-module symbol
+ * addresses, so no line carries a [module] tag.
+ */
+static void
+build_kallsyms_blob(char **blobp, size_t *lenp)
+{
+    free(*blobp);
+    *blobp = NULL;
+    *lenp = 0;
+
+    char  *buf = NULL;
+    size_t sz  = 0;
+    FILE  *out = open_memstream(&buf, &sz);
+    if (out != NULL) {
+        ksyms_emit_kernel(out);
+        for (unsigned i = 0; i < procfs_kallsyms_extra_count; i++) {
+            fprintf(out, "0000000000000000 t %s\n", procfs_kallsyms_extra[i]);
         }
         fclose(out);
     }
-    munmap(base, (size_t)st.st_size);
 
     if (buf != NULL && sz > 0) {
         *blobp = buf;
@@ -2471,6 +2519,14 @@ main(__unused int argc, __unused char **argv)
                 build_ksyms_blob(&g_ksyms_blob, &g_ksyms_blob_len);
             }
             blob_slice(g_ksyms_blob, g_ksyms_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_KALLSYMS: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_kallsyms_blob(&g_kallsyms_blob, &g_kallsyms_blob_len);
+            }
+            blob_slice(g_kallsyms_blob, g_kallsyms_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_FBDEVICES: {

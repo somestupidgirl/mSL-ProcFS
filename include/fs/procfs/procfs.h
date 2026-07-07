@@ -702,6 +702,7 @@ extern int procfs_dokcore(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dokmsg(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dolast_kmsg(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doksyms(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dokallsyms(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosysvipc_sem(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosysvipc_shm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
