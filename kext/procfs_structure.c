@@ -432,6 +432,7 @@ procfs_structure_init(void)
 
         // Linux-compatible per-process text files.
         add_file(one_proc_dir, "comm", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_docomm);
+        add_file(one_proc_dir, "cpu", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_docpu);
         add_file(one_proc_dir, "stat", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doprocstat);
         add_file(one_proc_dir, "statm", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dostatm);
         add_file(one_proc_dir, "io", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doio);

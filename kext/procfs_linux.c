@@ -2151,6 +2151,44 @@ procfs_doprocstat(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/<pid>/cpu - Linux 2.4's per-CPU accounting for a task: a "cpu" total line
+ * (user and system time in USER_HZ ticks) followed by one "cpuN" line per online
+ * CPU with the time spent on that CPU. XNU accounts a task's user/system time as
+ * a whole (proc_pidtaskinfo) but does not attribute it per CPU, so the "cpu"
+ * total carries the real figures and the whole of it is reported on cpu0 (0 on
+ * the rest), which keeps the Linux invariant that the per-CPU times sum to the
+ * total. Times come from the same source as /proc/<pid>/stat.
+ */
+int
+procfs_docpu(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    struct proc_taskinfo ti;
+    procfs_task_info(pnp, &ti);
+
+    uint64_t utime = ti.pti_total_user   / PROCFS_NS_PER_TICK;
+    uint64_t stime = ti.pti_total_system / PROCFS_NS_PER_TICK;
+    uint32_t ncpu  = procfs_online_cpus();
+
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 256, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    sbuf_printf(&sb, "cpu  %llu %llu\n",
+        (unsigned long long)utime, (unsigned long long)stime);
+    for (uint32_t i = 0; i < ncpu; i++) {
+        sbuf_printf(&sb, "cpu%u %llu %llu\n", i,
+            (unsigned long long)(i == 0 ? utime : 0),
+            (unsigned long long)(i == 0 ? stime : 0));
+    }
+
+    sbuf_finish(&sb);
+    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+/*
  * /proc/<pid>/status in Linux text form - the linux-mode rendering of the status
  * node (native mode emits the binary proc_bsdshortinfo). Reuses procfs_pctx for
  * the process context and the credential for the Uid/Gid rows.

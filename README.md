@@ -96,6 +96,7 @@ Each directory named for a process id represents one process on the system. By d
 |`clear_refs`| Linux working-set knob: write `1`–`4` to reset the page referenced/soft-dirty bits `smaps` reports. macOS exposes no way (to userspace or a third-party kext) to clear another task's pmap reference bits, so the write is validated and accepted for tool compatibility but has no effect; `smaps` `Referenced` is synthesized regardless | write-only (read returns `EINVAL`; mode `0200`) |
 |`cmdline`  | Process argument vector (NUL-separated, Linux format) | text |
 |`comm`     | Process (command) name | text |
+|`cpu`      | Linux 2.4 per-CPU task accounting: a `cpu` total line (user/system time in `USER_HZ` ticks) then one `cpuN` line per online CPU. XNU accounts task time as a whole without a per-CPU split, so the total is carried on the `cpu` line and reported on `cpu0` (0 elsewhere), keeping the per-CPU times summing to the total | text |
 |`cwd/`      | Symlink to the current working directory | symlink |
 |`environ`  | Process environment (NUL-separated, Linux format) | text |
 |`exe`      | Symlink to the executable | symlink |
