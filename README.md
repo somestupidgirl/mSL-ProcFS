@@ -93,6 +93,7 @@ Each directory named for a process id represents one process on the system. By d
 | File    | Summary                          | Structure                       |
 |---------|----------------------------------|---------------------------------|
 |`auxv`     | XNU's auxiliary-vector equivalent — dyld's `apple[]` array (`key=value` strings) | text (NUL-separated) |
+|`clear_refs`| Linux working-set knob: write `1`–`4` to reset the page referenced/soft-dirty bits `smaps` reports. macOS exposes no way (to userspace or a third-party kext) to clear another task's pmap reference bits, so the write is validated and accepted for tool compatibility but has no effect; `smaps` `Referenced` is synthesized regardless | write-only (read returns `EINVAL`; mode `0200`) |
 |`cmdline`  | Process argument vector (NUL-separated, Linux format) | text |
 |`comm`     | Process (command) name | text |
 |`cwd/`      | Symlink to the current working directory | symlink |

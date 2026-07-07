@@ -1135,6 +1135,11 @@ procfs_vnop_getattr(struct vnop_getattr_args *ap)
     if (snode->psn_read_data_fn == procfs_donote) {
         VATTR_RETURN(vap, va_mode, RW_OWNER_GROUP & modemask);
     }
+    // clear_refs is write-only (Linux mode 0200): a working-set knob written to,
+    // never read. Grant owner/group write so open(O_WRONLY) is permitted.
+    if (snode->psn_read_data_fn == procfs_doclear_refs) {
+        VATTR_RETURN(vap, va_mode, (S_IWUSR | S_IWGRP) & modemask);
+    }
 
     // ----- Generic attributes.
     // /proc/sys nodes are dir or file per the specific sysctl oid (objectid).
@@ -1274,6 +1279,9 @@ procfs_vnop_write(struct vnop_write_args *ap)
     if (snode->psn_read_data_fn == procfs_donote) {
         return procfs_donote(pnp, ap->a_uio, ap->a_context);
     }
+    if (snode->psn_read_data_fn == procfs_doclear_refs) {
+        return procfs_doclear_refs(pnp, ap->a_uio, ap->a_context);
+    }
     return EROFS;
 }
 
@@ -1289,7 +1297,8 @@ procfs_vnop_setattr(struct vnop_setattr_args *ap)
     pfsnode_t *pnp = VTOPFS(ap->a_vp);
     pfssnode_t *snode = pnp->node_structure_node;
 
-    if (snode->psn_read_data_fn == procfs_donote) {
+    if (snode->psn_read_data_fn == procfs_donote ||
+        snode->psn_read_data_fn == procfs_doclear_refs) {
         if (VATTR_IS_ACTIVE(ap->a_vap, va_data_size)) {
             VATTR_SET_SUPPORTED(ap->a_vap, va_data_size);
         }

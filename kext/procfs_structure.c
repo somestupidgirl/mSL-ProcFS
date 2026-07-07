@@ -415,6 +415,7 @@ procfs_structure_init(void)
         add_file(one_proc_dir, "taskinfo", next_node_id++, PSN_FLAG_PROCESS, sizeof(struct proc_taskinfo), NULL, procfs_dotaskinfo);
 
         add_file(one_proc_dir, "note", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_donote);
+        add_file(one_proc_dir, "clear_refs", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doclear_refs);
         add_file(one_proc_dir, "limit", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dolimit);
         add_file(one_proc_dir, "mem", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_domem);
         add_file(one_proc_dir, "map", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_domap);

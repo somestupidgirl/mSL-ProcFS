@@ -193,3 +193,34 @@ procfs_donote(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 	proc_signal(pnp->node_id.nodeid_pid, sig);
 	return 0;
 }
+
+/*
+ * /proc/<pid>/clear_refs - Linux's write-only working-set knob. Writing "1".."4"
+ * resets the page referenced / soft-dirty bits that /proc/<pid>/smaps reports, so
+ * a profiler can measure the pages a task touches between two reads (1 = all,
+ * 2 = anonymous, 3 = file-mapped, 4 = soft-dirty). macOS gives neither userspace
+ * nor a third-party kext any way to clear another task's pmap reference bits, so
+ * the write is validated and accepted for tool compatibility but has no effect
+ * (smaps' Referenced field is synthesized regardless). Reads return EINVAL, as on
+ * Linux where the node is write-only (mode 0200).
+ */
+int
+procfs_doclear_refs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+	if (uio_rw(uio) != UIO_WRITE) {
+		return EINVAL;                  /* write-only node */
+	}
+
+	char note[PROCFS_NOTELEN + 1];
+	int  xlen = PROCFS_NOTELEN;
+	int  error = procfs_getuserstr(uio, note, &xlen);
+	if (error) {
+		return error;
+	}
+
+	/* Linux accepts a single digit 1..4; anything else is EINVAL. */
+	if (xlen != 1 || note[0] < '1' || note[0] > '4') {
+		return EINVAL;
+	}
+	return 0;                               /* accepted; no pmap effect on macOS */
+}

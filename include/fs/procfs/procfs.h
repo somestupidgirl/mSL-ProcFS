@@ -739,6 +739,7 @@ extern int procfs_dovmstat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dopartitions(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doversion(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_donote(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_doclear_refs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 /* 
  *Process machine state (NetBSD-style binary register dumps) and the auxiliary
  * vector (XNU's apple[] array).
