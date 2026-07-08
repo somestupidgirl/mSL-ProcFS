@@ -475,6 +475,71 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
 }
 
 /*
+ * Returns a representative thread of a process - the first in its p_uthlist - for
+ * introspection like /proc/<pid>/wchan, using the same opaque-struct-safe uthread
+ * walk as procfs_get_thread_ids_for_task (thread = uthread - sizeof(struct
+ * thread), each pointer pmap-validated). Returns THREAD_NULL if unavailable. The
+ * pointer is valid only while the target is alive and the caller must guard every
+ * dereference with procfs_kernel_ptr_ok(), as the walk takes no proc_lock.
+ */
+thread_t
+procfs_get_representative_thread(proc_t p)
+{
+    procfs_thread_size_init();
+    if (!g_thread_size_known || p == PROC_NULL) {
+        return THREAD_NULL;
+    }
+    uthread_t uth = TAILQ_FIRST(&p->p_uthlist);
+    if (uth == NULL || !procfs_kptr_ok((uintptr_t)uth)) {
+        return THREAD_NULL;
+    }
+    thread_t thread = (thread_t)((uintptr_t)uth - g_thread_struct_size);
+    if (!procfs_kptr_ok((uintptr_t)thread)) {
+        return THREAD_NULL;
+    }
+    return thread;
+}
+
+/*
+ * Exposes the kernel-pointer validity gate (a mapped arm64 kernel address) so
+ * libkprocfs can safely guard the struct-thread field reads for /proc/<pid>/wchan.
+ */
+boolean_t
+procfs_kernel_ptr_ok(uintptr_t va)
+{
+    return procfs_kptr_ok(va);
+}
+
+/*
+ * Fills out[] with up to max of a process's thread pointers (uthread -
+ * sizeof(struct thread), each pmap-validated) and returns the count. Lets
+ * /proc/<pid>/wchan scan all threads for a blocked one rather than only the
+ * first. Same opaque-struct-safe walk as procfs_get_thread_ids_for_task.
+ */
+int
+procfs_get_thread_ptrs(proc_t p, thread_t *out, int max)
+{
+    procfs_thread_size_init();
+    if (!g_thread_size_known || p == PROC_NULL || out == NULL || max <= 0) {
+        return 0;
+    }
+    int n = 0;
+    uthread_t uth = TAILQ_FIRST(&p->p_uthlist);
+    while (uth != NULL && n < max && n < PROCFS_MAX_THREADS) {
+        uintptr_t u = (uintptr_t)uth;
+        if (!procfs_kptr_ok(u)) {
+            break;
+        }
+        thread_t thread = (thread_t)(u - g_thread_struct_size);
+        if (procfs_kptr_ok((uintptr_t)thread)) {
+            out[n++] = thread;
+        }
+        uth = TAILQ_NEXT(uth, uu_list);
+    }
+    return n;
+}
+
+/*
  * Releases the memory allocated by an earlier successful call to
  * the get_thread_ids_for_task() function.
  */

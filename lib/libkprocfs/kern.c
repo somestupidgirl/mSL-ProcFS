@@ -26,7 +26,9 @@
 #include <sys/vnode_internal.h>
 #include <sys/sbuf.h>
 #include <kern/locks.h>
+#include <kern/kern_types.h>
 #include <libkern/OSMalloc.h>
+#include <libkern/OSAtomic.h>
 #include <mach/mach_types.h>
 #include <ptrauth.h>
 
@@ -751,3 +753,154 @@ procfs_build_locks(struct sbuf *sb, vfs_context_t ctx)
     OSFree(recs, recs_sz, procfs_osmalloc_tag);
 }
 
+
+/*
+ * ================= /proc/<pid>/wchan support =================
+ *
+ * Name the kernel function a task is blocked in. XNU has no KPI for this and
+ * struct thread is opaque, so its field offsets are unknown at compile time. We
+ * recover the offset of the 'continuation' field - the function a blocked thread
+ * resumes at, i.e. exactly the wchan we want - at RUNTIME and config-
+ * independently: start a helper kernel thread, block it with a known continuation
+ * via thread_block_parameter(), then scan its struct thread for the field holding
+ * that pointer (PAC-stripped for the arm64e signature). The offset is cached.
+ *
+ * For a target process we read its representative thread's continuation, strip
+ * its PAC, un-slide it to the kernel link address (vm_kernel_unslide_...), and
+ * hand that to the daemon to symbolize (PROCFS_REQ_KSYM_LOOKUP). A thread with a
+ * NULL continuation yields wchan "0".
+ */
+extern kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
+extern wait_result_t assert_wait(event_t, wait_interrupt_t);
+extern wait_result_t thread_block_parameter(thread_continue_t, void *);
+extern wait_result_t thread_block(thread_continue_t);
+extern kern_return_t thread_wakeup_prim(event_t, boolean_t, wait_result_t);
+extern kern_return_t thread_terminate(thread_t);
+extern void          thread_deallocate(thread_t);
+extern void          vm_kernel_unslide_or_perm_external(vm_offset_t, vm_offset_t *);
+extern void          IODelay(unsigned microseconds);
+extern boolean_t     procfs_kernel_ptr_ok(uintptr_t va);       /* procfs_subr.c */
+extern thread_t      procfs_get_representative_thread(proc_t p); /* procfs_subr.c */
+extern int           procfs_get_thread_ptrs(proc_t p, thread_t *out, int max); /* procfs_subr.c */
+
+#define PROCFS_WCHAN_SCAN_MAX  2048     /* struct-thread bytes scanned for the offset */
+
+static volatile int32_t g_wchan_init        = 0;   /* 0 = unclaimed, 1 = claimed */
+static volatile long    g_continuation_off  = -1;  /* offset, or <0 = not available */
+
+/* The helper's continuation: the pointer we search for. On resume, exit. */
+static void
+procfs_wchan_probe_cont(void *param, wait_result_t wr)
+{
+    (void)param;
+    (void)wr;
+    thread_terminate(current_thread());
+    thread_block(THREAD_CONTINUE_NULL);
+    /* NOTREACHED */
+}
+
+struct procfs_wchan_probe {
+    int event;
+};
+
+/* Helper thread: block with the known continuation so we can locate its field. */
+static void
+procfs_wchan_probe_thread(void *param, wait_result_t wr)
+{
+    struct procfs_wchan_probe *pr = param;
+    (void)wr;
+    assert_wait(&pr->event, THREAD_UNINT);
+    thread_block_parameter(procfs_wchan_probe_cont, param);
+    /* NOTREACHED */
+}
+
+/* Discover the continuation offset once (idempotent, guarded by a CAS claim). */
+static void
+procfs_wchan_discover(void)
+{
+    if (g_continuation_off != -1) {
+        return;                         /* already resolved (>=0) or failed (-2) */
+    }
+    if (!OSCompareAndSwap(0, 1, (volatile UInt32 *)&g_wchan_init)) {
+        return;                         /* another thread owns the discovery */
+    }
+
+    struct procfs_wchan_probe pr = { .event = 0 };
+    thread_t hthread = THREAD_NULL;
+    if (kernel_thread_start(procfs_wchan_probe_thread, &pr, &hthread) != KERN_SUCCESS) {
+        g_continuation_off = -2;
+        return;
+    }
+
+    uintptr_t target = (uintptr_t)ptrauth_strip((void *)procfs_wchan_probe_cont,
+        ptrauth_key_function_pointer);
+    long found = -1;
+    for (int tries = 0; tries < 100000 && found < 0; tries++) {
+        if (procfs_kernel_ptr_ok((uintptr_t)hthread)) {
+            const uintptr_t *w = (const uintptr_t *)hthread;
+            for (long off = 0;
+                 off + (long)sizeof(uintptr_t) <= PROCFS_WCHAN_SCAN_MAX;
+                 off += (long)sizeof(uintptr_t)) {
+                uintptr_t v = w[off / (long)sizeof(uintptr_t)];
+                if (v == 0) {
+                    continue;
+                }
+                if ((uintptr_t)ptrauth_strip((void *)v,
+                        ptrauth_key_function_pointer) == target) {
+                    found = off;
+                    break;
+                }
+            }
+        }
+        if (found < 0) {
+            IODelay(10);
+        }
+    }
+
+    /* Wake the helper so it exits, whether or not we located the field. */
+    thread_wakeup_prim(&pr.event, FALSE, THREAD_AWAKENED);
+    thread_deallocate(hthread);
+
+    g_continuation_off = (found >= 0) ? found : -2;
+}
+
+/*
+ * Fill *unslid with the un-slid kernel address of the process's representative
+ * thread's continuation (the wchan), or 0 if it has none. Returns 0 on success.
+ */
+#define PROCFS_WCHAN_MAX_THREADS 64
+
+/*
+ * Fill *runtime with the (PAC-stripped) runtime kernel address of the process's
+ * representative blocked thread's continuation - its wchan - or 0 if it has none.
+ * The caller subtracts the kernel slide to get the symbol-source address and
+ * symbolizes it. Returns 0 on success.
+ */
+int
+procfs_thread_continuation(proc_t p, uint64_t *runtime)
+{
+    *runtime = 0;
+
+    procfs_wchan_discover();
+    if (g_continuation_off < 0) {
+        return ENOTSUP;                 /* discovery unavailable */
+    }
+
+    thread_t th[PROCFS_WCHAN_MAX_THREADS];
+    int nth = procfs_get_thread_ptrs(p, th, PROCFS_WCHAN_MAX_THREADS);
+
+    for (int i = 0; i < nth; i++) {
+        uintptr_t base = (uintptr_t)th[i];
+        uintptr_t addr = base + (uintptr_t)g_continuation_off;
+        if (!procfs_kernel_ptr_ok(base) || !procfs_kernel_ptr_ok(addr)) {
+            continue;
+        }
+        uintptr_t v = *(const uintptr_t *)addr;
+        if (v != 0) {                   /* first thread with a continuation */
+            *runtime = (uint64_t)(uintptr_t)ptrauth_strip((void *)v,
+                ptrauth_key_function_pointer);
+            break;
+        }
+    }
+    return 0;
+}

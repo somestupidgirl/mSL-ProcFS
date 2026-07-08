@@ -1195,6 +1195,269 @@ build_kallsyms_blob(char **blobp, size_t *lenp)
 }
 
 /*
+ * Kernel symbol lookup for /proc/<pid>/wchan. The kext reads a blocked thread's
+ * continuation, un-slides it (vm_kernel_unslide_or_perm_external) to the link
+ * address, and asks us to name it. We keep a value-sorted table of the kernel
+ * image's __TEXT symbols (the same unslid addresses) and return the nearest
+ * preceding one, so a continuation (a function entry) resolves to its function.
+ * Built lazily from the same image /proc/ksyms parses.
+ */
+struct ksym_ent {
+    uint64_t val;
+    char     name[96];
+};
+static struct ksym_ent *g_ksym_tab = NULL;
+static size_t           g_ksym_n   = 0;
+
+static int
+ksym_ent_cmp(const void *a, const void *b)
+{
+    uint64_t va = ((const struct ksym_ent *)a)->val;
+    uint64_t vb = ((const struct ksym_ent *)b)->val;
+    return (va > vb) - (va < vb);
+}
+
+/* Collect __TEXT symbols (value + name) from a thin Mach-O into a growable array. */
+static void
+ksym_collect_macho(const uint8_t *base, size_t size,
+    struct ksym_ent **tab, size_t *n, size_t *cap)
+{
+    if (size < sizeof(struct mach_header_64)) {
+        return;
+    }
+    const struct mach_header_64 *mh = (const void *)base;
+    if (mh->magic != MH_MAGIC_64 || mh->cputype != PROCFS_NATIVE_CPUTYPE) {
+        return;
+    }
+
+    char is_text[256];
+    memset(is_text, 0, sizeof(is_text));
+    int nsect = 0;
+    const struct symtab_command *st = NULL;
+    const uint8_t *p = base + sizeof(*mh), *end = base + size;
+    for (uint32_t i = 0; i < mh->ncmds; i++) {
+        if (p + sizeof(struct load_command) > end) {
+            break;
+        }
+        const struct load_command *lc = (const void *)p;
+        if (lc->cmdsize < sizeof(*lc) || p + lc->cmdsize > end) {
+            break;
+        }
+        if (lc->cmd == LC_SYMTAB) {
+            st = (const void *)p;
+        } else if (lc->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *sg = (const void *)p;
+            const struct section_64 *sec = (const void *)(sg + 1);
+            for (uint32_t s = 0; s < sg->nsects; s++) {
+                nsect++;
+                if (nsect < 256) {
+                    is_text[nsect] = (strncmp(sec[s].segname, "__TEXT", 6) == 0);
+                }
+            }
+        }
+        p += lc->cmdsize;
+    }
+    if (st == NULL || st->nsyms == 0 ||
+        (size_t)st->symoff + (size_t)st->nsyms * sizeof(struct nlist_64) > size ||
+        (size_t)st->stroff + st->strsize > size) {
+        return;
+    }
+    const struct nlist_64 *syms = (const void *)(base + st->symoff);
+    const char            *strs = (const char *)(base + st->stroff);
+    for (uint32_t i = 0; i < st->nsyms; i++) {
+        const struct nlist_64 *nn = &syms[i];
+        if ((nn->n_type & N_STAB) != 0 || (nn->n_type & N_TYPE) != N_SECT) {
+            continue;
+        }
+        if (!is_text[nn->n_sect]) {
+            continue;                   /* text symbols only */
+        }
+        uint32_t strx = nn->n_un.n_strx;
+        if (strx == 0 || strx >= st->strsize) {
+            continue;
+        }
+        const char *name = strs + strx;
+        if (name[0] == '\0') {
+            continue;
+        }
+        if (*n == *cap) {
+            size_t nc = (*cap == 0) ? 4096 : *cap * 2;
+            struct ksym_ent *nt = realloc(*tab, nc * sizeof(**tab));
+            if (nt == NULL) {
+                return;
+            }
+            *tab = nt;
+            *cap = nc;
+        }
+        (*tab)[*n].val = nn->n_value;
+        strlcpy((*tab)[*n].name, name, sizeof((*tab)[*n].name));
+        (*n)++;
+    }
+}
+
+/*
+ * Symbol source for /proc/<pid>/wchan. The stripped running-kernel image exports
+ * only ~6900 symbols (no local functions), and thread continuations are almost
+ * always local (wait1continue, ipc_mqueue_receive_continue, ...). So we prefer
+ * the matching Kernel Debug Kit's dSYM, which carries the full symbol table at
+ * the same (release) layout the running kernel uses: /Library/Developer/KDKs/
+ * *<build>*.kdk/System/Library/Kernels/kernel.release.<soc>.dSYM/.../DWARF/
+ * kernel.release.<soc>. Falls back to the stripped image (KPI symbols only) when
+ * no matching KDK is installed.
+ */
+static void
+ksyms_wchan_source_path(char *out, size_t cap)
+{
+    out[0] = '\0';
+
+    /* SoC from kern.version (ARM64_T8103 -> t8103), running build from
+     * kern.osversion (e.g. 25F84). */
+    char   soc[32] = { 0 };
+    char   ver[512];
+    size_t vs = sizeof(ver);
+    if (sysctlbyname("kern.version", ver, &vs, NULL, 0) == 0) {
+        char *m = strstr(ver, "ARM64_");
+        if (m != NULL) {
+            m += 6;
+            int j = 0;
+            while (*m != '\0' && isalnum((unsigned char)*m) &&
+                   j < (int)sizeof(soc) - 1) {
+                soc[j++] = (char)tolower((unsigned char)*m++);
+            }
+            soc[j] = '\0';
+        }
+    }
+    char   build[64] = { 0 };
+    size_t bs = sizeof(build);
+    (void)sysctlbyname("kern.osversion", build, &bs, NULL, 0);
+
+    if (soc[0] != '\0' && build[0] != '\0') {
+        DIR *d = opendir("/Library/Developer/KDKs");
+        if (d != NULL) {
+            struct dirent *de;
+            while ((de = readdir(d)) != NULL) {
+                if (strstr(de->d_name, build) == NULL) {
+                    continue;           /* KDK for a different build */
+                }
+                char p[PATH_MAX];
+                snprintf(p, sizeof(p),
+                    "/Library/Developer/KDKs/%s/System/Library/Kernels/"
+                    "kernel.release.%s.dSYM/Contents/Resources/DWARF/"
+                    "kernel.release.%s", de->d_name, soc, soc);
+                struct stat st;
+                if (stat(p, &st) == 0) {
+                    strlcpy(out, p, cap);
+                    break;
+                }
+            }
+            closedir(d);
+        }
+    }
+
+    if (out[0] == '\0') {
+        ksyms_kernel_path(out, cap);    /* fallback: stripped kernel image */
+    }
+}
+
+static void
+ksym_table_build(void)
+{
+    if (g_ksym_tab != NULL) {
+        return;                         /* built once */
+    }
+    char path[PATH_MAX];
+    ksyms_wchan_source_path(path, sizeof(path));
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        return;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || st.st_size <= 0) {
+        close(fd);
+        return;
+    }
+    uint8_t *b = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (b == MAP_FAILED) {
+        return;
+    }
+
+    struct ksym_ent *tab = NULL;
+    size_t n = 0, cap = 0;
+    uint32_t magic = *(const uint32_t *)b;
+    if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
+        const struct fat_header *fh = (const void *)b;
+        uint32_t nf = OSSwapBigToHostInt32(fh->nfat_arch);
+        const struct fat_arch *fa = (const void *)(b + sizeof(*fh));
+        for (uint32_t i = 0; i < nf; i++) {
+            if ((cpu_type_t)OSSwapBigToHostInt32(fa[i].cputype) == PROCFS_NATIVE_CPUTYPE) {
+                uint32_t off = OSSwapBigToHostInt32(fa[i].offset);
+                uint32_t sz  = OSSwapBigToHostInt32(fa[i].size);
+                if ((size_t)off + sz <= (size_t)st.st_size) {
+                    ksym_collect_macho(b + off, sz, &tab, &n, &cap);
+                }
+                break;
+            }
+        }
+    } else if (magic == MH_MAGIC_64) {
+        ksym_collect_macho(b, (size_t)st.st_size, &tab, &n, &cap);
+    }
+    munmap(b, (size_t)st.st_size);
+
+    if (tab != NULL && n > 0) {
+        qsort(tab, n, sizeof(*tab), ksym_ent_cmp);
+        g_ksym_tab = tab;
+        g_ksym_n = n;
+    } else {
+        free(tab);
+    }
+}
+
+/* Name the nearest preceding kernel text symbol for an unslid address (empty if
+ * none, or if the address is implausibly far past the last symbol). */
+static void
+ksym_lookup(uint64_t addr, char *out, size_t cap)
+{
+    out[0] = '\0';
+    ksym_table_build();
+    if (g_ksym_n == 0) {
+        return;
+    }
+    size_t lo = 0, hi = g_ksym_n;       /* find first entry with val > addr */
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (g_ksym_tab[mid].val <= addr) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if (lo == 0) {
+        return;                         /* addr precedes all symbols */
+    }
+    const struct ksym_ent *e = &g_ksym_tab[lo - 1];
+    if (addr - e->val > 0x100000ULL) {
+        return;                         /* >1MB past a symbol -> not a real match */
+    }
+    strlcpy(out, e->name, cap);
+}
+
+/* Address (in the wchan symbol source) of a named symbol, or 0. The kext uses a
+ * reference symbol (proc_pid) to compute the running kernel's slide relative to
+ * this symbol source. */
+static uint64_t
+ksym_addr_of(const char *name)
+{
+    ksym_table_build();
+    for (size_t i = 0; i < g_ksym_n; i++) {
+        if (strcmp(g_ksym_tab[i].name, name) == 0) {
+            return g_ksym_tab[i].val;
+        }
+    }
+    return 0;
+}
+
+/*
  * /proc/vmallocinfo support. Linux lists the kernel's vmalloc'd (virtually-
  * contiguous, non-zone) areas: "<addr-range> <size> <caller> <flags>". macOS has
  * no vmalloc; the nearest analog is XNU's kernel VM allocations tagged by site,
@@ -2639,6 +2902,29 @@ main(__unused int argc, __unused char **argv)
                 build_misc_blob(&g_misc_blob, &g_misc_blob_len);
             }
             blob_slice(g_misc_blob, g_misc_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_KSYM_LOOKUP: {
+            /* req->arg = a kernel text address in the wchan symbol source's
+             * layout; reply = the symbol name (empty -> kext reports "0"). */
+            char nm[128];
+            ksym_lookup(req->arg, nm, sizeof(nm));
+            size_t n = strlen(nm);
+            if (n > 0) {
+                if (n > PROCFS_CTL_MAXPAYLOAD) {
+                    n = PROCFS_CTL_MAXPAYLOAD;
+                }
+                memcpy(payload, nm, n);
+                resp->len = (uint32_t)n;
+            }
+            break;
+        }
+        case PROCFS_REQ_KSYM_REF: {
+            /* Address of _proc_pid in the wchan symbol source, so the kext can
+             * derive the running kernel's slide. */
+            uint64_t a = ksym_addr_of("_proc_pid");
+            memcpy(payload, &a, sizeof(a));
+            resp->len = sizeof(a);
             break;
         }
         case PROCFS_REQ_ALLOCINFO: {
