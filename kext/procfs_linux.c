@@ -2189,20 +2189,49 @@ procfs_docpu(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
- * /proc/<pid>/wchan - on Linux (with CONFIG_KALLSYMS) this is the kernel symbol a
- * task is blocked in, or "0" if it is running/not blocked. Resolving it needs the
- * blocked thread's kernel PC (or continuation) symbolized against the kernel
- * symbol table. macOS exposes no supported way for a third-party kext to obtain a
- * task's blocked kernel PC: struct thread is opaque, and this filesystem
- * deliberately avoids its config-fragile field offsets (the thread enumerator in
- * procfs_subr.c walks the BSD uthread list and uses only the thread_tid() KPI,
- * never a struct thread field). So we report "0" - the value Linux gives for a
- * task that is not blocked - with no trailing newline, matching Linux's format.
+ * /proc/<pid>/wchan - the kernel symbol the task is blocked in (Linux's
+ * CONFIG_KALLSYMS wchan), or "0" if it is not blocked. XNU exposes no KPI for
+ * this, so libkprocfs recovers it directly: it reads the process's representative
+ * thread's continuation - the function a blocked thread resumes at, i.e. exactly
+ * the wchan - un-slides it to the kernel link address, and the procfsd daemon
+ * names it against the kernel symbol table (PROCFS_REQ_KSYM_LOOKUP). The offset
+ * of the continuation field in the opaque struct thread is discovered once at
+ * runtime (see procfs_thread_wchan_unslid). A thread with no continuation, or a
+ * symbol that cannot be resolved (e.g. no daemon), yields "0". The macOS symbol's
+ * leading underscore is stripped to match Linux's C-name style. No trailing
+ * newline, as on Linux.
  */
 int
-procfs_dowchan(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+procfs_dowchan(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    return procfs_copy_data("0", 1, uio);
+    char name[128];
+    name[0] = '0';
+    name[1] = '\0';
+    int outlen = 1;
+
+    proc_t p = proc_find(pnp->node_id.nodeid_pid);
+    if (p != PROC_NULL) {
+        uint64_t unslid = 0;
+        if (procfs_thread_wchan_unslid(p, &unslid) == 0 && unslid != 0) {
+            char     sym[128];
+            uint32_t got = 0;
+            if (procfs_ctl_request(PROCFS_REQ_KSYM_LOOKUP, 0, unslid,
+                    sym, sizeof(sym) - 1, &got) == 0 && got > 0) {
+                if (got > sizeof(sym) - 1) {
+                    got = sizeof(sym) - 1;
+                }
+                sym[got] = '\0';
+                if (sym[0] != '\0') {
+                    const char *s = (sym[0] == '_') ? sym + 1 : sym;
+                    strlcpy(name, s, sizeof(name));
+                    outlen = (int)strlen(name);
+                }
+            }
+        }
+        proc_rele(p);
+    }
+
+    return procfs_copy_data(name, outlen, uio);
 }
 
 /*
