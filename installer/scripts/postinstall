@@ -34,6 +34,15 @@ touch "$ARM_FLAG"
 # automated install) we skip it - the app then starts at the user's next login
 # if they have enabled "Open at Login". Never fail the install over this.
 APP="/Applications/ProcFS.app"
+
+# The installer package is itself typically downloaded from the internet, so its
+# payload (including ProcFS.app) inherits com.apple.quarantine - which makes
+# Gatekeeper warn that the app is "damaged" or from an unverified developer.
+# Strip it now that the app is in place so it launches cleanly. Best-effort.
+if [ -d "$APP" ]; then
+    xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+fi
+
 CONSOLE_USER=$(stat -f '%Su' /dev/console 2>/dev/null || true)
 CONSOLE_UID=$(id -u "$CONSOLE_USER" 2>/dev/null || true)
 if [ -d "$APP" ] && [ -n "$CONSOLE_UID" ] && \
