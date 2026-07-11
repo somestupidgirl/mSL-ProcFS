@@ -108,6 +108,7 @@ Each directory named for a process id represents one process on the system. By d
 |`mem`      | Process memory; the read offset is the virtual address (NetBSD/Linux `mem` semantics). Resident pages only — see below | binary |
 |`note`     | Write a note to the process (NetBSD/Plan 9-style) | write-only (read returns `EINVAL`); a note delivers a signal to the process — see below |
 |`numa_maps`| Linux `/proc/<pid>/numa_maps`: per-mapping NUMA locality (single-node: policy `default`, `N0=`) | text |
+|`pagemap`  | Linux `/proc/<pid>/pagemap`: one 64-bit entry per virtual page (indexed by `vaddr/PAGE_SIZE`) — bit 63 present, 62 swapped, 61 file-backed, 55 dirty, from `mach_vm_page_query` via the `procfsd` daemon. The physical frame number (bits 0–54) is left `0` (macOS doesn't expose it, as Linux does for a reader without `CAP_SYS_ADMIN`). Read by seeking to a page's offset (as on Linux); `task_for_pid`-denied (SIP/AMFI/hardened) targets or no daemon → `EPERM`/empty | binary (8 bytes/page) |
 |`pid`      | Process id                       | `pid_t` (binary `int32`)         |
 |`pgid`     | Process group id                 | `pid_t` (binary `int32`)         |
 |`ppid`     | Parent process id                | `pid_t` (binary `int32`)         |

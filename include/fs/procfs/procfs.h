@@ -670,6 +670,7 @@ extern int procfs_dofd(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosocket(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doprocargs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domem(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_dopagemap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dokextlist(uint32_t type, uio_t uio);
 extern int procfs_doextensions(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_domodules(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
