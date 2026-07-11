@@ -781,6 +781,7 @@ extern void          vm_kernel_unslide_or_perm_external(vm_offset_t, vm_offset_t
 extern void          IODelay(unsigned microseconds);
 extern boolean_t     procfs_kernel_ptr_ok(uintptr_t va);       /* procfs_subr.c */
 extern thread_t      procfs_get_representative_thread(proc_t p); /* procfs_subr.c */
+extern int           procfs_get_thread_ptrs(proc_t p, thread_t *out, int max); /* procfs_subr.c */
 
 #define PROCFS_WCHAN_SCAN_MAX  2048     /* struct-thread bytes scanned for the offset */
 
@@ -867,32 +868,39 @@ procfs_wchan_discover(void)
  * Fill *unslid with the un-slid kernel address of the process's representative
  * thread's continuation (the wchan), or 0 if it has none. Returns 0 on success.
  */
+#define PROCFS_WCHAN_MAX_THREADS 64
+
+/*
+ * Fill *runtime with the (PAC-stripped) runtime kernel address of the process's
+ * representative blocked thread's continuation - its wchan - or 0 if it has none.
+ * The caller subtracts the kernel slide to get the symbol-source address and
+ * symbolizes it. Returns 0 on success.
+ */
 int
-procfs_thread_wchan_unslid(proc_t p, uint64_t *unslid)
+procfs_thread_continuation(proc_t p, uint64_t *runtime)
 {
-    *unslid = 0;
+    *runtime = 0;
+
     procfs_wchan_discover();
     if (g_continuation_off < 0) {
         return ENOTSUP;                 /* discovery unavailable */
     }
 
-    thread_t th = procfs_get_representative_thread(p);
-    if (th == THREAD_NULL) {
-        return ESRCH;
-    }
-    uintptr_t addr = (uintptr_t)th + (uintptr_t)g_continuation_off;
-    if (!procfs_kernel_ptr_ok((uintptr_t)th) || !procfs_kernel_ptr_ok(addr)) {
-        return ESRCH;
-    }
+    thread_t th[PROCFS_WCHAN_MAX_THREADS];
+    int nth = procfs_get_thread_ptrs(p, th, PROCFS_WCHAN_MAX_THREADS);
 
-    uintptr_t raw = *(const uintptr_t *)addr;
-    if (raw == 0) {
-        return 0;                       /* no continuation -> caller reports "0" */
+    for (int i = 0; i < nth; i++) {
+        uintptr_t base = (uintptr_t)th[i];
+        uintptr_t addr = base + (uintptr_t)g_continuation_off;
+        if (!procfs_kernel_ptr_ok(base) || !procfs_kernel_ptr_ok(addr)) {
+            continue;
+        }
+        uintptr_t v = *(const uintptr_t *)addr;
+        if (v != 0) {                   /* first thread with a continuation */
+            *runtime = (uint64_t)(uintptr_t)ptrauth_strip((void *)v,
+                ptrauth_key_function_pointer);
+            break;
+        }
     }
-    uintptr_t stripped = (uintptr_t)ptrauth_strip((void *)raw,
-        ptrauth_key_function_pointer);
-    vm_offset_t un = 0;
-    vm_kernel_unslide_or_perm_external((vm_offset_t)stripped, &un);
-    *unslid = (uint64_t)un;
     return 0;
 }

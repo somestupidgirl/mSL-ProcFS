@@ -136,10 +136,14 @@ enum {
                                  * list of macOS's miscellaneous character devices
                                  * (derived from /dev, as XNU has no misc-device
                                  * registry). Linux /proc/misc. */
-    PROCFS_REQ_KSYM_LOOKUP = 40, /* arg = an unslid kernel text address; payload =
-                                  * the name of the nearest preceding kernel symbol
-                                  * (empty if none). Used to symbolize a blocked
-                                  * thread's continuation for /proc/<pid>/wchan. */
+    PROCFS_REQ_KSYM_LOOKUP = 40, /* arg = a kernel text address in the wchan symbol
+                                  * source's layout; payload = the name of the
+                                  * nearest preceding symbol (empty if none). Used
+                                  * to symbolize a blocked thread's continuation
+                                  * for /proc/<pid>/wchan. */
+    PROCFS_REQ_KSYM_REF   = 41, /* payload = uint64 address of the reference symbol
+                                 * (_proc_pid) in the wchan symbol source, so the
+                                 * kext can compute the running kernel's slide. */
 };
 
 /*

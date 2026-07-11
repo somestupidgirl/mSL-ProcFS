@@ -1295,6 +1295,70 @@ ksym_collect_macho(const uint8_t *base, size_t size,
     }
 }
 
+/*
+ * Symbol source for /proc/<pid>/wchan. The stripped running-kernel image exports
+ * only ~6900 symbols (no local functions), and thread continuations are almost
+ * always local (wait1continue, ipc_mqueue_receive_continue, ...). So we prefer
+ * the matching Kernel Debug Kit's dSYM, which carries the full symbol table at
+ * the same (release) layout the running kernel uses: /Library/Developer/KDKs/
+ * *<build>*.kdk/System/Library/Kernels/kernel.release.<soc>.dSYM/.../DWARF/
+ * kernel.release.<soc>. Falls back to the stripped image (KPI symbols only) when
+ * no matching KDK is installed.
+ */
+static void
+ksyms_wchan_source_path(char *out, size_t cap)
+{
+    out[0] = '\0';
+
+    /* SoC from kern.version (ARM64_T8103 -> t8103), running build from
+     * kern.osversion (e.g. 25F84). */
+    char   soc[32] = { 0 };
+    char   ver[512];
+    size_t vs = sizeof(ver);
+    if (sysctlbyname("kern.version", ver, &vs, NULL, 0) == 0) {
+        char *m = strstr(ver, "ARM64_");
+        if (m != NULL) {
+            m += 6;
+            int j = 0;
+            while (*m != '\0' && isalnum((unsigned char)*m) &&
+                   j < (int)sizeof(soc) - 1) {
+                soc[j++] = (char)tolower((unsigned char)*m++);
+            }
+            soc[j] = '\0';
+        }
+    }
+    char   build[64] = { 0 };
+    size_t bs = sizeof(build);
+    (void)sysctlbyname("kern.osversion", build, &bs, NULL, 0);
+
+    if (soc[0] != '\0' && build[0] != '\0') {
+        DIR *d = opendir("/Library/Developer/KDKs");
+        if (d != NULL) {
+            struct dirent *de;
+            while ((de = readdir(d)) != NULL) {
+                if (strstr(de->d_name, build) == NULL) {
+                    continue;           /* KDK for a different build */
+                }
+                char p[PATH_MAX];
+                snprintf(p, sizeof(p),
+                    "/Library/Developer/KDKs/%s/System/Library/Kernels/"
+                    "kernel.release.%s.dSYM/Contents/Resources/DWARF/"
+                    "kernel.release.%s", de->d_name, soc, soc);
+                struct stat st;
+                if (stat(p, &st) == 0) {
+                    strlcpy(out, p, cap);
+                    break;
+                }
+            }
+            closedir(d);
+        }
+    }
+
+    if (out[0] == '\0') {
+        ksyms_kernel_path(out, cap);    /* fallback: stripped kernel image */
+    }
+}
+
 static void
 ksym_table_build(void)
 {
@@ -1302,7 +1366,7 @@ ksym_table_build(void)
         return;                         /* built once */
     }
     char path[PATH_MAX];
-    ksyms_kernel_path(path, sizeof(path));
+    ksyms_wchan_source_path(path, sizeof(path));
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
         return;
@@ -1376,6 +1440,21 @@ ksym_lookup(uint64_t addr, char *out, size_t cap)
         return;                         /* >1MB past a symbol -> not a real match */
     }
     strlcpy(out, e->name, cap);
+}
+
+/* Address (in the wchan symbol source) of a named symbol, or 0. The kext uses a
+ * reference symbol (proc_pid) to compute the running kernel's slide relative to
+ * this symbol source. */
+static uint64_t
+ksym_addr_of(const char *name)
+{
+    ksym_table_build();
+    for (size_t i = 0; i < g_ksym_n; i++) {
+        if (strcmp(g_ksym_tab[i].name, name) == 0) {
+            return g_ksym_tab[i].val;
+        }
+    }
+    return 0;
 }
 
 /*
@@ -2826,8 +2905,8 @@ main(__unused int argc, __unused char **argv)
             break;
         }
         case PROCFS_REQ_KSYM_LOOKUP: {
-            /* req->arg = an unslid kernel text address; reply = the symbol name
-             * (empty reply -> the kext reports wchan as "0"). */
+            /* req->arg = a kernel text address in the wchan symbol source's
+             * layout; reply = the symbol name (empty -> kext reports "0"). */
             char nm[128];
             ksym_lookup(req->arg, nm, sizeof(nm));
             size_t n = strlen(nm);
@@ -2838,6 +2917,14 @@ main(__unused int argc, __unused char **argv)
                 memcpy(payload, nm, n);
                 resp->len = (uint32_t)n;
             }
+            break;
+        }
+        case PROCFS_REQ_KSYM_REF: {
+            /* Address of _proc_pid in the wchan symbol source, so the kext can
+             * derive the running kernel's slide. */
+            uint64_t a = ksym_addr_of("_proc_pid");
+            memcpy(payload, &a, sizeof(a));
+            resp->len = sizeof(a);
             break;
         }
         case PROCFS_REQ_ALLOCINFO: {

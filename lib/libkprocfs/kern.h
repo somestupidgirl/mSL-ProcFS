@@ -43,6 +43,6 @@ extern void procfs_build_locks(struct sbuf *sb, vfs_context_t ctx);
  * thread's continuation (its wchan), or 0 if it has none. Returns 0 on success.
  * The continuation-field offset is discovered once at runtime. See kern.c.
  */
-extern int procfs_thread_wchan_unslid(proc_t p, uint64_t *unslid);
+extern int procfs_thread_continuation(proc_t p, uint64_t *runtime);
 
 #endif

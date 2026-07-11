@@ -2191,16 +2191,49 @@ procfs_docpu(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 /*
  * /proc/<pid>/wchan - the kernel symbol the task is blocked in (Linux's
  * CONFIG_KALLSYMS wchan), or "0" if it is not blocked. XNU exposes no KPI for
- * this, so libkprocfs recovers it directly: it reads the process's representative
- * thread's continuation - the function a blocked thread resumes at, i.e. exactly
- * the wchan - un-slides it to the kernel link address, and the procfsd daemon
- * names it against the kernel symbol table (PROCFS_REQ_KSYM_LOOKUP). The offset
- * of the continuation field in the opaque struct thread is discovered once at
- * runtime (see procfs_thread_wchan_unslid). A thread with no continuation, or a
- * symbol that cannot be resolved (e.g. no daemon), yields "0". The macOS symbol's
- * leading underscore is stripped to match Linux's C-name style. No trailing
- * newline, as on Linux.
+ * this, so it is recovered directly:
+ *
+ *   1. libkprocfs reads the process's representative blocked thread's
+ *      continuation - the function a blocked thread resumes at, i.e. exactly the
+ *      wchan - PAC-stripped (procfs_thread_continuation). The offset of the
+ *      continuation field in the opaque struct thread is discovered once at
+ *      runtime (procfs_wchan_discover), so no fragile hard-coded offsets.
+ *   2. The continuation is a slid runtime address. vm_kernel_unslide permutes it
+ *      (useless), so instead we measure the running kernel's slide once from a
+ *      reference symbol (proc_pid): slide = runtime(&proc_pid) - the daemon's
+ *      address for _proc_pid in its symbol source (PROCFS_REQ_KSYM_REF).
+ *   3. continuation - slide is the address in the daemon's symbol source, which
+ *      the daemon names (PROCFS_REQ_KSYM_LOOKUP). The daemon uses the matching
+ *      Kernel Debug Kit's dSYM (full symbols incl. locals) when installed, else
+ *      the stripped kernel image (KPI symbols only - most continuations then
+ *      won't resolve and yield "0").
+ *
+ * A thread with no continuation, no matching daemon/KDK, or an unresolvable
+ * address yields "0". The Mach C-symbol leading underscore is stripped to match
+ * Linux's C-name style; no trailing newline, as on Linux.
  */
+/* Running kernel's slide relative to the daemon's wchan symbol source (dSYM),
+ * measured once from the reference symbol proc_pid. */
+static volatile int64_t g_wchan_slide       = 0;
+static volatile int     g_wchan_slide_known = 0;
+
+static void
+procfs_wchan_init_slide(void)
+{
+    if (g_wchan_slide_known) {
+        return;
+    }
+    uint64_t ref = 0;
+    uint32_t got = 0;
+    if (procfs_ctl_request(PROCFS_REQ_KSYM_REF, 0, 0, &ref, sizeof(ref), &got) == 0 &&
+        got == sizeof(ref) && ref != 0) {
+        uintptr_t rt = (uintptr_t)ptrauth_strip((void *)proc_pid,
+            ptrauth_key_function_pointer);
+        g_wchan_slide = (int64_t)((uint64_t)rt - ref);
+        g_wchan_slide_known = 1;
+    }
+}
+
 int
 procfs_dowchan(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
@@ -2211,24 +2244,31 @@ procfs_dowchan(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
     if (p != PROC_NULL) {
-        uint64_t unslid = 0;
-        if (procfs_thread_wchan_unslid(p, &unslid) == 0 && unslid != 0) {
+        procfs_wchan_init_slide();
+
+        uint64_t runtime = 0;
+        (void)procfs_thread_continuation(p, &runtime);
+        proc_rele(p);
+
+        if (runtime != 0 && g_wchan_slide_known) {
+            /* Map the runtime continuation to the symbol source's layout. */
+            uint64_t img = runtime - (uint64_t)g_wchan_slide;
             char     sym[128];
             uint32_t got = 0;
-            if (procfs_ctl_request(PROCFS_REQ_KSYM_LOOKUP, 0, unslid,
+            if (procfs_ctl_request(PROCFS_REQ_KSYM_LOOKUP, 0, img,
                     sym, sizeof(sym) - 1, &got) == 0 && got > 0) {
                 if (got > sizeof(sym) - 1) {
                     got = sizeof(sym) - 1;
                 }
                 sym[got] = '\0';
                 if (sym[0] != '\0') {
+                    /* Drop the Mach C-symbol leading underscore for Linux style. */
                     const char *s = (sym[0] == '_') ? sym + 1 : sym;
                     strlcpy(name, s, sizeof(name));
                     outlen = (int)strlen(name);
                 }
             }
         }
-        proc_rele(p);
     }
 
     return procfs_copy_data(name, outlen, uio);

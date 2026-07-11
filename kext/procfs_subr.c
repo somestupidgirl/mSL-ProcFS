@@ -511,6 +511,35 @@ procfs_kernel_ptr_ok(uintptr_t va)
 }
 
 /*
+ * Fills out[] with up to max of a process's thread pointers (uthread -
+ * sizeof(struct thread), each pmap-validated) and returns the count. Lets
+ * /proc/<pid>/wchan scan all threads for a blocked one rather than only the
+ * first. Same opaque-struct-safe walk as procfs_get_thread_ids_for_task.
+ */
+int
+procfs_get_thread_ptrs(proc_t p, thread_t *out, int max)
+{
+    procfs_thread_size_init();
+    if (!g_thread_size_known || p == PROC_NULL || out == NULL || max <= 0) {
+        return 0;
+    }
+    int n = 0;
+    uthread_t uth = TAILQ_FIRST(&p->p_uthlist);
+    while (uth != NULL && n < max && n < PROCFS_MAX_THREADS) {
+        uintptr_t u = (uintptr_t)uth;
+        if (!procfs_kptr_ok(u)) {
+            break;
+        }
+        thread_t thread = (thread_t)(u - g_thread_struct_size);
+        if (procfs_kptr_ok((uintptr_t)thread)) {
+            out[n++] = thread;
+        }
+        uth = TAILQ_NEXT(uth, uu_list);
+    }
+    return n;
+}
+
+/*
  * Releases the memory allocated by an earlier successful call to
  * the get_thread_ids_for_task() function.
  */
