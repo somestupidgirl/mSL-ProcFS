@@ -3229,6 +3229,19 @@ procfs_donetudp6(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/net/unix - the Linux unix-domain socket table. Same daemon path as the
+ * inet tables, sourced from net.local.{stream,dgram}.pcblist_n; see the daemon's
+ * build_net_unix_blob. Without a daemon the node shows just the header.
+ */
+int
+procfs_donetunix(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char hdr[] =
+        "Num       RefCount Protocol Flags    Type St Inode Path\n";
+    return procfs_net_pcb_node(uio, PROCFS_REQ_NETUNIX, hdr, sizeof(hdr) - 1);
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon

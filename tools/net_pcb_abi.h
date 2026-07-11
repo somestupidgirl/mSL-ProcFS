@@ -23,6 +23,7 @@
 
 #include <sys/types.h>
 #include <netinet/in.h>
+#include <sys/un.h>
 
 /* Block kinds (bsd/sys/socketvar.h). */
 #define XSO_SOCKET      0x001
@@ -31,6 +32,10 @@
 #define XSO_STATS       0x008
 #define XSO_INPCB       0x010
 #define XSO_TCPCB       0x020
+#define XSO_UNPCB       0x200
+
+/* so_state bit (bsd/sys/socketvar.h). */
+#define PROCFS_SS_ISCONNECTED   0x0002
 
 /* inp_vflag (bsd/netinet/in_pcb.h). */
 #define INP_IPV4        0x1
@@ -88,7 +93,8 @@ struct procfs_xinpcb_n {
 
 #pragma pack()
 
-/* --- natural-alignment group (bsd/sys/socketvar.h, tcp_var.h) --- */
+/* --- #pragma pack(4) group (bsd/sys/socketvar.h, lines 425-575) --- */
+#pragma pack(4)
 
 struct procfs_xsockbuf_n {
 	u_int32_t       xsb_len;
@@ -102,8 +108,7 @@ struct procfs_xsockbuf_n {
 	short           sb_timeo;
 };
 
-/* xsocket_n through the fields we read (so_uid). Walking uses xso_len, so a
- * trailing truncation would be harmless, but the full struct is kept for clarity. */
+/* xsocket_n through the fields we read (so_uid, so_usecount). */
 struct procfs_xsocket_n {
 	u_int32_t       xso_len;
 	u_int32_t       xso_kind;        /* XSO_SOCKET */
@@ -125,9 +130,18 @@ struct procfs_xsocket_n {
 	uid_t           so_uid;
 	pid_t           so_last_pid;
 	pid_t           so_e_pid;
+	procfs_so_gen_t so_gencnt;
+	u_int32_t       so_flags;
+	u_int32_t       so_flags1;
+	int32_t         so_usecount;
+	int32_t         so_retaincnt;
+	u_int32_t       xso_filter_flags;
 };
 
-/* xtcpcb_n prefix through t_state. TCPT_NTIMERS_EXT == 4 in the pinned XNU. */
+/* xtcpcb_n prefix through t_state (bsd/netinet/tcp_var.h, also #pragma pack(4);
+ * the prefix has no alignment gaps so packed and natural offsets coincide, but
+ * matching the kernel's packing keeps it correct if extended).
+ * TCPT_NTIMERS_EXT == 4 in the pinned XNU. */
 #define PROCFS_TCPT_NTIMERS_EXT 4
 struct procfs_xtcpcb_n_pre {
 	u_int32_t       xt_len;
@@ -137,5 +151,42 @@ struct procfs_xtcpcb_n_pre {
 	int             t_timer[PROCFS_TCPT_NTIMERS_EXT];
 	int             t_state;         /* macOS TCPS_* */
 };
+
+#pragma pack()
+
+/* --- unix-domain PCB list (bsd/sys/unpcb.h, #pragma pack(4)) --- */
+#pragma pack(4)
+
+struct procfs_xunpgen {
+	u_int32_t       xug_len;
+	u_int           xug_count;
+	u_int64_t       xug_gen;
+	u_int64_t       xug_sogen;
+};
+
+struct procfs_xunpcb_n {
+	u_int32_t       xunp_len;        /* length of this structure */
+	u_int32_t       xunp_kind;       /* XSO_UNPCB */
+	u_int64_t       xunp_unpp;       /* hashed pcb address (Num) */
+	u_int64_t       xunp_vnode;
+	u_int64_t       xunp_ino;        /* fake inode number */
+	u_int64_t       xunp_conn;
+	u_int64_t       xunp_refs;
+	u_int64_t       xunp_reflink;
+	int             xunp_cc;
+	int             xunp_mbcnt;
+	int             xunp_flags;
+	u_int64_t       xunp_gencnt;
+	union {
+		struct sockaddr_un xuu_addr; /* our bound address */
+		char               xu_dummy1[256];
+	} xu_au;
+	union {
+		struct sockaddr_un xuu_caddr;
+		char               xu_dummy2[256];
+	} xu_cau;
+};
+
+#pragma pack()
 
 #endif /* PROCFS_NET_PCB_ABI_H */

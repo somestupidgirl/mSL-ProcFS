@@ -157,6 +157,9 @@ enum {
     PROCFS_REQ_NETUDP     = 45, /* arg = byte offset; /proc/net/udp (IPv4 UDP)
                                  * from net.inet.udp.pcblist_n. */
     PROCFS_REQ_NETUDP6    = 46, /* arg = byte offset; /proc/net/udp6 (IPv6 UDP). */
+    PROCFS_REQ_NETUNIX    = 47, /* arg = byte offset; chunked Linux /proc/net/unix
+                                 * (unix-domain sockets) built from the
+                                 * net.local.{stream,dgram}.pcblist_n sysctls. */
 };
 
 /*

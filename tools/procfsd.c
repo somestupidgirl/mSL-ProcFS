@@ -272,6 +272,8 @@ static char  *g_netudp_blob = NULL;  /* Linux format (/proc/net/udp) */
 static size_t g_netudp_blob_len = 0;
 static char  *g_netudp6_blob = NULL; /* Linux format (/proc/net/udp6) */
 static size_t g_netudp6_blob_len = 0;
+static char  *g_netunix_blob = NULL; /* Linux format (/proc/net/unix) */
+static size_t g_netunix_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -2209,6 +2211,147 @@ build_net_pcb_blob(const char *sysctlname, int want_vflag, int is_tcp,
 }
 
 /*
+ * /proc/net/unix - the Linux unix-domain socket table. macOS keeps the same
+ * data behind net.local.{stream,dgram}.pcblist_n (the sysctls netstat reads for
+ * "Active LOCAL (UNIX) domain sockets"); both are walked and merged into one
+ * table. The block stream is the same shape as the inet pcblist_n
+ * (xunpgen header, then per socket xunpcb_n[XSO_UNPCB], xsocket_n[XSO_SOCKET],
+ * xsockbuf_n rcv/snd, xsockstat_n, then a trailing xunpgen). macOS supplies a
+ * real fake-inode (xunp_ino) and bound path, so those Linux columns are exact;
+ * RefCount maps to the socket use count, Flags carries SO_ACCEPTCONN as Linux's
+ * SO_ACCEPTON, Type is SOCK_STREAM/DGRAM/SEQPACKET and St is 03 (connected) or
+ * 01 (unconnected/listening).
+ */
+static void
+build_net_unix_blob(char **blobp, size_t *lenp)
+{
+	free(*blobp);
+	*blobp = NULL;
+	*lenp = 0;
+
+	char  *out = NULL;
+	size_t osz = 0;
+	FILE  *f   = open_memstream(&out, &osz);
+	if (f == NULL) {
+		return;
+	}
+	fprintf(f, "Num       RefCount Protocol Flags    Type St "
+	           "Inode Path\n");
+
+	static const char *names[] = {
+		"net.local.stream.pcblist_n",
+		"net.local.dgram.pcblist_n",
+	};
+	int sl = 0;
+
+	for (unsigned s = 0; s < sizeof(names) / sizeof(names[0]); s++) {
+		void  *buf = NULL;
+		size_t len = 0;
+		int    ok  = 0;
+		for (int attempt = 0; attempt < 6; attempt++) {
+			size_t need = 0;
+			if (sysctlbyname(names[s], NULL, &need, NULL, 0) != 0 || need == 0) {
+				break;
+			}
+			need += need / 8 + 4096;
+			void *nb = realloc(buf, need);
+			if (nb == NULL) {
+				break;
+			}
+			buf = nb;
+			len = need;
+			if (sysctlbyname(names[s], buf, &len, NULL, 0) == 0) {
+				ok = 1;
+				break;
+			}
+			if (errno != ENOMEM) {
+				break;
+			}
+		}
+		if (!ok || buf == NULL || len < sizeof(struct procfs_xunpgen)) {
+			free(buf);
+			continue;
+		}
+
+		const char *base = (const char *)buf;
+		const char *end  = base + len;
+		const struct procfs_xunpgen *xug = (const struct procfs_xunpgen *)base;
+		const char *p = base + PROCFS_ROUNDUP64(xug->xug_len);
+
+		const struct procfs_xunpcb_n  *xu  = NULL;
+		const struct procfs_xsocket_n *xso = NULL;
+
+		#define EMIT_UNIX() do {                                                 \
+			if (xu != NULL) {                                                    \
+				unsigned type  = xso ? (unsigned)xso->so_type : 0;               \
+				unsigned refcnt = xso ? (unsigned)xso->so_usecount : 0;          \
+				unsigned listen = (xso && (xso->so_options & SO_ACCEPTCONN));    \
+				unsigned flags = listen ? 0x00010000u : 0u;                      \
+				unsigned st = (!listen && xso &&                                 \
+				    (xso->so_state & PROCFS_SS_ISCONNECTED)) ? 3u : 1u;          \
+				char path[128];                                                  \
+				path[0] = '\0';                                                  \
+				const char *sp = xu->xu_au.xuu_addr.sun_path;                    \
+				if (sp[0] != '\0') {                                             \
+					size_t n = strnlen(sp, sizeof(xu->xu_au.xuu_addr.sun_path)); \
+					if (n >= sizeof(path)) n = sizeof(path) - 1;                 \
+					memcpy(path, sp, n);                                         \
+					path[n] = '\0';                                             \
+				}                                                                \
+				fprintf(f, "%016llx: %08X %08X %08X %04X %02X %5llu",            \
+				    (unsigned long long)xu->xunp_unpp, refcnt, 0u, flags,        \
+				    type, st, (unsigned long long)xu->xunp_ino);                 \
+				if (path[0] != '\0') {                                           \
+					fprintf(f, " %s", path);                                     \
+				}                                                                \
+				fprintf(f, "\n");                                                \
+				sl++;                                                            \
+			}                                                                    \
+		} while (0)
+
+		while (p + 2 * sizeof(uint32_t) <= end) {
+			uint32_t blen, kind;
+			memcpy(&blen, p, sizeof(blen));
+			memcpy(&kind, p + sizeof(uint32_t), sizeof(kind));
+			if (blen < 2 * sizeof(uint32_t)) {
+				break;
+			}
+			size_t adv = PROCFS_ROUNDUP64(blen);
+			if (p + adv > end || adv == 0) {
+				break;
+			}
+			switch (kind) {
+			case XSO_UNPCB:
+				EMIT_UNIX();            /* flush previous */
+				xu = (const struct procfs_xunpcb_n *)p;
+				xso = NULL;
+				break;
+			case XSO_SOCKET:
+				xso = (const struct procfs_xsocket_n *)p;
+				break;
+			case XSO_RCVBUF:
+			case XSO_SNDBUF:
+			case XSO_STATS:
+				break;
+			default:
+				p = end;               /* trailing xunpgen -> stop */
+				continue;
+			}
+			p += adv;
+		}
+		EMIT_UNIX();                   /* flush final */
+		#undef EMIT_UNIX
+
+		free(buf);
+	}
+
+	(void)sl;
+	fclose(f);
+	*blobp = out;
+	*lenp = osz;
+}
+
+/*
  * /proc/fb support. macOS drives displays through IOKit framebuffers -
  * IOFramebuffer on Intel, IOMobileFramebuffer on Apple Silicon - so enumerate
  * both classes and emit one Linux "<index> <name>" line per device, using the
@@ -3288,6 +3431,14 @@ main(__unused int argc, __unused char **argv)
                                    &g_netudp6_blob, &g_netudp6_blob_len);
             }
             blob_slice(g_netudp6_blob, g_netudp6_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_NETUNIX: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_net_unix_blob(&g_netunix_blob, &g_netunix_blob_len);
+            }
+            blob_slice(g_netunix_blob, g_netunix_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_SLABINFO: {
