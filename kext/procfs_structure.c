@@ -358,6 +358,16 @@ procfs_structure_init(void)
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
         pfssnode_t *netdev = add_node(net_dir, "dev",
                         PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetdev);
+        // TCP/UDP connection tables (via procfsd's net.inet.*.pcblist_n). All
+        // reuse the PFSnetdev node class; each has its own read handler.
+        pfssnode_t *nettcp = add_node(net_dir, "tcp",
+                        PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donettcp);
+        pfssnode_t *nettcp6 = add_node(net_dir, "tcp6",
+                        PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donettcp6);
+        pfssnode_t *netudp = add_node(net_dir, "udp",
+                        PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetudp);
+        pfssnode_t *netudp6 = add_node(net_dir, "udp6",
+                        PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetudp6);
 
         // A pseudo-entry below "byname" that is replaced by nodes for all of the visible processes.
         // NOTE: this must be the last child entry for the "byname" node.

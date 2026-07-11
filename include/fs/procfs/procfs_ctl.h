@@ -149,6 +149,14 @@ enum {
                                  * entries (present/swap/file/dirty; PFN hidden)
                                  * from mach_vm_page_query. Empty = past the last
                                  * mapped region (EOF) or task_for_pid denied. */
+    PROCFS_REQ_NETTCP     = 43, /* arg = byte offset; chunked Linux /proc/net/tcp
+                                 * (IPv4 TCP connection table) built from the
+                                 * net.inet.tcp.pcblist_n sysctl. */
+    PROCFS_REQ_NETTCP6    = 44, /* arg = byte offset; /proc/net/tcp6 (IPv6 TCP),
+                                 * same sysctl filtered to INP_IPV6. */
+    PROCFS_REQ_NETUDP     = 45, /* arg = byte offset; /proc/net/udp (IPv4 UDP)
+                                 * from net.inet.udp.pcblist_n. */
+    PROCFS_REQ_NETUDP6    = 46, /* arg = byte offset; /proc/net/udp6 (IPv6 UDP). */
 };
 
 /*

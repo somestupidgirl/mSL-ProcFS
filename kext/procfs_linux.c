@@ -3167,6 +3167,68 @@ procfs_dosysvipc_msg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
 }
 
 /*
+ * /proc/net/{tcp,tcp6,udp,udp6} - the Linux TCP/UDP connection tables. XNU has
+ * no in-kernel KPI to enumerate the inpcb tables, so - as netstat(1) does in
+ * userspace - the procfsd daemon reads them via the net.inet.{tcp,udp}.pcblist_n
+ * sysctls and reformats each connection into the Linux per-line layout (see the
+ * daemon's build_net_pcb_blob). Chunked transfer like the other daemon nodes;
+ * without a connected daemon the node falls back to just the Linux header line,
+ * which is what Linux shows when there are no sockets of that type.
+ */
+static int
+procfs_net_pcb_node(uio_t uio, uint32_t req_type, const char *hdr, int hdrlen)
+{
+    struct sbuf sb;
+    if (sbuf_new(&sb, NULL, 2048, SBUF_AUTOEXTEND) == NULL) {
+        return ENOMEM;
+    }
+
+    int error = procfs_ctl_request_blob(req_type, &sb);
+    if (error != 0) {
+        sbuf_delete(&sb);
+        /* No daemon: still show the header (an empty table), as Linux does. */
+        return (error == ENOTCONN) ? procfs_copy_data(hdr, hdrlen, uio) : error;
+    }
+
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_delete(&sb);
+    return error;
+}
+
+int
+procfs_donettcp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char hdr[] =
+        "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+    return procfs_net_pcb_node(uio, PROCFS_REQ_NETTCP, hdr, sizeof(hdr) - 1);
+}
+
+int
+procfs_donettcp6(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char hdr[] =
+        "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+    return procfs_net_pcb_node(uio, PROCFS_REQ_NETTCP6, hdr, sizeof(hdr) - 1);
+}
+
+int
+procfs_donetudp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char hdr[] =
+        "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+    return procfs_net_pcb_node(uio, PROCFS_REQ_NETUDP, hdr, sizeof(hdr) - 1);
+}
+
+int
+procfs_donetudp6(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char hdr[] =
+        "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+    return procfs_net_pcb_node(uio, PROCFS_REQ_NETUDP6, hdr, sizeof(hdr) - 1);
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon

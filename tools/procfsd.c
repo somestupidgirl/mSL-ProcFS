@@ -45,6 +45,8 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <sys/msg.h>
+#include <netinet/in.h>
+#include "net_pcb_abi.h"        /* vendored pcblist_n ABI for /proc/net/{tcp,udp}* */
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
 #include <IOKit/kext/KextManager.h>
@@ -262,6 +264,14 @@ static char  *g_intr_blob = NULL;  /* Linux format (/proc/interrupts) */
 static size_t g_intr_blob_len = 0;
 static char  *g_tty_blob = NULL;   /* Linux format (/proc/tty/drivers) */
 static size_t g_tty_blob_len = 0;
+static char  *g_nettcp_blob = NULL;  /* Linux format (/proc/net/tcp) */
+static size_t g_nettcp_blob_len = 0;
+static char  *g_nettcp6_blob = NULL; /* Linux format (/proc/net/tcp6) */
+static size_t g_nettcp6_blob_len = 0;
+static char  *g_netudp_blob = NULL;  /* Linux format (/proc/net/udp) */
+static size_t g_netudp_blob_len = 0;
+static char  *g_netudp6_blob = NULL; /* Linux format (/proc/net/udp6) */
+static size_t g_netudp6_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -2003,6 +2013,202 @@ build_sysvipc_msg_blob(char **blobp, size_t *lenp)
 }
 
 /*
+ * /proc/net/{tcp,tcp6,udp,udp6} support. Linux exposes the kernel's TCP/UDP
+ * connection tables here; macOS keeps the same data in the inpcb tables that
+ * netstat(1) reads through the net.inet.{tcp,udp}.pcblist_n sysctls, so procfsd
+ * fetches that stream and reformats it into the Linux per-connection layout.
+ *
+ * pcblist_n returns a leading struct xinpgen, then one length-tagged block per
+ * kind (xinpcb_n, xsocket_n, xsockbuf_n rcv/snd, xsockstat_n, and for TCP
+ * xtcpcb_n) per socket, ROUNDUP64-aligned, then a trailing xinpgen. The walk
+ * below advances by each block's own on-wire length and classifies by kind, so
+ * an XSO_INPCB block starts a new record and a block of an unknown kind (the
+ * trailing xinpgen) ends the stream. Each record is emitted only if its
+ * inp_vflag matches the requested address family, giving the v4/v6 split.
+ *
+ * Addresses are printed exactly as Linux does: the in_addr is already in network
+ * byte order, so on this little-endian host printing the raw 32-bit word yields
+ * Linux's byte-reversed hex (127.0.0.1 -> 0100007F); ports are host-order hex.
+ * The socket "st" column maps macOS TCPS_* to the Linux TCP_* state numbers; UDP
+ * has no state, so a connected socket shows 01 (ESTABLISHED) and an unconnected
+ * one 07 (CLOSE), as on Linux. macOS exposes no socket inode number, so the
+ * inode column is 0 (tools that need fd<->socket correlation use lsof on macOS).
+ */
+#define PROCFS_ROUNDUP64(x) (((x) + 7u) & ~((size_t)7u))
+
+/* macOS TCPS_* (index) -> Linux TCP_* state number. */
+static const unsigned char procfs_tcp_state_linux[] = {
+	[0]  = 7,   /* TCPS_CLOSED       -> TCP_CLOSE      */
+	[1]  = 10,  /* TCPS_LISTEN       -> TCP_LISTEN     */
+	[2]  = 2,   /* TCPS_SYN_SENT     -> TCP_SYN_SENT   */
+	[3]  = 3,   /* TCPS_SYN_RECEIVED -> TCP_SYN_RECV   */
+	[4]  = 1,   /* TCPS_ESTABLISHED  -> TCP_ESTABLISHED*/
+	[5]  = 8,   /* TCPS_CLOSE_WAIT   -> TCP_CLOSE_WAIT */
+	[6]  = 4,   /* TCPS_FIN_WAIT_1   -> TCP_FIN_WAIT1  */
+	[7]  = 11,  /* TCPS_CLOSING      -> TCP_CLOSING    */
+	[8]  = 9,   /* TCPS_LAST_ACK     -> TCP_LAST_ACK   */
+	[9]  = 5,   /* TCPS_FIN_WAIT_2   -> TCP_FIN_WAIT2  */
+	[10] = 6,   /* TCPS_TIME_WAIT    -> TCP_TIME_WAIT  */
+};
+
+static void
+build_net_pcb_blob(const char *sysctlname, int want_vflag, int is_tcp,
+    char **blobp, size_t *lenp)
+{
+	free(*blobp);
+	*blobp = NULL;
+	*lenp = 0;
+
+	int v6 = (want_vflag == INP_IPV6);
+
+	char  *out = NULL;
+	size_t osz = 0;
+	FILE  *f   = open_memstream(&out, &osz);
+	if (f == NULL) {
+		return;
+	}
+
+	/* Linux header line (v4 and v6 differ only in address-column width). */
+	if (v6) {
+		fprintf(f, "  sl  local_address                         "
+		           "remote_address                        st tx_queue rx_queue tr"
+		           " tm->when retrnsmt   uid  timeout inode\n");
+	} else {
+		fprintf(f, "  sl  local_address rem_address   st tx_queue rx_queue tr"
+		           " tm->when retrnsmt   uid  timeout inode\n");
+	}
+
+	/* Fetch the pcblist_n stream (size, then data; retry a few times if the
+	 * table grows between the two calls). */
+	void  *buf = NULL;
+	size_t len = 0;
+	int    ok  = 0;
+	for (int attempt = 0; attempt < 6; attempt++) {
+		size_t need = 0;
+		if (sysctlbyname(sysctlname, NULL, &need, NULL, 0) != 0 || need == 0) {
+			break;
+		}
+		need += need / 8 + 4096;        /* slack for growth */
+		void *nb = realloc(buf, need);
+		if (nb == NULL) {
+			break;
+		}
+		buf = nb;
+		len = need;
+		if (sysctlbyname(sysctlname, buf, &len, NULL, 0) == 0) {
+			ok = 1;
+			break;
+		}
+		if (errno != ENOMEM) {
+			break;
+		}
+	}
+	if (!ok || buf == NULL || len < sizeof(struct procfs_xinpgen)) {
+		free(buf);
+		fclose(f);
+		*blobp = out;
+		*lenp = osz;
+		return;
+	}
+
+	const char *base = (const char *)buf;
+	const char *end  = base + len;
+	const struct procfs_xinpgen *xig = (const struct procfs_xinpgen *)base;
+	const char *p = base + PROCFS_ROUNDUP64(xig->xig_len);
+
+	const struct procfs_xinpcb_n     *xi  = NULL;
+	const struct procfs_xsocket_n    *xso = NULL;
+	const struct procfs_xtcpcb_n_pre *xt  = NULL;
+	const struct procfs_xsockbuf_n   *rcv = NULL, *snd = NULL;
+	int sl = 0;
+
+	/* Emit one accumulated record if it matches the wanted family. */
+	#define EMIT_RECORD() do {                                                   \
+		if (xi != NULL && (xi->inp_vflag & want_vflag)) {                        \
+			unsigned lport = ntohs(xi->inp_lport);                               \
+			unsigned fport = ntohs(xi->inp_fport);                               \
+			unsigned st;                                                         \
+			if (is_tcp) {                                                        \
+				int ts = xt ? xt->t_state : 0;                                   \
+				st = (ts >= 0 && ts < (int)(sizeof(procfs_tcp_state_linux)))     \
+				     ? procfs_tcp_state_linux[ts] : 0;                           \
+			} else {                                                             \
+				st = (xi->inp_fport != 0) ? 1u : 7u;                             \
+			}                                                                    \
+			unsigned uid = xso ? (unsigned)xso->so_uid : 0;                      \
+			unsigned txq = snd ? snd->sb_cc : 0;                                 \
+			unsigned rxq = rcv ? rcv->sb_cc : 0;                                 \
+			if (v6) {                                                            \
+				const uint32_t *la =                                             \
+				    (const uint32_t *)&xi->inp_dependladdr.inp6_local;           \
+				const uint32_t *fa =                                             \
+				    (const uint32_t *)&xi->inp_dependfaddr.inp6_foreign;         \
+				fprintf(f, "%4d: %08X%08X%08X%08X:%04X %08X%08X%08X%08X:%04X "    \
+				    "%02X %08X:%08X %02X:%08X %08X %5u %8d %lu\n",                \
+				    sl, la[0], la[1], la[2], la[3], lport,                       \
+				    fa[0], fa[1], fa[2], fa[3], fport,                           \
+				    st, txq, rxq, 0, 0, 0u, uid, 0, 0UL);                        \
+			} else {                                                             \
+				uint32_t la =                                                    \
+				    xi->inp_dependladdr.inp46_local.ia46_addr4.s_addr;           \
+				uint32_t fa =                                                    \
+				    xi->inp_dependfaddr.inp46_foreign.ia46_addr4.s_addr;         \
+				fprintf(f, "%4d: %08X:%04X %08X:%04X %02X %08X:%08X %02X:%08X "   \
+				    "%08X %5u %8d %lu\n",                                         \
+				    sl, la, lport, fa, fport, st, txq, rxq,                      \
+				    0, 0, 0u, uid, 0, 0UL);                                      \
+			}                                                                    \
+			sl++;                                                                \
+		}                                                                        \
+	} while (0)
+
+	while (p + 2 * sizeof(uint32_t) <= end) {
+		uint32_t blen, kind;
+		memcpy(&blen, p, sizeof(blen));
+		memcpy(&kind, p + sizeof(uint32_t), sizeof(kind));
+		if (blen < 2 * sizeof(uint32_t)) {
+			break;                      /* malformed */
+		}
+		size_t adv = PROCFS_ROUNDUP64(blen);
+		if (p + adv > end || adv == 0) {
+			break;
+		}
+		switch (kind) {
+		case XSO_INPCB:
+			EMIT_RECORD();              /* flush the previous record */
+			xi = (const struct procfs_xinpcb_n *)p;
+			xso = NULL; xt = NULL; rcv = NULL; snd = NULL;
+			break;
+		case XSO_SOCKET:
+			xso = (const struct procfs_xsocket_n *)p;
+			break;
+		case XSO_RCVBUF:
+			rcv = (const struct procfs_xsockbuf_n *)p;
+			break;
+		case XSO_SNDBUF:
+			snd = (const struct procfs_xsockbuf_n *)p;
+			break;
+		case XSO_TCPCB:
+			xt = (const struct procfs_xtcpcb_n_pre *)p;
+			break;
+		case XSO_STATS:
+			break;                      /* not used */
+		default:
+			p = end;                    /* trailing xinpgen -> stop */
+			continue;
+		}
+		p += adv;
+	}
+	EMIT_RECORD();                      /* flush the final record */
+	#undef EMIT_RECORD
+
+	free(buf);
+	fclose(f);
+	*blobp = out;
+	*lenp = osz;
+}
+
+/*
  * /proc/fb support. macOS drives displays through IOKit framebuffers -
  * IOFramebuffer on Intel, IOMobileFramebuffer on Apple Silicon - so enumerate
  * both classes and emit one Linux "<index> <name>" line per device, using the
@@ -3046,6 +3252,42 @@ main(__unused int argc, __unused char **argv)
                 build_sysvipc_msg_blob(&g_msg_blob, &g_msg_blob_len);
             }
             blob_slice(g_msg_blob, g_msg_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_NETTCP: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_net_pcb_blob("net.inet.tcp.pcblist_n", INP_IPV4, 1,
+                                   &g_nettcp_blob, &g_nettcp_blob_len);
+            }
+            blob_slice(g_nettcp_blob, g_nettcp_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_NETTCP6: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_net_pcb_blob("net.inet.tcp.pcblist_n", INP_IPV6, 1,
+                                   &g_nettcp6_blob, &g_nettcp6_blob_len);
+            }
+            blob_slice(g_nettcp6_blob, g_nettcp6_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_NETUDP: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_net_pcb_blob("net.inet.udp.pcblist_n", INP_IPV4, 0,
+                                   &g_netudp_blob, &g_netudp_blob_len);
+            }
+            blob_slice(g_netudp_blob, g_netudp_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_NETUDP6: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_net_pcb_blob("net.inet.udp.pcblist_n", INP_IPV6, 0,
+                                   &g_netudp6_blob, &g_netudp6_blob_len);
+            }
+            blob_slice(g_netudp6_blob, g_netudp6_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_SLABINFO: {
