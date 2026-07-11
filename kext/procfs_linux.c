@@ -3254,6 +3254,18 @@ procfs_donetroute(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
 }
 
 /*
+ * /proc/net/arp - the Linux IPv4 ARP table, from the daemon's PF_ROUTE
+ * NET_RT_FLAGS/RTF_LLINFO walk (build_net_arp_blob). Without a daemon: header.
+ */
+int
+procfs_donetarp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char hdr[] =
+        "IP address       HW type     Flags       HW address            Mask     Device\n";
+    return procfs_net_pcb_node(uio, PROCFS_REQ_NETARP, hdr, sizeof(hdr) - 1);
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon

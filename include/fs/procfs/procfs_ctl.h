@@ -163,6 +163,9 @@ enum {
     PROCFS_REQ_NETROUTE   = 48, /* arg = byte offset; chunked Linux /proc/net/route
                                  * (IPv4 routing table) from the PF_ROUTE
                                  * NET_RT_DUMP sysctl. */
+    PROCFS_REQ_NETARP     = 49, /* arg = byte offset; chunked Linux /proc/net/arp
+                                 * (IPv4 ARP table) from the PF_ROUTE NET_RT_FLAGS
+                                 * RTF_LLINFO sysctl. */
 };
 
 /*
