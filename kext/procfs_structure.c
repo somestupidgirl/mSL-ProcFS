@@ -370,6 +370,8 @@ procfs_structure_init(void)
                         PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetudp6);
         pfssnode_t *netunix = add_node(net_dir, "unix",
                         PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetunix);
+        pfssnode_t *netroute = add_node(net_dir, "route",
+                        PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetroute);
 
         // A pseudo-entry below "byname" that is replaced by nodes for all of the visible processes.
         // NOTE: this must be the last child entry for the "byname" node.

@@ -3242,6 +3242,18 @@ procfs_donetunix(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/net/route - the Linux IPv4 routing table, from the daemon's PF_ROUTE
+ * NET_RT_DUMP walk (build_net_route_blob). Without a daemon: just the header.
+ */
+int
+procfs_donetroute(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    static const char hdr[] =
+        "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n";
+    return procfs_net_pcb_node(uio, PROCFS_REQ_NETROUTE, hdr, sizeof(hdr) - 1);
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon

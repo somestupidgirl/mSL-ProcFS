@@ -160,6 +160,9 @@ enum {
     PROCFS_REQ_NETUNIX    = 47, /* arg = byte offset; chunked Linux /proc/net/unix
                                  * (unix-domain sockets) built from the
                                  * net.local.{stream,dgram}.pcblist_n sysctls. */
+    PROCFS_REQ_NETROUTE   = 48, /* arg = byte offset; chunked Linux /proc/net/route
+                                 * (IPv4 routing table) from the PF_ROUTE
+                                 * NET_RT_DUMP sysctl. */
 };
 
 /*

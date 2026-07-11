@@ -46,6 +46,8 @@
 #include <sys/sem.h>
 #include <sys/msg.h>
 #include <netinet/in.h>
+#include <net/if.h>
+#include <net/route.h>
 #include "net_pcb_abi.h"        /* vendored pcblist_n ABI for /proc/net/{tcp,udp}* */
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
@@ -274,6 +276,8 @@ static char  *g_netudp6_blob = NULL; /* Linux format (/proc/net/udp6) */
 static size_t g_netudp6_blob_len = 0;
 static char  *g_netunix_blob = NULL; /* Linux format (/proc/net/unix) */
 static size_t g_netunix_blob_len = 0;
+static char  *g_netroute_blob = NULL; /* Linux format (/proc/net/route) */
+static size_t g_netroute_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -2352,6 +2356,117 @@ build_net_unix_blob(char **blobp, size_t *lenp)
 }
 
 /*
+ * /proc/net/route - the Linux IPv4 routing table. macOS keeps it in the
+ * PF_ROUTE routing socket, dumped via the CTL_NET/PF_ROUTE/NET_RT_DUMP sysctl
+ * that netstat(1)/route(8) use: a stream of struct rt_msghdr each followed by an
+ * array of sockaddrs selected by the rtm_addrs bitmask (RTAX_DST, RTAX_GATEWAY,
+ * RTAX_NETMASK). For each usable AF_INET route the destination/gateway/netmask
+ * in_addrs are printed in Linux's byte-reversed hex (as with the socket tables)
+ * and the flags masked to the Linux-meaningful bits (UP/GATEWAY/HOST/DYNAMIC/
+ * MODIFIED, whose values coincide on macOS). Cloned per-host cache routes
+ * (RTF_WASCLONED) and link-layer/ARP entries (RTF_LLINFO) are skipped - Linux's
+ * /proc/net/route lists only the configured routes; the ARP entries belong to
+ * /proc/net/arp. RefCnt/Use/Metric/MTU/Window/IRTT have no macOS source (0).
+ */
+#define PROCFS_SA_SIZE(sa) \
+	(((sa)->sa_len == 0) ? sizeof(uint32_t) : \
+	 (1 + (((size_t)(sa)->sa_len - 1) | (sizeof(uint32_t) - 1))))
+
+static void
+build_net_route_blob(char **blobp, size_t *lenp)
+{
+	free(*blobp);
+	*blobp = NULL;
+	*lenp = 0;
+
+	char  *out = NULL;
+	size_t osz = 0;
+	FILE  *f   = open_memstream(&out, &osz);
+	if (f == NULL) {
+		return;
+	}
+	fprintf(f, "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\t"
+	           "Mask\t\tMTU\tWindow\tIRTT\n");
+
+	int    mib[6] = { CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_DUMP, 0 };
+	size_t len = 0;
+	void  *buf = NULL;
+	int    ok  = 0;
+	for (int attempt = 0; attempt < 6; attempt++) {
+		if (sysctl(mib, 6, NULL, &len, NULL, 0) < 0 || len == 0) {
+			break;
+		}
+		len += len / 8 + 4096;
+		void *nb = realloc(buf, len);
+		if (nb == NULL) {
+			break;
+		}
+		buf = nb;
+		if (sysctl(mib, 6, buf, &len, NULL, 0) == 0) {
+			ok = 1;
+			break;
+		}
+		if (errno != ENOMEM) {
+			break;
+		}
+	}
+	if (!ok || buf == NULL) {
+		free(buf);
+		fclose(f);
+		*blobp = out;
+		*lenp = osz;
+		return;
+	}
+
+	const char *lim = (const char *)buf + len;
+	for (const char *p = (const char *)buf; p + sizeof(struct rt_msghdr) <= lim; ) {
+		const struct rt_msghdr *rtm = (const struct rt_msghdr *)p;
+		if (rtm->rtm_msglen == 0) {
+			break;
+		}
+		if (rtm->rtm_version == RTM_VERSION &&
+		    (rtm->rtm_flags & RTF_UP) &&
+		    !(rtm->rtm_flags & (RTF_WASCLONED | RTF_LLINFO))) {
+			const struct sockaddr *sa = (const struct sockaddr *)(rtm + 1);
+			const struct sockaddr *dst = NULL, *gw = NULL, *mask = NULL;
+			for (int i = 0; i < RTAX_MAX; i++) {
+				if (!(rtm->rtm_addrs & (1 << i))) {
+					continue;
+				}
+				if ((const char *)sa + sizeof(sa->sa_len) > lim) {
+					break;
+				}
+				if (i == RTAX_DST)          dst = sa;
+				else if (i == RTAX_GATEWAY) gw = sa;
+				else if (i == RTAX_NETMASK) mask = sa;
+				sa = (const struct sockaddr *)((const char *)sa + PROCFS_SA_SIZE(sa));
+			}
+			if (dst != NULL && dst->sa_family == AF_INET) {
+				char ifn[IF_NAMESIZE] = "*";
+				if (rtm->rtm_index != 0) {
+					if_indextoname(rtm->rtm_index, ifn);
+				}
+				uint32_t d = ((const struct sockaddr_in *)dst)->sin_addr.s_addr;
+				uint32_t g = (gw != NULL && gw->sa_family == AF_INET)
+				    ? ((const struct sockaddr_in *)gw)->sin_addr.s_addr : 0;
+				uint32_t m = (mask != NULL && mask->sa_len >= 8)
+				    ? ((const struct sockaddr_in *)mask)->sin_addr.s_addr : 0;
+				unsigned fl = rtm->rtm_flags &
+				    (RTF_UP | RTF_GATEWAY | RTF_HOST | RTF_DYNAMIC | RTF_MODIFIED);
+				fprintf(f, "%s\t%08X\t%08X\t%04X\t%d\t%d\t%d\t%08X\t%d\t%d\t%d\n",
+				    ifn, d, g, fl, 0, 0, 0, m, 0, 0, 0);
+			}
+		}
+		p += rtm->rtm_msglen;
+	}
+
+	free(buf);
+	fclose(f);
+	*blobp = out;
+	*lenp = osz;
+}
+
+/*
  * /proc/fb support. macOS drives displays through IOKit framebuffers -
  * IOFramebuffer on Intel, IOMobileFramebuffer on Apple Silicon - so enumerate
  * both classes and emit one Linux "<index> <name>" line per device, using the
@@ -3439,6 +3554,14 @@ main(__unused int argc, __unused char **argv)
                 build_net_unix_blob(&g_netunix_blob, &g_netunix_blob_len);
             }
             blob_slice(g_netunix_blob, g_netunix_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_NETROUTE: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_net_route_blob(&g_netroute_blob, &g_netroute_blob_len);
+            }
+            blob_slice(g_netroute_blob, g_netroute_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_SLABINFO: {
