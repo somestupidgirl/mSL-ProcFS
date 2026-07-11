@@ -144,6 +144,11 @@ enum {
     PROCFS_REQ_KSYM_REF   = 41, /* payload = uint64 address of the reference symbol
                                  * (_proc_pid) in the wchan symbol source, so the
                                  * kext can compute the running kernel's slide. */
+    PROCFS_REQ_PAGEMAP    = 42, /* pid + arg = start virtual address; payload =
+                                 * a run of Linux /proc/<pid>/pagemap 64-bit page
+                                 * entries (present/swap/file/dirty; PFN hidden)
+                                 * from mach_vm_page_query. Empty = past the last
+                                 * mapped region (EOF) or task_for_pid denied. */
 };
 
 /*

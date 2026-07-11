@@ -2554,6 +2554,64 @@ procfsd_handle_maps(const struct procfs_ctl_req *req, struct procfs_ctl_resp *re
 }
 
 /*
+ * Serve a PROCFS_REQ_PAGEMAP request: Linux /proc/<pid>/pagemap is one 64-bit
+ * entry per virtual page (indexed by vaddr/PAGE_SIZE). We produce a run of
+ * entries for consecutive pages starting at req->arg using mach_vm_page_query
+ * (the per-page disposition the map's extended info aggregates): bit 63 present,
+ * 62 swapped, 61 file-backed, 55 dirty. The physical frame number (bits 0-54) is
+ * left 0 - macOS does not expose it to userspace, matching Linux's behaviour for
+ * a reader without CAP_SYS_ADMIN. An empty reply means req->arg is past the last
+ * mapped region (EOF) or task_for_pid was denied (SIP/AMFI/hardened). Pages below
+ * the next region are holes (entry 0) and are not probed.
+ */
+static void
+procfsd_handle_pagemap(const struct procfs_ctl_req *req, struct procfs_ctl_resp *resp,
+    void *payload)
+{
+    task_t task = TASK_NULL;
+    if (task_for_pid(mach_task_self(), req->pid, &task) != KERN_SUCCESS) {
+        resp->error = EPERM;
+        return;
+    }
+
+    mach_vm_address_t start = (mach_vm_address_t)req->arg;
+
+    /* First region at or above start; none -> past the last mapping (EOF). */
+    mach_vm_address_t              ra = start;
+    mach_vm_size_t                 rs = 0;
+    vm_region_basic_info_data_64_t bi;
+    mach_msg_type_number_t         bc = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t                    bobj = MACH_PORT_NULL;
+    if (mach_vm_region(task, &ra, &rs, VM_REGION_BASIC_INFO_64,
+            (vm_region_info_t)&bi, &bc, &bobj) != KERN_SUCCESS) {
+        mach_port_deallocate(mach_task_self(), task);
+        return;                             /* len 0 -> EOF */
+    }
+
+    mach_vm_size_t ps   = (mach_vm_size_t)getpagesize();
+    uint32_t       nent = PROCFS_CTL_MAXPAYLOAD / (uint32_t)sizeof(uint64_t);
+    uint64_t      *out  = (uint64_t *)payload;
+    for (uint32_t i = 0; i < nent; i++) {
+        mach_vm_address_t va = start + (mach_vm_address_t)i * ps;
+        uint64_t          e  = 0;
+        if (va >= ra) {                     /* skip the hole below the next region */
+            integer_t disp = 0, ref = 0;
+            if (mach_vm_page_query(task, va, &disp, &ref) == KERN_SUCCESS &&
+                disp != 0) {
+                if (disp & VM_PAGE_QUERY_PAGE_PRESENT)   { e |= (1ULL << 63); }
+                if (disp & VM_PAGE_QUERY_PAGE_PAGED_OUT) { e |= (1ULL << 62); }
+                if (disp & VM_PAGE_QUERY_PAGE_EXTERNAL)  { e |= (1ULL << 61); }
+                if (disp & VM_PAGE_QUERY_PAGE_DIRTY)     { e |= (1ULL << 55); }
+            }
+        }
+        out[i] = e;
+    }
+
+    mach_port_deallocate(mach_task_self(), task);
+    resp->len = nent * (uint32_t)sizeof(uint64_t);
+}
+
+/*
  * Serve a PROCFS_REQ_MEMREAD request: read up to MAXPAYLOAD bytes from the target
  * task starting at the virtual address req->arg, into the response payload. Reads
  * proceed page by page and stop at the first unreadable (non-resident/unmapped)
@@ -3189,6 +3247,9 @@ main(__unused int argc, __unused char **argv)
         }
         case PROCFS_REQ_MAPS:
             procfsd_handle_maps(req, resp, payload);
+            break;
+        case PROCFS_REQ_PAGEMAP:
+            procfsd_handle_pagemap(req, resp, payload);
             break;
         case PROCFS_REQ_MEMREAD:
             procfsd_handle_memread(req, resp, payload);

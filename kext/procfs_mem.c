@@ -126,3 +126,73 @@ procfs_domem(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     proc_rele(p);
     return error;
 }
+
+/*
+ * /proc/<pid>/pagemap - Linux's per-virtual-page table: one 8-byte entry at file
+ * offset (vaddr / PAGE_SIZE) * 8 describing the page at that virtual address
+ * (bit 63 present, 62 swapped, 61 file-backed, 55 dirty). The physical frame
+ * number (bits 0-54) is left 0 - macOS does not expose it to userspace, matching
+ * Linux for a reader without CAP_SYS_ADMIN. Like /proc/<pid>/mem the read offset
+ * drives the lookup; the procfsd daemon (task_for_pid + mach_vm_page_query)
+ * returns a run of entries from the corresponding page. An empty reply is EOF
+ * (past the last mapped region) or a protected target (EPERM). Read-only.
+ */
+int
+procfs_dopagemap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
+{
+    int error = 0;
+
+    if (uio_rw(uio) != UIO_READ) {
+        return EOPNOTSUPP;
+    }
+
+    proc_t p = proc_find(pnp->node_id.nodeid_pid);
+    if (p == PROC_NULL) {
+        return ESRCH;
+    }
+    error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
+    if (error != 0) {
+        proc_rele(p);
+        return error;
+    }
+    pid_t pid = pnp->node_id.nodeid_pid;
+
+    uint8_t *buf = malloc(PROCFS_CTL_MAXPAYLOAD, M_TEMP, M_WAITOK);
+    if (buf == NULL) {
+        proc_rele(p);
+        return ENOMEM;
+    }
+
+    boolean_t any = FALSE;
+    while (uio_resid(uio) > 0) {
+        uint64_t off      = (uint64_t)uio_offset(uio);
+        uint64_t start_va = (off / 8) * PAGE_SIZE;   /* 8-byte entry per page */
+        uint32_t byte_in  = (uint32_t)(off % 8);     /* sub-entry byte offset */
+        uint32_t got      = 0;
+
+        int rc = procfs_ctl_request(PROCFS_REQ_PAGEMAP, pid, start_va,
+                                    buf, PROCFS_CTL_MAXPAYLOAD, &got);
+        if (rc != 0) {
+            if (!any) {
+                error = (rc == ENOTCONN || rc == ETIMEDOUT) ? ENOTSUP : rc;
+            }
+            break;                  /* no daemon / protected / gone */
+        }
+        if (got <= byte_in) {
+            break;                  /* empty reply -> EOF (past last region) */
+        }
+
+        user_ssize_t resid = uio_resid(uio);
+        size_t       avail = (size_t)got - byte_in;
+        size_t       move  = (avail < (size_t)resid) ? avail : (size_t)resid;
+        error = uiomove((const char *)buf + byte_in, (int)move, uio);
+        if (error != 0) {
+            break;
+        }
+        any = TRUE;
+    }
+
+    free(buf, M_TEMP);
+    proc_rele(p);
+    return error;
+}
