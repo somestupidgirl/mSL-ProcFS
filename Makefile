@@ -278,6 +278,9 @@ install-gui:
 	cp -R $(OUT)/ProcFS.app $(APP_DIR)/ProcFS.app
 	chown -R root:wheel $(APP_DIR)/ProcFS.app
 	chmod -R 755 $(APP_DIR)/ProcFS.app
+	@# Strip com.apple.quarantine so Gatekeeper doesn't flag the app as
+	@# "damaged"/"unverified" when the payload arrives via an internet download.
+	xattr -dr com.apple.quarantine $(APP_DIR)/ProcFS.app 2>/dev/null || true
 	rm -rf $(PREFPANE_DIR)/ProcFS.prefPane
 	cp -R $(OUT)/ProcFS.prefPane $(PREFPANE_DIR)/ProcFS.prefPane
 	chown -R root:wheel $(PREFPANE_DIR)/ProcFS.prefPane
