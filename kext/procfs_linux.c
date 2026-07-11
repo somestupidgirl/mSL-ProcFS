@@ -2234,6 +2234,50 @@ procfs_wchan_init_slide(void)
     }
 }
 
+/*
+ * Resolve the process's representative blocked thread's continuation to a bare
+ * kernel symbol name (the Mach C-symbol leading underscore stripped, Linux
+ * style). Fills buf and returns its length, or 0 if the thread is not blocked
+ * on a continuation or the address is unresolvable (no matching daemon/KDK).
+ * Shared by /proc/<pid>/wchan and /proc/<pid>/stack, which both need exactly
+ * this continuation-to-symbol resolution; see the procfs_dowchan comment above
+ * for the full slide/symbolication mechanism. Does not consume the proc ref.
+ */
+static size_t
+procfs_wchan_resolve(proc_t p, char *buf, size_t cap)
+{
+    buf[0] = '\0';
+
+    procfs_wchan_init_slide();
+
+    uint64_t runtime = 0;
+    (void)procfs_thread_continuation(p, &runtime);
+    if (runtime == 0 || !g_wchan_slide_known) {
+        return 0;
+    }
+
+    /* Map the runtime continuation to the symbol source's layout. */
+    uint64_t img = runtime - (uint64_t)g_wchan_slide;
+    char     sym[128];
+    uint32_t got = 0;
+    if (procfs_ctl_request(PROCFS_REQ_KSYM_LOOKUP, 0, img,
+            sym, sizeof(sym) - 1, &got) != 0 || got == 0) {
+        return 0;
+    }
+    if (got > sizeof(sym) - 1) {
+        got = sizeof(sym) - 1;
+    }
+    sym[got] = '\0';
+    if (sym[0] == '\0') {
+        return 0;
+    }
+
+    /* Drop the Mach C-symbol leading underscore for Linux style. */
+    const char *s = (sym[0] == '_') ? sym + 1 : sym;
+    strlcpy(buf, s, cap);
+    return strlen(buf);
+}
+
 int
 procfs_dowchan(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
@@ -2244,34 +2288,51 @@ procfs_dowchan(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
     if (p != PROC_NULL) {
-        procfs_wchan_init_slide();
-
-        uint64_t runtime = 0;
-        (void)procfs_thread_continuation(p, &runtime);
-        proc_rele(p);
-
-        if (runtime != 0 && g_wchan_slide_known) {
-            /* Map the runtime continuation to the symbol source's layout. */
-            uint64_t img = runtime - (uint64_t)g_wchan_slide;
-            char     sym[128];
-            uint32_t got = 0;
-            if (procfs_ctl_request(PROCFS_REQ_KSYM_LOOKUP, 0, img,
-                    sym, sizeof(sym) - 1, &got) == 0 && got > 0) {
-                if (got > sizeof(sym) - 1) {
-                    got = sizeof(sym) - 1;
-                }
-                sym[got] = '\0';
-                if (sym[0] != '\0') {
-                    /* Drop the Mach C-symbol leading underscore for Linux style. */
-                    const char *s = (sym[0] == '_') ? sym + 1 : sym;
-                    strlcpy(name, s, sizeof(name));
-                    outlen = (int)strlen(name);
-                }
-            }
+        char sym[128];
+        if (procfs_wchan_resolve(p, sym, sizeof(sym)) > 0) {
+            strlcpy(name, sym, sizeof(name));
+            outlen = (int)strlen(name);
         }
+        proc_rele(p);
     }
 
     return procfs_copy_data(name, outlen, uio);
+}
+
+/*
+ * /proc/<pid>/stack - Linux's kernel-side call stack of the task's
+ * representative thread, each frame as "[<0>] symbol+0xoff/0xsize".
+ *
+ * On Linux this is a full frame-pointer unwind of the thread's preserved kernel
+ * stack. macOS threads almost always block via a *continuation*
+ * (thread_block_parameter: mach_msg, semaphore/event waits, sleep): the
+ * continuation model deliberately discards the kernel stack while blocked and
+ * resumes at a single continuation function, so there is no preserved call
+ * chain to unwind - the continuation *is* the complete kernel state. We
+ * therefore emit that one continuation frame, resolved exactly as /wchan is
+ * (procfs_wchan_resolve). The address is hidden as "[<0>]" like Linux with
+ * kptr_restrict; the offset/size are 0 since a continuation is a function entry.
+ *
+ * A thread not blocked on a continuation (running, or blocked in place keeping
+ * its stack) yields empty output, as Linux's /proc/<pid>/stack does for a task
+ * that is currently on-CPU.
+ */
+int
+procfs_dostack(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    char out[160];
+    int  len = 0;
+
+    proc_t p = proc_find(pnp->node_id.nodeid_pid);
+    if (p != PROC_NULL) {
+        char sym[128];
+        if (procfs_wchan_resolve(p, sym, sizeof(sym)) > 0) {
+            len = snprintf(out, sizeof(out), "[<0>] %s+0x0/0x0\n", sym);
+        }
+        proc_rele(p);
+    }
+
+    return procfs_copy_data(out, (size_t)len, uio);
 }
 
 /*
