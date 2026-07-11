@@ -7,3 +7,4 @@
 [submodule "lib/xnu"]
 	path = lib/xnu
 	url = https://github.com/apple-oss-distributions/xnu.git
+        ignore = dirty
