@@ -374,6 +374,10 @@ procfs_structure_init(void)
                         PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetroute);
         pfssnode_t *netarp = add_node(net_dir, "arp",
                         PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetarp);
+        pfssnode_t *netnetstat = add_node(net_dir, "netstat",
+                        PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetnetstat);
+        pfssnode_t *netsnmp = add_node(net_dir, "snmp",
+                        PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetsnmp);
 
         // A pseudo-entry below "byname" that is replaced by nodes for all of the visible processes.
         // NOTE: this must be the last child entry for the "byname" node.

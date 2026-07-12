@@ -51,6 +51,13 @@
 #include <net/if_dl.h>
 #include <net/if_types.h>
 #include <net/route.h>
+#include <netinet/ip_var.h>
+#include <netinet/tcp.h>
+#include <netinet/tcp_var.h>
+#include <netinet/udp.h>
+#include <netinet/udp_var.h>
+#include <netinet/ip_icmp.h>
+#include <netinet/icmp_var.h>
 #include "net_pcb_abi.h"        /* vendored pcblist_n ABI for /proc/net/{tcp,udp}* */
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
@@ -283,6 +290,10 @@ static char  *g_netroute_blob = NULL; /* Linux format (/proc/net/route) */
 static size_t g_netroute_blob_len = 0;
 static char  *g_netarp_blob = NULL;   /* Linux format (/proc/net/arp) */
 static size_t g_netarp_blob_len = 0;
+static char  *g_netnetstat_blob = NULL; /* Linux format (/proc/net/netstat) */
+static size_t g_netnetstat_blob_len = 0;
+static char  *g_netsnmp_blob = NULL;    /* Linux format (/proc/net/snmp) */
+static size_t g_netsnmp_blob_len = 0;
 
 struct kextrow {
     long long tag, refs, addr, size, wired;
@@ -2585,6 +2596,254 @@ build_net_arp_blob(char **blobp, size_t *lenp)
 }
 
 /*
+ * A (Linux field name, value) pair, and a helper that prints one /proc/net
+ * "SNMP-style" section: a "<prefix>: name name ..." line followed by a
+ * "<prefix>: val val ..." line, as expected by tools that read /proc/net/snmp
+ * and /proc/net/netstat.
+ */
+struct procfs_netkv { const char *name; int64_t val; };
+
+static void
+procfs_emit_kv_section(FILE *f, const char *prefix,
+    const struct procfs_netkv *kv, size_t n)
+{
+	fprintf(f, "%s:", prefix);
+	for (size_t i = 0; i < n; i++) {
+		fprintf(f, " %s", kv[i].name);
+	}
+	fprintf(f, "\n%s:", prefix);
+	for (size_t i = 0; i < n; i++) {
+		fprintf(f, " %lld", (long long)kv[i].val);
+	}
+	fprintf(f, "\n");
+}
+
+/*
+ * /proc/net/netstat - Linux's extended TCP/IP statistics (the TcpExt and IpExt
+ * blocks that "netstat -s"/"nstat" read). macOS keeps protocol counters in the
+ * BSD stat structs behind net.inet.{tcp,ip}.stats; the daemon reads them (as
+ * root, which bypasses the net.inet.tcp.disable_access_to_stats gate) and maps
+ * the ones with a genuine macOS analog onto the Linux field names. Many of
+ * Linux's extended counters have no macOS equivalent and are reported 0, as on a
+ * Linux host where those events have not occurred; the standard SNMP MIB
+ * counters live in the richer /proc/net/snmp.
+ */
+static void
+build_net_netstat_blob(char **blobp, size_t *lenp)
+{
+	free(*blobp);
+	*blobp = NULL;
+	*lenp = 0;
+
+	struct tcpstat t;
+	struct ipstat  ip;
+	memset(&t, 0, sizeof(t));
+	memset(&ip, 0, sizeof(ip));
+	size_t lt = sizeof(t), li = sizeof(ip);
+	(void)sysctlbyname("net.inet.tcp.stats", &t, &lt, NULL, 0);
+	(void)sysctlbyname("net.inet.ip.stats", &ip, &li, NULL, 0);
+
+	char  *out = NULL;
+	size_t osz = 0;
+	FILE  *f   = open_memstream(&out, &osz);
+	if (f == NULL) {
+		return;
+	}
+
+	/* TcpExt - only fields with a real macOS counter are non-zero. */
+	const struct procfs_netkv tcpext[] = {
+		{ "SyncookiesSent",   0 },
+		{ "SyncookiesRecv",   0 },
+		{ "SyncookiesFailed", 0 },
+		{ "EmbryonicRsts",    t.tcps_conndrops },
+		{ "PruneCalled",      0 },
+		{ "ListenOverflows",  t.tcps_listendrop },
+		{ "ListenDrops",      t.tcps_listendrop },
+		{ "DelayedACKs",      t.tcps_delack },
+		{ "DelayedACKLost",   0 },
+		{ "TCPPureAcks",      t.tcps_rcvackpack },
+		{ "TCPTimeouts",      t.tcps_rexmttimeo },
+		{ "TCPLossProbes",    0 },
+		{ "TCPLostRetransmit", t.tcps_sndrexmitbad },
+		{ "PAWSEstab",        t.tcps_pawsdrop },
+		{ "TCPRcvCollapsed",  0 },
+		{ "TCPAbortOnData",   t.tcps_drops },
+		{ "TCPAbortOnTimeout", t.tcps_keepdrops },
+	};
+	procfs_emit_kv_section(f, "TcpExt", tcpext,
+	    sizeof(tcpext) / sizeof(tcpext[0]));
+
+	/* IpExt - macOS ipstat lacks octet and mcast/bcast packet breakdowns. */
+	const struct procfs_netkv ipext[] = {
+		{ "InNoRoutes",       ip.ips_noroute },
+		{ "InTruncatedPkts",  ip.ips_toosmall },
+		{ "InMcastPkts",      0 },
+		{ "OutMcastPkts",     0 },
+		{ "InBcastPkts",      0 },
+		{ "OutBcastPkts",     0 },
+		{ "InOctets",         0 },
+		{ "OutOctets",        0 },
+		{ "InMcastOctets",    0 },
+		{ "OutMcastOctets",   0 },
+		{ "InBcastOctets",    0 },
+		{ "OutBcastOctets",   0 },
+		{ "InCsumErrors",     ip.ips_badsum },
+		{ "InNoECTPkts",      0 },
+	};
+	procfs_emit_kv_section(f, "IpExt", ipext,
+	    sizeof(ipext) / sizeof(ipext[0]));
+
+	fclose(f);
+	*blobp = out;
+	*lenp = osz;
+}
+
+/*
+ * /proc/net/snmp - the standard RFC-1213 SNMP MIB counters (the Ip/Icmp/Tcp/Udp
+ * blocks read by netstat -s and snmpd). These map almost one-to-one onto the BSD
+ * stat structs macOS keeps behind net.inet.{ip,icmp,tcp,udp}.stats, so unlike
+ * /proc/net/netstat most fields carry real data. The daemon reads the structs
+ * (as root, bypassing the tcp stats gate) and the ICMP per-type In/Out counts
+ * come from icmpstat's inhist[]/outhist[] histograms indexed by ICMP type.
+ */
+static void
+build_net_snmp_blob(char **blobp, size_t *lenp)
+{
+	free(*blobp);
+	*blobp = NULL;
+	*lenp = 0;
+
+	struct ipstat   ip;
+	struct icmpstat ic;
+	struct tcpstat  t;
+	struct udpstat  u;
+	memset(&ip, 0, sizeof(ip));
+	memset(&ic, 0, sizeof(ic));
+	memset(&t, 0, sizeof(t));
+	memset(&u, 0, sizeof(u));
+	size_t li = sizeof(ip), lc = sizeof(ic), lt = sizeof(t), lu = sizeof(u);
+	(void)sysctlbyname("net.inet.ip.stats", &ip, &li, NULL, 0);
+	(void)sysctlbyname("net.inet.icmp.stats", &ic, &lc, NULL, 0);
+	(void)sysctlbyname("net.inet.tcp.stats", &t, &lt, NULL, 0);
+	(void)sysctlbyname("net.inet.udp.stats", &u, &lu, NULL, 0);
+
+	int fwd = 0, ttl = 64;
+	size_t sz = sizeof(fwd);
+	(void)sysctlbyname("net.inet.ip.forwarding", &fwd, &sz, NULL, 0);
+	sz = sizeof(ttl);
+	(void)sysctlbyname("net.inet.ip.ttl", &ttl, &sz, NULL, 0);
+
+	/* ICMP histogram sums (indexed by ICMP type). */
+	int64_t icmp_in = 0, icmp_out = 0;
+	for (int i = 0; i <= ICMP_MAXTYPE; i++) {
+		icmp_in  += ic.icps_inhist[i];
+		icmp_out += ic.icps_outhist[i];
+	}
+	int64_t icmp_inerr = (int64_t)ic.icps_badcode + ic.icps_tooshort +
+	    ic.icps_checksum + ic.icps_badlen;
+
+	char  *out = NULL;
+	size_t osz = 0;
+	FILE  *f   = open_memstream(&out, &osz);
+	if (f == NULL) {
+		return;
+	}
+
+	const struct procfs_netkv ipkv[] = {
+		{ "Forwarding",      fwd ? 1 : 2 },
+		{ "DefaultTTL",      ttl },
+		{ "InReceives",      ip.ips_total },
+		{ "InHdrErrors",     (int64_t)ip.ips_badsum + ip.ips_tooshort +
+		                     ip.ips_toosmall + ip.ips_badhlen +
+		                     ip.ips_badvers + ip.ips_badlen },
+		{ "InAddrErrors",    (int64_t)ip.ips_cantforward + ip.ips_badaddr },
+		{ "ForwDatagrams",   ip.ips_forward },
+		{ "InUnknownProtos", ip.ips_noproto },
+		{ "InDiscards",      0 },
+		{ "InDelivers",      ip.ips_delivered },
+		{ "OutRequests",     ip.ips_localout },
+		{ "OutDiscards",     ip.ips_odropped },
+		{ "OutNoRoutes",     ip.ips_noroute },
+		{ "ReasmTimeout",    ip.ips_fragtimeout },
+		{ "ReasmReqds",      ip.ips_fragments },
+		{ "ReasmOKs",        ip.ips_reassembled },
+		{ "ReasmFails",      ip.ips_fragdropped },
+		{ "FragOKs",         ip.ips_fragmented },
+		{ "FragFails",       ip.ips_cantfrag },
+		{ "FragCreates",     ip.ips_ofragments },
+	};
+	procfs_emit_kv_section(f, "Ip", ipkv, sizeof(ipkv) / sizeof(ipkv[0]));
+
+	const struct procfs_netkv icmpkv[] = {
+		{ "InMsgs",           icmp_in + icmp_inerr },
+		{ "InErrors",         icmp_inerr },
+		{ "InCsumErrors",     ic.icps_checksum },
+		{ "InDestUnreachs",   ic.icps_inhist[ICMP_UNREACH] },
+		{ "InTimeExcds",      ic.icps_inhist[ICMP_TIMXCEED] },
+		{ "InParmProbs",      ic.icps_inhist[ICMP_PARAMPROB] },
+		{ "InSrcQuenchs",     ic.icps_inhist[ICMP_SOURCEQUENCH] },
+		{ "InRedirects",      ic.icps_inhist[ICMP_REDIRECT] },
+		{ "InEchos",          ic.icps_inhist[ICMP_ECHO] },
+		{ "InEchoReps",       ic.icps_inhist[ICMP_ECHOREPLY] },
+		{ "InTimestamps",     ic.icps_inhist[ICMP_TSTAMP] },
+		{ "InTimestampReps",  ic.icps_inhist[ICMP_TSTAMPREPLY] },
+		{ "InAddrMasks",      ic.icps_inhist[ICMP_MASKREQ] },
+		{ "InAddrMaskReps",   ic.icps_inhist[ICMP_MASKREPLY] },
+		{ "OutMsgs",          icmp_out },
+		{ "OutErrors",        ic.icps_error },
+		{ "OutDestUnreachs",  ic.icps_outhist[ICMP_UNREACH] },
+		{ "OutTimeExcds",     ic.icps_outhist[ICMP_TIMXCEED] },
+		{ "OutParmProbs",     ic.icps_outhist[ICMP_PARAMPROB] },
+		{ "OutSrcQuenchs",    ic.icps_outhist[ICMP_SOURCEQUENCH] },
+		{ "OutRedirects",     ic.icps_outhist[ICMP_REDIRECT] },
+		{ "OutEchos",         ic.icps_outhist[ICMP_ECHO] },
+		{ "OutEchoReps",      ic.icps_outhist[ICMP_ECHOREPLY] },
+		{ "OutTimestamps",    ic.icps_outhist[ICMP_TSTAMP] },
+		{ "OutTimestampReps", ic.icps_outhist[ICMP_TSTAMPREPLY] },
+		{ "OutAddrMasks",     ic.icps_outhist[ICMP_MASKREQ] },
+		{ "OutAddrMaskReps",  ic.icps_outhist[ICMP_MASKREPLY] },
+	};
+	procfs_emit_kv_section(f, "Icmp", icmpkv,
+	    sizeof(icmpkv) / sizeof(icmpkv[0]));
+
+	const struct procfs_netkv tcpkv[] = {
+		{ "RtoAlgorithm", 1 },              /* other */
+		{ "RtoMin",       0 },
+		{ "RtoMax",       0 },
+		{ "MaxConn",     -1 },              /* no fixed limit */
+		{ "ActiveOpens",  t.tcps_connattempt },
+		{ "PassiveOpens", t.tcps_accepts },
+		{ "AttemptFails", t.tcps_conndrops },
+		{ "EstabResets",  t.tcps_drops },
+		{ "CurrEstab",    0 },              /* no cumulative counter */
+		{ "InSegs",       t.tcps_rcvtotal },
+		{ "OutSegs",      t.tcps_sndtotal },
+		{ "RetransSegs",  t.tcps_sndrexmitpack },
+		{ "InErrs",       (int64_t)t.tcps_rcvbadsum + t.tcps_rcvbadoff +
+		                  t.tcps_rcvshort },
+		{ "OutRsts",      0 },
+		{ "InCsumErrors", t.tcps_rcvbadsum },
+	};
+	procfs_emit_kv_section(f, "Tcp", tcpkv, sizeof(tcpkv) / sizeof(tcpkv[0]));
+
+	const struct procfs_netkv udpkv[] = {
+		{ "InDatagrams",  u.udps_ipackets },
+		{ "NoPorts",      u.udps_noport },
+		{ "InErrors",     (int64_t)u.udps_hdrops + u.udps_badlen },
+		{ "OutDatagrams", u.udps_opackets },
+		{ "RcvbufErrors", u.udps_fullsock },
+		{ "SndbufErrors", 0 },
+		{ "InCsumErrors", u.udps_badsum },
+		{ "IgnoredMulti", 0 },
+	};
+	procfs_emit_kv_section(f, "Udp", udpkv, sizeof(udpkv) / sizeof(udpkv[0]));
+
+	fclose(f);
+	*blobp = out;
+	*lenp = osz;
+}
+
+/*
  * /proc/fb support. macOS drives displays through IOKit framebuffers -
  * IOFramebuffer on Intel, IOMobileFramebuffer on Apple Silicon - so enumerate
  * both classes and emit one Linux "<index> <name>" line per device, using the
@@ -3688,6 +3947,22 @@ main(__unused int argc, __unused char **argv)
                 build_net_arp_blob(&g_netarp_blob, &g_netarp_blob_len);
             }
             blob_slice(g_netarp_blob, g_netarp_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_NETNETSTAT: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_net_netstat_blob(&g_netnetstat_blob, &g_netnetstat_blob_len);
+            }
+            blob_slice(g_netnetstat_blob, g_netnetstat_blob_len, off, payload, resp);
+            break;
+        }
+        case PROCFS_REQ_NETSNMP: {
+            size_t off = (size_t)req->arg;
+            if (off == 0) {
+                build_net_snmp_blob(&g_netsnmp_blob, &g_netsnmp_blob_len);
+            }
+            blob_slice(g_netsnmp_blob, g_netsnmp_blob_len, off, payload, resp);
             break;
         }
         case PROCFS_REQ_SLABINFO: {

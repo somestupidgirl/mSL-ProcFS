@@ -166,6 +166,11 @@ enum {
     PROCFS_REQ_NETARP     = 49, /* arg = byte offset; chunked Linux /proc/net/arp
                                  * (IPv4 ARP table) from the PF_ROUTE NET_RT_FLAGS
                                  * RTF_LLINFO sysctl. */
+    PROCFS_REQ_NETNETSTAT = 50, /* arg = byte offset; Linux /proc/net/netstat
+                                 * (TcpExt/IpExt) from net.inet.{tcp,ip}.stats. */
+    PROCFS_REQ_NETSNMP    = 51, /* arg = byte offset; Linux /proc/net/snmp
+                                 * (Ip/Icmp/Tcp/Udp MIB) from
+                                 * net.inet.{ip,icmp,tcp,udp}.stats. */
 };
 
 /*

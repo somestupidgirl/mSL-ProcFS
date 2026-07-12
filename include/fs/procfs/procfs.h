@@ -684,6 +684,8 @@ extern int procfs_donetudp6(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_donetunix(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_donetroute(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_donetarp(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_donetnetstat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+extern int procfs_donetsnmp(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doallocinfo(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doapm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dobootconfig(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);

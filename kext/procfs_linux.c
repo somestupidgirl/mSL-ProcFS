@@ -3266,6 +3266,29 @@ procfs_donetarp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 }
 
 /*
+ * /proc/net/netstat - Linux extended TCP/IP stats (TcpExt/IpExt), rendered by
+ * the daemon from net.inet.{tcp,ip}.stats (build_net_netstat_blob). The two-line
+ * SNMP-style sections have no single header, so without a daemon the node is
+ * empty (the daemon is the sole data source).
+ */
+int
+procfs_donetnetstat(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    return procfs_net_pcb_node(uio, PROCFS_REQ_NETNETSTAT, "", 0);
+}
+
+/*
+ * /proc/net/snmp - the standard RFC-1213 SNMP MIB counters (Ip/Icmp/Tcp/Udp),
+ * rendered by the daemon from net.inet.{ip,icmp,tcp,udp}.stats
+ * (build_net_snmp_blob). Empty without a daemon (the sole data source).
+ */
+int
+procfs_donetsnmp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
+{
+    return procfs_net_pcb_node(uio, PROCFS_REQ_NETSNMP, "", 0);
+}
+
+/*
  * /proc/fs/nfs/exports - the NFS export table. Linux shows the kernel NFS
  * server's active exports here; macOS keeps the export configuration in
  * /etc/exports (which nfsd registers with the kernel), so the procfsd daemon
