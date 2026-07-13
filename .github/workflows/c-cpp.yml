@@ -13,6 +13,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    # The mount helper (fs/mount_procfs.c) includes <libutil/mntopts.h> from the
+    # lib/libutil submodule. Fetch only that one: lib/xnu is huge and unused at
+    # build time (the tree ships the needed headers under include/xnu), and
+    # MacKernelSDK uses an SSH URL that CI cannot authenticate.
+    - name: Check out the libutil submodule
+      run: git submodule update --init lib/libutil
     - name: make ARCH=arm64e
       run: make ARCH=arm64e
     - name: make ARCH=x86_64
