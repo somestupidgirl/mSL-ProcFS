@@ -101,7 +101,7 @@ LIB_FLAGS  := ARCHFLAGS="$(LIB_ARCHFLAGS)"  TARGET_TRIPLE="$(LIB_TRIPLE)"
 # ---------------------------------------------------------------------------
 
 # Default: everything needed to install (kext, fs, tools, plists, GUI). Not tests.
-all: kextfs tools plists gui pkg dmg
+all: clean kextfs tools plists gui pkg dmg
 
 ifeq ($(ARCH),universal)
 
