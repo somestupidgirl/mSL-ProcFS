@@ -2,7 +2,7 @@ SDKROOT?=       $(shell xcrun --sdk macosx --show-sdk-path)
 KERNEL_FW=      $(SDKROOT)/System/Library/Frameworks/Kernel.framework
 KERNEL_HEADERS= $(KERNEL_FW)/Headers
 
-CC ?=   clang
+CC =       $(shell xcrun -find -sdk $(SDKROOT) cc)
 AR ?=   ar
 RM ?=   rm -f
 
@@ -45,13 +45,13 @@ all: $(LIB)
 
 clean:
 	@$(RM) $(LIB_OBJS) $(LIB)
-	@echo "$(LIB_OBJS)" | xargs -n1 | ts "clean"
+	@echo "$(LIB_OBJS)" | xargs -n1 | sed 's|^|clean |'
 
 $(LIB): $(LIB_OBJS)
 	@$(AR) rcs $@ $^
-	@echo "$^" | xargs -n1 | ts "AR"
+	@echo "$^" | xargs -n1 | sed 's|^|AR |'
 	@echo "AR $@"
 
 %.o: %.c
 	@$(CC) -o $@ $(CFLAGS) -c $< $(INC)
-	@echo "$@" | xargs -n1 | ts "CC"
+	@echo "$@" | xargs -n1 | sed 's|^|CC |'
