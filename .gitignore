@@ -23,3 +23,6 @@ Info.plist~
 *.log
 **/*.log
 **/*/*.log
+*.tmp
+**/*.tmp
+
