@@ -241,10 +241,18 @@ check: tests
 # Distribution sanity check: a clean build of the installer artifacts, then
 # verify the .pkg and .dmg were produced and that the package payload carries
 # every component (kext, filesystem, daemon, LaunchDaemon plist, app, prefpane).
+#
+# The clean build recompiles the kext libraries, which must use Apple's
+# toolchain: libkprocfs/kern.c relies on XNU-specific clang builtins behind
+# kalloc_type (a Homebrew clang in PATH cannot compile it), and the static
+# archive step needs Apple's ar rather than GNU ar. Pin both so distcheck works
+# regardless of what shadows cc/ar in PATH (the kext Makefile already pins CC;
+# the lib Makefiles default to a bare `clang`).
+DIST_CC := $(shell xcrun -find cc 2>/dev/null || echo /usr/bin/cc)
 distcheck:
-	@echo "==> Clean distribution build"
+	@echo "==> Clean distribution build (Apple toolchain: CC=$(DIST_CC))"
 	$(MAKE) clean
-	$(MAKE) dmg
+	$(MAKE) dmg CC="$(DIST_CC)" AR=/usr/bin/ar
 	@echo "==> Checking distribution artifacts"
 	@test -s "$(PKG_OUT)" || { echo "FAIL: $(PKG_OUT) missing or empty"; exit 1; }
 	@test -s "$(DMG_OUT)" || { echo "FAIL: $(DMG_OUT) missing or empty"; exit 1; }
