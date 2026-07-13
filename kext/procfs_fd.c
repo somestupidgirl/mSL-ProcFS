@@ -7,6 +7,7 @@
  * Data functions for the per-process file descriptor nodes (fd/<n>/details and fd/<n>/socket).
  */
 #include <libkern/libkern.h>
+
 #include <sys/bsdtask_info.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
@@ -39,16 +40,21 @@
 int
 procfs_dofd(pfsnode_t *pnp, __unused uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     int fd  = pnp->node_id.nodeid_objectid;
     int pid = pnp->node_id.nodeid_pid;
 
     struct vnode_fdinfowithpath info;
     uint32_t got = 0;
-    int error = procfs_ctl_request(PROCFS_REQ_FDINFO, pid, (uint64_t)fd,
-                                   &info, sizeof(info), &got);
+
+    error = procfs_ctl_request(PROCFS_REQ_FDINFO, pid, (uint64_t)fd,
+        &info, sizeof(info), &got);
+
     if (error != 0) {
         return error;
     }
+
     if (got != sizeof(info)) {
         return EIO;
     }
@@ -68,6 +74,7 @@ procfs_fill_socketinfo(socket_t so, struct socket_info *si)
     int dom = 0, type = 0, proto = 0;
 
     sock_gettype(so, &dom, &type, &proto);
+
     si->soi_so = (uint64_t)so;
     si->soi_type = type;
     si->soi_protocol = proto;
@@ -87,11 +94,13 @@ procfs_fill_socketinfo(socket_t so, struct socket_info *si)
         if (sock_getsockname(so, (struct sockaddr *)&ss, sizeof(ss)) == 0) {
             if (dom == AF_INET) {
                 struct sockaddr_in *s = (struct sockaddr_in *)&ss;
+
                 ini->insi_vflag = INI_IPV4;
                 ini->insi_lport = s->sin_port;
                 ini->insi_laddr.ina_46.i46a_addr4 = s->sin_addr;
             } else {
                 struct sockaddr_in6 *s = (struct sockaddr_in6 *)&ss;
+
                 ini->insi_vflag = INI_IPV6;
                 ini->insi_lport = s->sin6_port;
                 ini->insi_laddr.ina_6 = s->sin6_addr;
@@ -100,19 +109,24 @@ procfs_fill_socketinfo(socket_t so, struct socket_info *si)
         if (sock_getpeername(so, (struct sockaddr *)&ss, sizeof(ss)) == 0) {
             if (dom == AF_INET) {
                 struct sockaddr_in *s = (struct sockaddr_in *)&ss;
+
                 ini->insi_fport = s->sin_port;
                 ini->insi_faddr.ina_46.i46a_addr4 = s->sin_addr;
             } else {
                 struct sockaddr_in6 *s = (struct sockaddr_in6 *)&ss;
+
                 ini->insi_fport = s->sin6_port;
                 ini->insi_faddr.ina_6 = s->sin6_addr;
             }
         }
     } else if (dom == AF_UNIX) {
         struct un_sockinfo *un = &si->soi_proto.pri_un;
+
         si->soi_kind = SOCKINFO_UN;
+
         sock_getsockname(so, (struct sockaddr *)&un->unsi_addr.ua_sun,
             sizeof(un->unsi_addr.ua_sun));
+
         sock_getpeername(so, (struct sockaddr *)&un->unsi_caddr.ua_sun,
             sizeof(un->unsi_caddr.ua_sun));
     } else {
@@ -129,12 +143,15 @@ procfs_fill_socketinfo(socket_t so, struct socket_info *si)
 int
 procfs_dosocket(pfsnode_t *pnp, __unused uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     int fd  = pnp->node_id.nodeid_objectid;
     int pid = pnp->node_id.nodeid_pid;
 
     struct socket_fdinfo info;
     uint32_t got = 0;
-    int error = procfs_ctl_request(PROCFS_REQ_FDSOCKET, pid, (uint64_t)fd,
+
+    error = procfs_ctl_request(PROCFS_REQ_FDSOCKET, pid, (uint64_t)fd,
                                    &info, sizeof(info), &got);
     if (error != 0) {
         return error;
@@ -142,6 +159,7 @@ procfs_dosocket(pfsnode_t *pnp, __unused uio_t uio, __unused vfs_context_t ctx)
     if (got != sizeof(info)) {
         return EIO;
     }
+
     return procfs_copy_data((const char *)&info, sizeof(info), uio);
 }
 
@@ -188,6 +206,7 @@ procfs_proclink_path(int pid, const char *name, char *buf, int buflen)
 
     vnode_t   vp      = NULLVP;
     boolean_t is_root = FALSE;
+
     if (strcmp(name, "exe") == 0) {
         vp = p->p_textvp;
     } else if (strcmp(name, "cwd") == 0) {

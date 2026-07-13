@@ -25,14 +25,18 @@
  * needs the region's memory object -> vnode, which is not reachable here.
  */
 #include <stdint.h>
+
 #include <libkern/libkern.h>
-#include <mach/vm_prot.h>
+
 #include <mach/vm_region.h>
 #if defined(__x86_64__)
 #include <mach/i386/vm_param.h>
-#else
-#include <mach/vm_param.h>
+#elif defined(__arm64__) || defined(__aarch64__)
+#include <mach/arm/vm_param.h>
 #endif
+#include <mach/vm_param.h>
+#include <mach/vm_prot.h>
+
 #include <sys/errno.h>
 #include <sys/proc.h>
 #include <sys/proc_internal.h>
@@ -78,6 +82,7 @@ procfs_map_walk(pid_t pid, procfs_region_cb_t cb, void *arg)
         if (n == 0) {
             return 0;               /* end of the walk */
         }
+
         for (uint32_t i = 0; i < n; i++) {
             cb(&regs[i], arg);
         }
@@ -123,18 +128,22 @@ procfs_map_render_cb(const struct procfs_map_region *mr, void *arg)
 int
 procfs_map_render(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx, procfs_region_fmt_fn fmt)
 {
+    int error = 0;
+
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
     if (p == PROC_NULL) {
         return ESRCH;
     }
 
-    int error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
+    error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
     if (error != 0) {
         proc_rele(p);
         return error;
     }
 
-    /* A large address space can have thousands of regions, so grow on demand. */
+    /*
+     * A large address space can have thousands of regions, so grow on demand.
+     */
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
         proc_rele(p);
@@ -196,17 +205,22 @@ procfs_map_sizes_cb(const struct procfs_map_region *mr, void *arg)
 int
 procfs_task_vm_sizes(proc_t p, uint64_t *vsize, uint64_t *rsize)
 {
+    int error = 0;
+
     *vsize = 0;
     *rsize = 0;
 
     struct procfs_map_sizes_ctx c = { 0, 0 };
-    int error = procfs_map_walk(proc_pid(p), procfs_map_sizes_cb, &c);
+
+    error = procfs_map_walk(proc_pid(p), procfs_map_sizes_cb, &c);
     if (error != 0) {
         return error;
     }
+
     *vsize = c.vsize;
     *rsize = c.rsize;
-    return 0;
+
+    return error;
 }
 
 /*
@@ -215,13 +229,14 @@ procfs_task_vm_sizes(proc_t p, uint64_t *vsize, uint64_t *rsize)
  */
 struct procfs_map_ext_ctx {
     procfs_ext_region_fn cb;
-    void                *arg;
+    void *arg;
 };
 
 static void
 procfs_map_ext_cb(const struct procfs_map_region *mr, void *arg)
 {
     struct procfs_map_ext_ctx *c = arg;
+
     struct procfs_ext_region r = {
         .start          = mr->start,
         .end            = mr->start + mr->size,
@@ -234,6 +249,7 @@ procfs_map_ext_cb(const struct procfs_map_region *mr, void *arg)
                            mr->share_mode == SM_SHARED_ALIASED),
         .anonymous      = (mr->external_pager == 0),
     };
+
     c->cb(&r, c->arg);
 }
 
@@ -247,12 +263,14 @@ int
 procfs_map_foreach_ext(pfsnode_t *pnp, vfs_context_t ctx,
     procfs_ext_region_fn cb, void *arg)
 {
+    int error = 0;
+
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
     if (p == PROC_NULL) {
         return ESRCH;
     }
 
-    int error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
+    error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
     if (error != 0) {
         proc_rele(p);
         return error;
@@ -261,6 +279,7 @@ procfs_map_foreach_ext(pfsnode_t *pnp, vfs_context_t ctx,
     struct procfs_map_ext_ctx ectx = { cb, arg };
     error = procfs_map_walk(pnp->node_id.nodeid_pid, procfs_map_ext_cb, &ectx);
     proc_rele(p);
+
     return error;
 }
 

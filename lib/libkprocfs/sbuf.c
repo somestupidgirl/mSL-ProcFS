@@ -25,6 +25,7 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+
 /*
  * procfs kext adaptation: sbuf was written against the typed kalloc_*
  * allocators (kern/kalloc.h), which are com.apple.kpi.private and not linkable
@@ -34,14 +35,18 @@
  */
 #include <sys/malloc.h>
 #include <bsdcompat/sys/malloc.h>
+
 #ifndef Z_WAITOK
 #define Z_WAITOK 0x0001
 #endif
 #ifndef Z_ZERO
 #define Z_ZERO   0x0004
 #endif
-/* <sys/malloc.h> pulls in kern/kalloc.h transitively; override its private
- * typed-allocator macros (which also reference unavailable VM_KERN_MEMORY_*). */
+
+/*
+ * <sys/malloc.h> pulls in kern/kalloc.h transitively; override its private
+ * typed-allocator macros (which also reference unavailable VM_KERN_MEMORY_*).
+ */
 #undef kalloc_type
 #undef kalloc_data
 #undef kfree_data

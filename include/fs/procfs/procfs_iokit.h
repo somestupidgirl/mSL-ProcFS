@@ -16,11 +16,13 @@
 extern "C" {
 #endif
 
-/* One block device (IOMedia): a whole disk or a partition. */
+/*
+ * One block device (IOMedia): a whole disk or a partition.
+ */
 struct procfs_partition {
     uint32_t major;         /* BSD major device number */
     uint32_t minor;         /* BSD minor device number */
-    uint64_t size;          /* size in bytes            */
+    uint64_t size;          /* size in bytes */
     char     name[64];      /* BSD name, e.g. "disk0" / "disk0s1" */
 };
 
@@ -31,10 +33,12 @@ struct procfs_partition {
  */
 int procfs_iokit_get_partitions(struct procfs_partition *out, int max, int *count);
 
-/* Per-whole-disk I/O statistics (from IOBlockStorageDriver's "Statistics"),
+/*
+ * Per-whole-disk I/O statistics (from IOBlockStorageDriver's "Statistics"),
  * for the Linux /proc/diskstats node. Times are in milliseconds; sector counts
  * are 512-byte sectors (byte totals / 512). Merged/in-flight/queue counters have
- * no macOS source and are reported as 0 by the formatter. */
+ * no macOS source and are reported as 0 by the formatter.
+ */
 struct procfs_diskstat {
     uint32_t major;
     uint32_t minor;

@@ -20,10 +20,12 @@
 #define PROCFS_CTL_MAXPAYLOAD  2048u
 #define PROCFS_CTL_NAMEMAX     256u          /* max MIB name in a request */
 
-/* Request types (procfs_ctl_req.type). */
+/*
+ * Request types (procfs_ctl_req.type).
+ */
 enum {
-    PROCFS_REQ_TASKINFO   = 1,  /* payload: struct proc_taskinfo                 */
-    PROCFS_REQ_THREADINFO = 2,  /* arg = tid; payload: struct proc_threadinfo    */
+    PROCFS_REQ_TASKINFO   = 1,  /* payload: struct proc_taskinfo */
+    PROCFS_REQ_THREADINFO = 2,  /* arg = tid; payload: struct proc_threadinfo */
     PROCFS_REQ_VMSTAT     = 3,  /* payload: vm_statistics64_data_t (HOST_VM_INFO64) */
     PROCFS_REQ_LOADAVG    = 4,  /* payload: uint32_t[3] (getloadavg, scaled x100) */
     PROCFS_REQ_REGS       = 5,  /* payload: arm_thread_state64_t / x86_thread_state64_t */
@@ -181,8 +183,8 @@ enum {
  */
 struct procfs_cpu_stat {
     uint64_t hwirq;     /* hardware interrupts  (irq_ex_cnt) */
-    uint64_t ipi;       /* inter-processor IRQs (ipi_cnt)    */
-    uint64_t timer;     /* timer interrupts     (timer_cnt)  */
+    uint64_t ipi;       /* inter-processor IRQs (ipi_cnt) */
+    uint64_t timer;     /* timer interrupts     (timer_cnt) */
 };
 
 /*
@@ -191,10 +193,10 @@ struct procfs_cpu_stat {
  * already in USER_HZ jiffies. These back /proc/stat's cpu/cpuN lines.
  */
 struct procfs_cpu_load {
-    uint64_t user;      /* CPU_STATE_USER   */
-    uint64_t nice;      /* CPU_STATE_NICE   */
+    uint64_t user;      /* CPU_STATE_USER */
+    uint64_t nice;      /* CPU_STATE_NICE */
     uint64_t sys;       /* CPU_STATE_SYSTEM */
-    uint64_t idle;      /* CPU_STATE_IDLE   */
+    uint64_t idle;      /* CPU_STATE_IDLE */
 };
 
 /*
@@ -205,18 +207,18 @@ struct procfs_cpu_load {
  * raw records.
  */
 struct procfs_map_region {
-    uint64_t start;          /* region base address                    */
-    uint64_t size;           /* region size in bytes                   */
-    uint64_t offset;         /* BASIC.offset (into the backing object)  */
-    uint32_t prot;           /* BASIC.protection    (current)          */
-    uint32_t max_prot;       /* BASIC.max_protection                   */
-    uint32_t user_wired;     /* BASIC.user_wired_count                 */
-    uint32_t share_mode;     /* EXTENDED.share_mode (SM_*)             */
-    uint32_t resident_pages; /* EXTENDED.pages_resident                */
-    uint32_t dirty_pages;    /* EXTENDED.pages_dirtied                 */
-    uint32_t swapped_pages;  /* EXTENDED.pages_swapped_out             */
-    uint32_t external_pager; /* EXTENDED.external_pager (0 => anon)    */
-    uint32_t shared;         /* BASIC.shared (bool)                    */
+    uint64_t start;          /* region base address */
+    uint64_t size;           /* region size in bytes */
+    uint64_t offset;         /* BASIC.offset (into the backing object) */
+    uint32_t prot;           /* BASIC.protection (current) */
+    uint32_t max_prot;       /* BASIC.max_protection */
+    uint32_t user_wired;     /* BASIC.user_wired_count */
+    uint32_t share_mode;     /* EXTENDED.share_mode (SM_*) */
+    uint32_t resident_pages; /* EXTENDED.pages_resident */
+    uint32_t dirty_pages;    /* EXTENDED.pages_dirtied */
+    uint32_t swapped_pages;  /* EXTENDED.pages_swapped_out */
+    uint32_t external_pager; /* EXTENDED.external_pager (0 => anon) */
+    uint32_t shared;         /* BASIC.shared (bool) */
 };
 
 /*

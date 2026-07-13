@@ -1,3 +1,13 @@
+/*
+ * Copyright (c) 2022-2026 Sunneva N. Mariu
+ *
+ * procfs_limit.c
+ *
+ * Based on FreeBSD's procfs_rlimit.c
+ *
+ * Process resource-limit node (/proc/<pid>/limit).
+ *
+ */
 /*-
  * SPDX-License-Identifier: BSD-4-Clause
  *
@@ -39,16 +49,7 @@
 /*
  * To get resource.h to include our rlimit_ident[] array of rlimit identifiers
  */
-/*
- * Copyright (c) 2022-2026 Sunneva N. Mariu
- *
- * procfs_limit.c
- * 
- * Based on FreeBSD's procfs_rlimit.c
- * 
- * Process resource-limit node (/proc/<pid>/limit).
- *
- */
+#include <mach/vm_types.h>
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -59,7 +60,6 @@
 #include <sys/sbuf.h>
 #include <sys/types.h>
 #include <sys/vnode.h>
-#include <mach/vm_types.h>
 
 #include <fs/procfs/procfs.h>
 
@@ -68,7 +68,7 @@
  * pmap_find_phys + kernel_pmap are com.apple.kpi.unsupported (linkable).
  */
 extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
-extern pmap_t  kernel_pmap;
+extern pmap_t kernel_pmap;
 
 #define PROCFS_KPTR_MIN ((uintptr_t)0xfffffe0000000000ULL)
 
@@ -113,6 +113,7 @@ procfs_dolimit(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 	struct plimit *limp = (struct plimit *)smr_unsafe_load(&p->p_limit);
 	if ((uintptr_t)limp < PROCFS_KPTR_MIN ||
 	    pmap_find_phys(kernel_pmap, (addr64_t)(uintptr_t)limp) == 0) {
+
 		proc_rele(p);
 		return EIO;
 	}

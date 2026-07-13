@@ -22,7 +22,9 @@
  */
 #include <stdint.h>
 #include <string.h>
+
 #include <libkern/libkern.h>
+
 #include <sys/errno.h>
 #include <sys/malloc.h>
 #include <sys/param.h>
@@ -57,7 +59,9 @@
 static int
 procfs_fetch_procargs(pid_t pid, uint8_t **bufp, size_t *lenp)
 {
-    size_t   cap = PROCFS_CTL_MAXPAYLOAD;
+    int error = 0;
+
+    size_t cap = PROCFS_CTL_MAXPAYLOAD;
     uint8_t *buf = malloc(cap, M_TEMP, M_WAITOK);
     if (buf == NULL) {
         return ENOMEM;
@@ -70,33 +74,43 @@ procfs_fetch_procargs(pid_t pid, uint8_t **bufp, size_t *lenp)
             if (ncap > PROCFS_CMDLINE_MAX) {
                 ncap = PROCFS_CMDLINE_MAX;
             }
+
             if (ncap <= total) {
-                break;              /* hit the cap - return what we have */
+                /* Hit the cap - return what we have. */
+                break;
             }
+
             uint8_t *nbuf = malloc(ncap, M_TEMP, M_WAITOK);
             if (nbuf == NULL) {
                 free(buf, M_TEMP);
                 return ENOMEM;
             }
+
             memcpy(nbuf, buf, total);
             free(buf, M_TEMP);
+
             buf = nbuf;
             cap = ncap;
         }
 
         uint32_t got = 0;
         int rc = procfs_ctl_request(PROCFS_REQ_PROCARGS, pid, total,
-                                    buf + total, PROCFS_CTL_MAXPAYLOAD, &got);
+            buf + total, PROCFS_CTL_MAXPAYLOAD, &got);
+
         if (rc != 0) {
             if (total == 0) {
                 free(buf, M_TEMP);
                 return (rc == ENOTCONN || rc == ETIMEDOUT) ? ENOTSUP : rc;
             }
-            break;                  /* partial region already accumulated */
+            /* Partial region already accumulated. */
+            break;
         }
+
         total += got;
+
         if (got < PROCFS_CTL_MAXPAYLOAD) {
-            break;                  /* end of the region */
+            /* End of the region. */
+            break;
         }
     }
 
@@ -104,9 +118,11 @@ procfs_fetch_procargs(pid_t pid, uint8_t **bufp, size_t *lenp)
         free(buf, M_TEMP);
         return EIO;
     }
+
     *bufp = buf;
     *lenp = total;
-    return 0;
+
+    return error;
 }
 
 /*
@@ -117,13 +133,18 @@ procfs_fetch_procargs(pid_t pid, uint8_t **bufp, size_t *lenp)
 static int
 procfs_cmdline_comm(proc_t p, uio_t uio)
 {
+    int len = 0;
+
     char comm[MAXCOMLEN + 1];
     char namebuf[MAXCOMLEN + 4];
 
     comm[0] = '\0';
-    proc_name(proc_pid(p), comm, sizeof(comm));     /* public KPI, offset-independent */
 
-    int len = snprintf(namebuf, sizeof(namebuf), "(%s)", comm[0] ? comm : "unknown");
+    /* Public KPI, offset-independent. */
+    proc_name(proc_pid(p), comm, sizeof(comm));
+
+    len = snprintf(namebuf, sizeof(namebuf), "(%s)", comm[0] ? comm : "unknown");
+
     return procfs_copy_data(namebuf, len, uio);
 }
 
@@ -145,16 +166,20 @@ int
 procfs_read_procargs(proc_t p, uint8_t **bufp, size_t *lenp,
     size_t *argv_off, size_t *env_off, size_t *apple_off)
 {
+    int error = 0;
+
     *bufp = NULL;
     *lenp = 0;
     *argv_off = *env_off = *apple_off = 0;
 
     uint8_t *buf = NULL;
-    size_t   n   = 0;
+    size_t n = 0;
+
     int rc = procfs_fetch_procargs(proc_pid(p), &buf, &n);
     if (rc != 0) {
         return rc;
     }
+
     if (n < sizeof(int)) {
         free(buf, M_TEMP);
         return EINVAL;
@@ -168,15 +193,18 @@ procfs_read_procargs(proc_t p, uint8_t **bufp, size_t *lenp,
         free(buf, M_TEMP);
         return EINVAL;
     }
+
     size_t pos = sizeof(int);
 
     /* The bare exec path, possibly with NUL alignment padding, precedes argv. */
     size_t pathlen = strnlen((const char *)buf + pos, n - pos);
     pos += pathlen;
     if (pos < n) {
-        pos++;                                       /* path's NUL */
+        /* path's NUL */
+        pos++;
         while (pos < n && buf[pos] == '\0') {
-            pos++;                                   /* alignment padding */
+            /* Alignment padding. */
+            pos++;
         }
     }
     *argv_off = pos;
@@ -202,9 +230,11 @@ procfs_read_procargs(proc_t p, uint8_t **bufp, size_t *lenp,
             apple = scan;
             break;
         }
+
         size_t slen = strnlen((const char *)buf + scan, remaining);
         if (slen == remaining) {
-            break;                                   /* no terminator; stop */
+            /* No terminator; stop. */
+            break;
         }
         scan += slen + 1;
     }
@@ -212,7 +242,8 @@ procfs_read_procargs(proc_t p, uint8_t **bufp, size_t *lenp,
 
     *bufp = buf;
     *lenp = n;
-    return 0;
+
+    return error;
 }
 
 /*
@@ -223,15 +254,18 @@ procfs_read_procargs(proc_t p, uint8_t **bufp, size_t *lenp,
 static int
 procfs_doprocargs_helper(proc_t p, uio_t uio)
 {
+    int error = 0;
+
     uint8_t *buf = NULL;
-    size_t   n = 0, argv_off = 0, env_off = 0, apple_off = 0;
+    size_t n = 0, argv_off = 0, env_off = 0, apple_off = 0;
 
     if (procfs_read_procargs(p, &buf, &n, &argv_off, &env_off, &apple_off) != 0) {
-        return procfs_cmdline_comm(p, uio);          /* fall back to (comm) */
+        return procfs_cmdline_comm(p, uio); /* Fall back to (comm). */
     }
 
-    int error = procfs_copy_data((const char *)(buf + argv_off),
-                                 (int)(env_off - argv_off), uio);
+    error = procfs_copy_data((const char *)(buf + argv_off),
+        (int)(env_off - argv_off), uio);
+
     free(buf, M_TEMP);
     return error;
 }

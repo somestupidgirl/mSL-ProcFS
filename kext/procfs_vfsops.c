@@ -7,11 +7,13 @@
  * VFS operations for the ProcFS file system.
  */
 #include <kern/locks.h>
+
 #include <libkern/libkern.h>
-#include <libkext/libkext.h>
 #include <libkern/OSAtomic.h>
 #include <libkern/OSMalloc.h>
+
 #include <libkext/libkext.h>
+
 #include <sys/mount.h>
 #include <sys/systm.h>
 #include <sys/vnode.h>
@@ -20,37 +22,50 @@
 
 #pragma mark Local Definitions
 
-// The fixed mounted device name for this file system. The first
-// instance is called "proc", the second is "proc2" and so on.
+/*
+ * The fixed mounted device name for this file system. The first
+ * instance is called "proc", the second is "proc2" and so on.
+ */
 #define MOUNTED_DEVICE_NAME "proc"
 
-// Block size for this file system. A meaningless value.
+/*
+ * Block size for this file system. A meaningless value.
+ */
 #define BLOCK_SIZE 4096
 
-// The numer of hash buckets required. This *MUST* be
-// a power of two.
+/*
+ * The numer of hash buckets required. This *MUST* be
+ * a power of two.
+ */
 #define HASH_BUCKET_COUNT (1 << 6)
 
-// Each separate mount of the file system requires a unique id,
-// which is also used by every node in the file system. This is
-// equivalent to the dev_t associated with a real file system.
+/*
+ * Each separate mount of the file system requires a unique id,
+ * which is also used by every node in the file system. This is
+ * equivalent to the dev_t associated with a real file system.
+ */
 STATIC int32_t procfs_mount_id = 0;
 
 #pragma mark -
 #pragma mark External References
 
-/* -- External references -- */
-// Vnode ops descriptor for this file system.
+/*
+ * Vnode ops descriptor for this file system.
+ */
 extern struct vnodeopv_desc *procfs_vnodeops_list[1];
 
-// Pointer to the constructed vnode operations vector. Set
-// when the file system is registered and used when creating
-// vnodes.
+/*
+ * Pointer to the constructed vnode operations vector. Set
+ * when the file system is registered and used when creating
+ * vnodes.
+ */
 extern int (**procfs_vnodeop_p)(void *);
 
-// Initialization routine. Only called once during the kext
-// start routine in procfs.c - Included here as an external
-// reference for the procfs_vfsops structure.
+/*
+ * Initialization routine. Only called once during the kext
+ * start routine in procfs.c - Included here as an external
+ * reference for the procfs_vfsops structure.
+ */
 extern int procfs_init(struct vfsconf *vfsconf);
 
 #pragma mark -
@@ -95,13 +110,13 @@ struct vfs_fsentry procfs_vfsentry = {
 #pragma mark -
 #pragma mark Static Data
 
-/* Number of mounted instances of procfs */
+/*
+ * Number of mounted instances of procfs
+ */
 STATIC int mounted_instance_count = 0;
 
 #pragma mark -
 #pragma mark VFS Operations
-
-/* --- VFS OPERATIONS --- */
 
 /*
  * Performs the mount operation for the procfs file system. Gets the options passed to the
@@ -117,9 +132,14 @@ procfs_mount(struct mount *mp, __unused vnode_t devvp, user_addr_t data, __unuse
 {
     pfsmount_t *procfs_mp = MPTOPMP(mp);
     if (procfs_mp == NULL) {
-        // First mount. Get the mount options from user space.
+        /*
+         * First mount. Get the mount options from user space.
+         */
         pfsmount_args_t mount_args;
-        mount_args.mnt_options = 0;  // Default: procperms enabled.
+        /*
+         * Default: procperms enabled.
+         */
+        mount_args.mnt_options = 0;
         if (data != USER_ADDR_NULL) {
             int error = copyin(data, &mount_args, sizeof(mount_args));
             if (error != 0) {
@@ -128,7 +148,9 @@ procfs_mount(struct mount *mp, __unused vnode_t devvp, user_addr_t data, __unuse
             }
         }
 
-        // Allocate the procfs mount structure and link it to the VFS structure.
+        /*
+         * Allocate the procfs mount structure and link it to the VFS structure.
+         */
         procfs_mp = OSMalloc(sizeof(pfsmount_t), procfs_osmalloc_tag);
         if (procfs_mp == NULL) {
             printf("procfs: Failed to allocate pfsmount_t");
@@ -141,31 +163,43 @@ procfs_mount(struct mount *mp, __unused vnode_t devvp, user_addr_t data, __unuse
         nanotime(&procfs_mp->pmnt_mount_time);
         vfs_setfsprivate(mp, procfs_mp);
 
-        // Install procfs-specific flags and augment the generic mount flags.
-        // NOT MNT_RDONLY: procfs has writable nodes (the per-process "note"), and
-        // the VFS layer rejects every write on a read-only mount before it can
-        // reach vnop_write. Non-writable nodes still reject writes themselves
-        // (procfs_vnop_write returns EROFS/EISDIR; their modes carry no write bit).
+        /*
+         * Install procfs-specific flags and augment the generic mount flags.
+         * NOT MNT_RDONLY: procfs has writable nodes (the per-process "note"), and
+         * the VFS layer rejects every write on a read-only mount before it can
+         * reach vnop_write. Non-writable nodes still reject writes themselves
+         * (procfs_vnop_write returns EROFS/EISDIR; their modes carry no write bit).
+         */
         vfs_setflags(mp, MNT_NOSUID|MNT_NOEXEC|MNT_NODEV|MNT_NOATIME|MNT_LOCAL);
 
-        // Increment the mounted instance count so that each mount of the file system
-        // has a unique name as seen by the mount(1) command.
+        /*
+         * Increment the mounted instance count so that each mount of the file system
+         * has a unique name as seen by the mount(1) command.
+         */
         OSAddAtomic(1, &mounted_instance_count);
 
-        // Set up the statfs structure in the VFS mount with mostly
-        // boilerplate default values.
+        /*
+         * Set up the statfs structure in the VFS mount with mostly
+         * boilerplate default values.
+         */
         struct vfsstatfs *statfsp = vfs_statfs(mp);
         populate_statfs_info(mp, statfsp);
 
-        // Complete setup of procfs data. Does nothing after first mount.
+        /*
+         * Complete setup of procfs data. Does nothing after first mount.
+         */
         procfs_structure_init();
 
-        // Initialize static data that is only required after an instance of the file
-        // system has been mounted.
+        /*
+         * Initialize static data that is only required after an instance of the file
+         * system has been mounted.
+         */
         lck_mtx_lock(pfsnode_hash_mutex);
         if (pfsnode_hash_buckets == NULL) {
-            // Set up the hash buckets only on first mount. Rather than define a
-            // a new BSD zone, we use the existing zone M_CACHE.
+            /*
+             * Set up the hash buckets only on first mount. Rather than define a
+             * a new BSD zone, we use the existing zone M_CACHE.
+             */
             pfsnode_hash_buckets = hashinit(HASH_BUCKET_COUNT, M_CACHE, &pfsnode_hash_to_bucket_mask);
         }
         lck_mtx_unlock(pfsnode_hash_mutex);
@@ -186,9 +220,13 @@ procfs_unmount(struct mount *mp, __unused int mntflags, __unused vfs_context_t c
 {
     pfsmount_t *procfs_mp = MPTOPMP(mp);
     if (procfs_mp != NULL) {
-        // We are currently mounted. Release resources and disconnect.
+        /*
+         * We are currently mounted. Release resources and disconnect.
+         */
 
-        // Flush out cached vnodes.
+        /*
+         * Flush out cached vnodes.
+         */
         vflush(mp, NULLVP, FORCECLOSE);
 
         vfs_setfsprivate(mp, NULL);
@@ -198,7 +236,9 @@ procfs_unmount(struct mount *mp, __unused int mntflags, __unused vfs_context_t c
             procfs_mp = NULL;
         }
 
-        // Decrement mounted instance count.
+        /*
+         * Decrement mounted instance count.
+         */
         OSAddAtomic(-1, &mounted_instance_count);
     }
     procfs_structure_free();
@@ -218,12 +258,16 @@ procfs_root(struct mount *mp, vnode_t *vpp, __unused vfs_context_t context)
     vnode_t root_vnode;
     pfsnode_t *root_pfsnode;
 
-    // Find the root vnode in the cache, or create it if it does not exist.
+    /*
+     * Find the root vnode in the cache, or create it if it does not exist.
+     */
     int error = procfsnode_find(MPTOPMP(mp), PROCFS_ROOT_NODE_ID, procfs_structure_root_node(),
                                 &root_pfsnode, &root_vnode,
                                 (create_vnode_func)&procfs_create_root_vnode, mp);
 
-    // Return the root vnode pointer to the caller, if it was created.
+    /*
+     * Return the root vnode pointer to the caller, if it was created.
+     */
     *vpp = error == 0 ? root_vnode : NULLVP;
 
     return error;
@@ -265,11 +309,15 @@ procfs_create_root_vnode(mount_t mp, pfsnode_t *pnp, vnode_t *vpp)
     vnode_create_params.vnfs_markroot = 1;
     vnode_create_params.vnfs_flags = VNFS_CANTCACHE;
 
-    // Create the vnode, if possible.
+    /*
+     * Create the vnode, if possible.
+     */
     vnode_t root_vnode;
     int error = vnode_create(VNCREATE_FLAVOR, VCREATESIZE, &vnode_create_params, &root_vnode);
 
-    // Return the root vnode pointer to the caller, if it was created.
+    /*
+     * Return the root vnode pointer to the caller, if it was created.
+     */
     *vpp = error == 0 ? root_vnode : NULLVP;
 
     return error;
@@ -296,18 +344,24 @@ populate_statfs_info(struct mount *mp, struct vfsstatfs *statfsp)
     statfsp->f_files = 0;
     statfsp->f_ffree = 0;
 
-    // Compose fsid_t from the mount point id and the file system
-    // type number, which was assigned when the file system was
-    // registered. This pair of values just has to be unique.
+    /*
+     * Compose fsid_t from the mount point id and the file system
+     * type number, which was assigned when the file system was
+     * registered. This pair of values just has to be unique.
+     */
     statfsp->f_fsid.val[0] = MPTOPMP(mp)->pmnt_id;
     statfsp->f_fsid.val[1] = vfs_typenum(mp);
 
     bzero(statfsp->f_mntfromname, sizeof(statfsp->f_mntfromname));
     if (mounted_instance_count == 1) {
-        // First mount -- just use the base name.
+        /*
+         * First mount -- just use the base name.
+         */
         bcopy(MOUNTED_DEVICE_NAME, statfsp->f_mntfromname, strlen(MOUNTED_DEVICE_NAME));
     } else {
-        // Subsequent mounts have the instance count + 1 added to the name.
+        /*
+         * Subsequent mounts have the instance count + 1 added to the name.
+         */
         snprintf(statfsp->f_mntfromname, sizeof(statfsp->f_mntfromname) - 1,
                  "%s%d", MOUNTED_DEVICE_NAME, mounted_instance_count);
     }

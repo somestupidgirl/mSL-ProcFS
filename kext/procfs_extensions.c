@@ -30,12 +30,14 @@
 int
 procfs_dokextlist(uint32_t type, uio_t uio)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
-        return ENOMEM;
+        return (error == ENOTCONN);
     }
 
-    int error = procfs_ctl_request_blob(type, &sb);
+    error = procfs_ctl_request_blob(type, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */

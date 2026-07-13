@@ -13,6 +13,11 @@
  * in the ctl_send callback. If no daemon is connected, or it does not answer in
  * time, the caller falls back to whatever the kext can compute itself.
  */
+#include <string.h>
+
+#include <kern/locks.h>
+#include <libkern/libkern.h>
+
 #include <sys/errno.h>
 #include <sys/kern_control.h>
 #include <sys/kpi_mbuf.h>
@@ -21,9 +26,6 @@
 #include <sys/systm.h>
 #include <sys/time.h>
 #include <sys/sbuf.h>
-#include <kern/locks.h>
-#include <libkern/libkern.h>
-#include <string.h>
 
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_ctl.h>
@@ -52,19 +54,26 @@ static struct procfs_ctl_slot  g_ctl_slots[PROCFS_CTL_SLOTS];
 static errno_t
 procfs_ctl_connect(__unused kern_ctl_ref kctlref, struct sockaddr_ctl *sac, void **unitinfo)
 {
+    int error = 0;
+
     lck_mtx_lock(g_ctl_lock);
     g_ctl_unit      = sac->sc_unit;
     g_ctl_connected = TRUE;
     lck_mtx_unlock(g_ctl_lock);
+
     *unitinfo = NULL;
+
     printf("procfs: ctl daemon connected (unit %u)\n", sac->sc_unit);
-    return 0;
+
+    return error;
 }
 
 static errno_t
 procfs_ctl_disconnect(__unused kern_ctl_ref kctlref, __unused u_int32_t unit,
     __unused void *unitinfo)
 {
+    int error = 0;
+
     lck_mtx_lock(g_ctl_lock);
     g_ctl_connected = FALSE;
     /* Wake any waiters so they fall back instead of blocking for the timeout. */
@@ -76,8 +85,10 @@ procfs_ctl_disconnect(__unused kern_ctl_ref kctlref, __unused u_int32_t unit,
         }
     }
     lck_mtx_unlock(g_ctl_lock);
+
     printf("procfs: ctl daemon disconnected\n");
-    return 0;
+
+    return error;
 }
 
 /* Reply from the daemon: [struct procfs_ctl_resp][payload]. */
@@ -85,6 +96,8 @@ static errno_t
 procfs_ctl_send(__unused kern_ctl_ref kctlref, __unused u_int32_t unit,
     __unused void *unitinfo, mbuf_t m, __unused int flags)
 {
+    int error = 0;
+
     struct procfs_ctl_resp resp;
     size_t total = mbuf_pkthdr_len(m);
 
@@ -95,6 +108,7 @@ procfs_ctl_send(__unused kern_ctl_ref kctlref, __unused u_int32_t unit,
         if (plen > PROCFS_CTL_MAXPAYLOAD) {
             plen = PROCFS_CTL_MAXPAYLOAD;
         }
+
         lck_mtx_lock(g_ctl_lock);
         for (int i = 0; i < PROCFS_CTL_SLOTS; i++) {
             if (g_ctl_slots[i].in_use && !g_ctl_slots[i].done &&
@@ -111,8 +125,9 @@ procfs_ctl_send(__unused kern_ctl_ref kctlref, __unused u_int32_t unit,
         }
         lck_mtx_unlock(g_ctl_lock);
     }
+
     mbuf_freem(m);
-    return 0;
+    return error;
 }
 
 /*
@@ -125,26 +140,33 @@ static int
 procfs_ctl_request_impl(uint32_t type, int pid, uint64_t arg, const char *name,
     void *out, uint32_t outcap, uint32_t *outlen)
 {
+    int error = 0;
+
     if (!g_ctl_connected || g_ctl_ref == NULL) {
         return ENOTCONN;
     }
 
     lck_mtx_lock(g_ctl_lock);
+
     int slot = -1;
+
     for (int i = 0; i < PROCFS_CTL_SLOTS; i++) {
         if (!g_ctl_slots[i].in_use) {
             slot = i;
             break;
         }
     }
+
     if (slot < 0) {
         lck_mtx_unlock(g_ctl_lock);
         return EBUSY;
     }
+
     uint32_t seq = ++g_ctl_seq;
     if (seq == 0) {
         seq = ++g_ctl_seq;
     }
+
     g_ctl_slots[slot].in_use = TRUE;
     g_ctl_slots[slot].done   = FALSE;
     g_ctl_slots[slot].seq    = seq;
@@ -152,6 +174,7 @@ procfs_ctl_request_impl(uint32_t type, int pid, uint64_t arg, const char *name,
     g_ctl_slots[slot].len    = 0;
     u_int32_t    unit = g_ctl_unit;
     kern_ctl_ref ref  = g_ctl_ref;
+
     lck_mtx_unlock(g_ctl_lock);
 
     struct procfs_ctl_req req = {
@@ -161,11 +184,11 @@ procfs_ctl_request_impl(uint32_t type, int pid, uint64_t arg, const char *name,
         .pid   = pid,
         .arg   = arg,
     };
+
     if (name != NULL) {
         strlcpy(req.name, name, sizeof(req.name));
     }
 
-    int error;
     errno_t e = ctl_enqueuedata(ref, unit, &req, sizeof(req), 0);
     if (e != 0) {
         error = e;
@@ -178,6 +201,7 @@ procfs_ctl_request_impl(uint32_t type, int pid, uint64_t arg, const char *name,
                 break;      /* timeout (EWOULDBLOCK) or signal */
             }
         }
+
         if (g_ctl_slots[slot].done) {
             error = g_ctl_slots[slot].error;
             if (error == 0) {
@@ -186,6 +210,7 @@ procfs_ctl_request_impl(uint32_t type, int pid, uint64_t arg, const char *name,
                     n = outcap;
                 }
                 memcpy(out, g_ctl_slots[slot].buf, n);
+
                 if (outlen != NULL) {
                     *outlen = n;
                 }
@@ -199,6 +224,7 @@ procfs_ctl_request_impl(uint32_t type, int pid, uint64_t arg, const char *name,
     lck_mtx_lock(g_ctl_lock);
     g_ctl_slots[slot].in_use = FALSE;
     lck_mtx_unlock(g_ctl_lock);
+
     return error;
 }
 
@@ -226,24 +252,31 @@ procfs_ctl_request_named(uint32_t type, int pid, uint64_t arg, const char *name,
 int
 procfs_ctl_request_blob(uint32_t type, struct sbuf *sb)
 {
-    uint8_t   chunk[PROCFS_CTL_MAXPAYLOAD];
-    uint64_t  offset = 0;
+    int error = 0;
+
+    uint8_t chunk[PROCFS_CTL_MAXPAYLOAD];
+    uint64_t offset = 0;
 
     for (;;) {
         uint32_t got = 0;
+
         int e = procfs_ctl_request(type, 0, offset, chunk, sizeof(chunk), &got);
         if (e != 0) {
             return e;
         }
+
         if (got > 0) {
             sbuf_bcat(sb, chunk, got);
         }
+
         offset += got;
         if (got < PROCFS_CTL_MAXPAYLOAD) {
-            break;      /* short chunk: end of the listing */
+            /* Short chunk: end of the listing. */
+            break;
         }
     }
-    return 0;
+
+    return error;
 }
 
 kern_return_t
@@ -253,6 +286,7 @@ procfs_ctl_register(void)
     if (g_ctl_grp == NULL) {
         return KERN_FAILURE;
     }
+
     g_ctl_lock = lck_mtx_alloc_init(g_ctl_grp, LCK_ATTR_NULL);
     if (g_ctl_lock == NULL) {
         lck_grp_free(g_ctl_grp);
@@ -263,6 +297,7 @@ procfs_ctl_register(void)
     struct kern_ctl_reg reg;
     bzero(&reg, sizeof(reg));
     strlcpy(reg.ctl_name, PROCFS_CTL_NAME, sizeof(reg.ctl_name));
+
     reg.ctl_flags      = CTL_FLAG_PRIVILEGED;   /* only root may connect */
     reg.ctl_sendsize   = 8192;
     reg.ctl_recvsize   = 8192;
@@ -279,7 +314,9 @@ procfs_ctl_register(void)
         g_ctl_grp  = NULL;
         return KERN_FAILURE;
     }
+
     printf("procfs: kernel control '%s' registered\n", PROCFS_CTL_NAME);
+
     return KERN_SUCCESS;
 }
 
@@ -290,11 +327,14 @@ procfs_ctl_deregister(void)
         ctl_deregister(g_ctl_ref);
         g_ctl_ref = NULL;
     }
+
     g_ctl_connected = FALSE;
+
     if (g_ctl_lock != NULL) {
         lck_mtx_free(g_ctl_lock, g_ctl_grp);
         g_ctl_lock = NULL;
     }
+
     if (g_ctl_grp != NULL) {
         lck_grp_free(g_ctl_grp);
         g_ctl_grp = NULL;

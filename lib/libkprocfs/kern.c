@@ -1,8 +1,19 @@
 /*
  * Copyright (c) 2022-2026 Sunneva N. Mariu
  */
+#include <ptrauth.h>
+
+#include <kern/locks.h>
+#include <kern/kern_types.h>
+
+#include <libkern/OSMalloc.h>
+#include <libkern/OSAtomic.h>
+
+#include <mach/mach_types.h>
+
 #include <os/log.h>
 #include <os/refcnt.h>
+
 #include <sys/fcntl.h>
 #include <sys/guarded.h>
 #include <sys/file.h>
@@ -25,12 +36,7 @@
 #include <sys/vnode.h>
 #include <sys/vnode_internal.h>
 #include <sys/sbuf.h>
-#include <kern/locks.h>
-#include <kern/kern_types.h>
-#include <libkern/OSMalloc.h>
-#include <libkern/OSAtomic.h>
-#include <mach/mach_types.h>
-#include <ptrauth.h>
+
 
 /*
  * The running arm64 kernel builds struct lockf with IMPORTANCE_INHERITANCE, so
@@ -42,7 +48,6 @@
 #define IMPORTANCE_INHERITANCE 1
 #endif
 #include <sys/lockf.h>
-
 
 /*
  * =========== From bsd/kern/bsd_init.c ===========

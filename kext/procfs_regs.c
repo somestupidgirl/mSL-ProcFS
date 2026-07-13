@@ -36,6 +36,7 @@
 #elif defined(__x86_64__)
 #include <mach/i386/thread_status.h>
 #endif
+
 #include <sys/errno.h>
 #include <sys/proc.h>
 #include <sys/proc_internal.h>
@@ -48,15 +49,22 @@ int
 procfs_doregs(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     if (uio_rw(uio) != UIO_READ) {
-        return EOPNOTSUPP;       /* the node is read-only */
+        /*
+         * The node is read-only.
+         */
+        return EOPNOTSUPP;
     }
 
-    /* Linux presentation mode renders the registers as text (procfs_linux.c). */
+    /*
+     * Linux presentation mode renders the registers as text (procfs_linux.c).
+     */
     if (procfs_linux_mode) {
         return procfs_doregs_linux(pnp, uio, ctx);
     }
 
-    /* Validate the pid and reject processes with no user thread state. */
+    /*
+     * Validate the pid and reject processes with no user thread state.
+     */
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
     if (p == PROC_NULL) {
         return ESRCH;
@@ -80,8 +88,10 @@ procfs_doregs(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     int rc = procfs_ctl_request(PROCFS_REQ_REGS, pnp->node_id.nodeid_pid, 0,
                                 &state, sizeof(state), &got);
     if (rc != 0) {
-        /* ENOTCONN: the daemon is not running. Otherwise the daemon's errno
-         * (EPERM for a SIP/AMFI-protected target, ESRCH/EIO otherwise). */
+        /*
+         * ENOTCONN: the daemon is not running. Otherwise the daemon's errno
+         * (EPERM for a SIP/AMFI-protected target, ESRCH/EIO otherwise).
+         */
         return (rc == ENOTCONN) ? ENOTSUP : rc;
     }
     return procfs_copy_data((const char *)&state, (int)got, uio);

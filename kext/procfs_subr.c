@@ -8,10 +8,13 @@
  */
 #include <kern/task.h>
 #include <kern/thread.h>
+
 #include <libkern/OSMalloc.h>
+
 #include <mach/mach_types.h>
 #include <mach/message.h>
 #include <mach/task.h>
+
 #include <sys/kauth.h>
 #include <sys/malloc.h>
 #include <sys/proc.h>
@@ -100,7 +103,9 @@ procfs_allocvp(pfstype pfs_type)
         return VLNK;
     }
 
-    // Unknown type: make it a file.
+    /*
+     * Unknown type: make it a file.
+     */
     return VREG;
 }
 
@@ -119,14 +124,21 @@ procfs_get_process_info(vnode_t vp, pid_t *pidp, proc_t *procp)
     pfstype node_type = snode->psn_node_type;
 
     int pid = procfsnode_to_pid(pfsnode);
-    proc_t p = pid == PRNODE_NO_PID ? NULL : proc_find(pid); // Process for the vnode, if there is one.
+
+    /*
+     * Process for the vnode, if there is one.
+     */
+    proc_t p = pid == PRNODE_NO_PID ? NULL : proc_find(pid);
     if (p == NULL && procfs_node_type_has_pid(node_type)) {
-        // Process must have gone -- return an error
+        /*
+         * Process must have gone -- return an error
+         */
         return ENOENT;
     }
 
     *procp = p;
     *pidp = pid;
+
     return 0;
 }
 
@@ -213,7 +225,9 @@ procfs_atoi(const char *p, const char **end_ptr)
     }
     *end_ptr = next - 1;
 
-    // Invalid if the first character was not a digit.
+    /*
+     * Invalid if the first character was not a digit.
+     */
     return next == p + 1 ? -1 : value;
 }
 
@@ -231,11 +245,12 @@ procfs_get_pid(proc_t p, void *udata)
 
     if (creds == NULL || procfs_check_can_access_process(creds, p) == 0) {
         if (data->num_procs >= data->max_procs) {
-            // Workaround race-condition between read of nprocs and the kernel
-            // spawning more processes.
+            /*
+             * Workaround race-condition between read of nprocs and the kernel
+             * spawning more processes.
+             */
             return PROC_RETURNED;
         }
-
         data->pids[data->num_procs] = proc_pid(p);
         data->num_procs++;
     }
@@ -352,7 +367,7 @@ procfs_get_process_count(kauth_cred_t creds)
 extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
 extern pmap_t  kernel_pmap;
 
-static uintptr_t g_thread_struct_size  = 0;     /* sizeof(struct thread)        */
+static uintptr_t g_thread_struct_size  = 0;     /* sizeof(struct thread) */
 static boolean_t g_thread_size_known   = FALSE;
 
 #define PROCFS_THREAD_SIZE_MAX 262144 /* sane upper bound on sizeof(struct thread) */
@@ -435,7 +450,9 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
         return KERN_NOT_SUPPORTED;
     }
 
-    /* First pass: count the uthreads. */
+    /*
+     * First pass: count the uthreads.
+     */
     int count = 0;
     uthread_t uth = TAILQ_FIRST(&p->p_uthlist);
     while (uth != NULL && count < PROCFS_MAX_THREADS) {
@@ -445,6 +462,7 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
         count++;
         uth = TAILQ_NEXT(uth, uu_list);
     }
+
     if (count == 0) {
         return KERN_SUCCESS;
     }
@@ -454,7 +472,9 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
         return KERN_RESOURCE_SHORTAGE;
     }
 
-    /* Second pass: collect the thread ids (uthread -> thread -> thread_id). */
+    /*
+     * Second pass: collect the thread ids (uthread -> thread -> thread_id).
+     */
     int n = 0;
     uth = TAILQ_FIRST(&p->p_uthlist);
     while (uth != NULL && n < count) {
@@ -471,6 +491,7 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
 
     *thread_ids = ids;
     *thread_count = n;
+
     return KERN_SUCCESS;
 }
 
@@ -489,14 +510,17 @@ procfs_get_representative_thread(proc_t p)
     if (!g_thread_size_known || p == PROC_NULL) {
         return THREAD_NULL;
     }
+
     uthread_t uth = TAILQ_FIRST(&p->p_uthlist);
     if (uth == NULL || !procfs_kptr_ok((uintptr_t)uth)) {
         return THREAD_NULL;
     }
+
     thread_t thread = (thread_t)((uintptr_t)uth - g_thread_struct_size);
     if (!procfs_kptr_ok((uintptr_t)thread)) {
         return THREAD_NULL;
     }
+
     return thread;
 }
 
@@ -523,8 +547,10 @@ procfs_get_thread_ptrs(proc_t p, thread_t *out, int max)
     if (!g_thread_size_known || p == PROC_NULL || out == NULL || max <= 0) {
         return 0;
     }
+
     int n = 0;
     uthread_t uth = TAILQ_FIRST(&p->p_uthlist);
+
     while (uth != NULL && n < max && n < PROCFS_MAX_THREADS) {
         uintptr_t u = (uintptr_t)uth;
         if (!procfs_kptr_ok(u)) {
@@ -583,10 +609,12 @@ procfs_get_fd_list(proc_t p, struct proc_fdinfo **fdlist, size_t *count)
         return EINVAL;
     }
 
-    // Prefer the procfsd daemon (proc_pidinfo PROC_PIDLISTFDS): the in-kernel
-    // fd-table walk depends on struct filedesc offsets that drift across kernel
-    // point-releases. One payload holds up to PROCFS_CTL_MAXPAYLOAD/8 fds; a
-    // process with more has its list truncated (rare for interactive use).
+    /*
+     * Prefer the procfsd daemon (proc_pidinfo PROC_PIDLISTFDS): the in-kernel
+     * fd-table walk depends on struct filedesc offsets that drift across kernel
+     * point-releases. One payload holds up to PROCFS_CTL_MAXPAYLOAD/8 fds; a
+     * process with more has its list truncated (rare for interactive use).
+     */
     struct proc_fdinfo *dbuf = malloc(PROCFS_CTL_MAXPAYLOAD, M_TEMP, M_WAITOK);
     if (dbuf != NULL) {
         uint32_t got = 0;
@@ -596,10 +624,15 @@ procfs_get_fd_list(proc_t p, struct proc_fdinfo **fdlist, size_t *count)
             *count  = got / sizeof(struct proc_fdinfo);
             return 0;
         }
-        free(dbuf, M_TEMP);     /* no daemon -> fall back to the in-kernel walk */
+        /*
+         * No daemon -> fall back to the in-kernel walk
+         */
+        free(dbuf, M_TEMP);
     }
 
-    // The first call (NULL buffer) returns an upper bound on the fd count.
+    /*
+     * The first call (NULL buffer) returns an upper bound on the fd count.
+     */
     size_t capacity = 0;
     int error = proc_fdlist(p, NULL, &capacity);
     if (error != 0 || capacity == 0) {
@@ -611,7 +644,9 @@ procfs_get_fd_list(proc_t p, struct proc_fdinfo **fdlist, size_t *count)
         return ENOMEM;
     }
 
-    // The second call fills the buffer and reports the actual number written.
+    /*
+     * The second call fills the buffer and reports the actual number written.
+     */
     size_t actual = capacity;
     error = proc_fdlist(p, buf, &actual);
     if (error != 0) {
@@ -621,6 +656,7 @@ procfs_get_fd_list(proc_t p, struct proc_fdinfo **fdlist, size_t *count)
 
     *fdlist = buf;
     *count = actual;
+
     return 0;
 }
 
@@ -648,15 +684,19 @@ procfs_check_can_access_process(kauth_cred_t creds, proc_t p)
     kauth_cred_t proc_cred = kauth_cred_proc_ref(p);
     int error = EACCES;
 
-    // Allow access if the effective user id matches the
-    // effective or real user id of the process.
+    /*
+     * Allow access if the effective user id matches the
+     * effective or real user id of the process.
+     */
     uid_t cred_euid = posix_creds->cr_uid;
     if (cred_euid == kauth_cred_getuid(proc_cred) || cred_euid == kauth_cred_getruid(proc_cred)) {
         error = 0;
     }
 
-    // Also allow access if the effective group id matches
-    // the effective or saved group id of the process.
+    /*
+     * Also allow access if the effective group id matches
+     * the effective or saved group id of the process.
+     */
     gid_t cred_egid = posix_creds->cr_groups[0];
     if (error != 0 && (cred_egid == kauth_cred_getgid(proc_cred) || cred_egid == kauth_cred_getrgid(proc_cred))) {
         error = 0;

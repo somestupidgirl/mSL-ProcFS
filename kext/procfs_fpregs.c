@@ -24,12 +24,13 @@
  */
 #include <stdint.h>
 
-#include <mach/thread_status.h>
 #if defined(__arm64__) || defined(__aarch64__)
 #include <mach/arm/thread_status.h>
 #elif defined(__x86_64__)
 #include <mach/i386/thread_status.h>
 #endif
+#include <mach/thread_status.h>
+
 #include <sys/errno.h>
 #include <sys/proc.h>
 #include <sys/proc_internal.h>

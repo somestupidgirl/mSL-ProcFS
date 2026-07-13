@@ -109,26 +109,36 @@ procfs_dosid(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx) {
 int
 procfs_dotty(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    // The controlling terminal lives at p->p_pgrp->pg_session->s_ttyvp, reached
-    // through the SMR-protected p_pgrp; the safe accessor, proc_gettty(), is
-    // com.apple.kpi.private and unlinkable in-kernel (its SMR read section is too).
-    // Rather than resolve it via libklookup, ask the procfsd daemon: it reads the
-    // controlling-terminal device from proc_pidinfo(PROC_PIDTBSDINFO)'s e_tdev and
-    // maps it to its /dev path (devname), returning the path string (empty when
-    // the process has no controlling terminal). Without a connected daemon the
-    // node reports ENOTSUP, as it did when libklookup was unavailable.
+    /*
+     * The controlling terminal lives at p->p_pgrp->pg_session->s_ttyvp, reached
+     * through the SMR-protected p_pgrp; the safe accessor, proc_gettty(), is
+     * com.apple.kpi.private and unlinkable in-kernel (its SMR read section is too).
+     * Rather than resolve it via libklookup, ask the procfsd daemon: it reads the
+     * controlling-terminal device from proc_pidinfo(PROC_PIDTBSDINFO)'s e_tdev and
+     * maps it to its /dev path (devname), returning the path string (empty when
+     * the process has no controlling terminal). Without a connected daemon the
+     * node reports ENOTSUP, as it did when libklookup was unavailable.
+     */
     char path[MAXPATHLEN];
     uint32_t got = 0;
+
     int rc = procfs_ctl_request(PROCFS_REQ_TTY, pnp->node_id.nodeid_pid, 0,
-                                path, sizeof(path), &got);
+        path, sizeof(path), &got);
+
     if (rc == ESRCH) {
         return ESRCH;
     }
+
     if (rc != 0) {
-        // No daemon connected (ENOTCONN), timed out, or other failure.
+        /*
+         * No daemon connected (ENOTCONN), timed out, or other failure.
+         */
         return ENOTSUP;
     }
-    // got == 0 means no controlling terminal: emit an empty node.
+
+    /*
+     * got == 0 means no controlling terminal: emit an empty node.
+     */
     return procfs_copy_data(path, (int)got, uio);
 }
 
@@ -139,21 +149,27 @@ procfs_dotty(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_dostatus(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    // Linux presentation mode renders status as text (Name:/State:/Pid:/...);
-    // native mode emits the binary proc_bsdshortinfo below.
+    /*
+     * Linux presentation mode renders status as text (Name:/State:/Pid:/...);
+     * native mode emits the binary proc_bsdshortinfo below.
+     */
     if (procfs_linux_mode) {
         return procfs_doprocstatus_linux(pnp, uio, ctx);
     }
 
-    // Get the process id from the node id in the pfsnode and locate
-    // the process.
+    /*
+     * Get the process id from the node id in the pfsnode and locate
+     * the process.
+     */
     int error = 0;
 
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
     if (p != PROC_NULL) {
-        struct proc_bsdshortinfo info; // Mac OS X >= 10.7 has proc_bsdshortinfo
+        struct proc_bsdshortinfo info; /* Mac OS X >= 10.7 has proc_bsdshortinfo */
 
-        // Get the BSD-centric process info and copy it out.
+        /*
+         * Get the BSD-centric process info and copy it out.
+         */
         error = proc_pidshortbsdinfo(p, &info, 0);
         if (error == 0) {
             error = procfs_copy_data((const char *)&info, sizeof(info), uio);
@@ -174,18 +190,22 @@ procfs_dostatus(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_dotaskinfo(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    // Get the process id from the node id in the pfsnode and locate
-    // the process.
+    /*
+     * Get the process id from the node id in the pfsnode and locate
+     * the process.
+     */
     int error = 0;
 
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
     if (p != PROC_NULL) {
         struct proc_taskinfo info;
 
-        // Preferred path: the procfsd daemon returns the exact proc_taskinfo
-        // (all 18 fields) via libproc's proc_pidinfo(). Only when no daemon is
-        // connected (or it doesn't answer in time) do we fall back to what the
-        // kext can compute itself.
+        /*
+         * Preferred path: the procfsd daemon returns the exact proc_taskinfo
+         * (all 18 fields) via libproc's proc_pidinfo(). Only when no daemon is
+         * connected (or it doesn't answer in time) do we fall back to what the
+         * kext can compute itself.
+         */
         uint32_t got = 0;
         if (procfs_ctl_request(PROCFS_REQ_TASKINFO, pnp->node_id.nodeid_pid, 0,
                 &info, sizeof(info), &got) == 0 && got == sizeof(info)) {
@@ -194,13 +214,15 @@ procfs_dotaskinfo(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
             return error;
         }
 
-        // Fallback. On arm64 proc_pidtaskinfo() leaves everything zero
-        // (fill_taskprocinfo is stripped), so fill the fields reachable without
-        // it: the memory sizes from the VM-region walk, the thread count from
-        // the uthread list, the default thread policy, and priority. The
-        // remaining counters (CPU time, faults, syscalls, ...) live only in the
-        // opaque task struct and stay zero. On x86_64, where proc_pidtaskinfo
-        // already populated everything, these recompute the same values.
+        /*
+         * Fallback. On arm64 proc_pidtaskinfo() leaves everything zero
+         * (fill_taskprocinfo is stripped), so fill the fields reachable without
+         * it: the memory sizes from the VM-region walk, the thread count from
+         * the uthread list, the default thread policy, and priority. The
+         * remaining counters (CPU time, faults, syscalls, ...) live only in the
+         * opaque task struct and stay zero. On x86_64, where proc_pidtaskinfo
+         * already populated everything, these recompute the same values.
+         */
         error = proc_pidtaskinfo(p, &info);
         if (error == 0) {
             uint64_t vsize = 0, rsize = 0;
@@ -208,10 +230,12 @@ procfs_dotaskinfo(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
                 info.pti_virtual_size  = vsize;
                 info.pti_resident_size = rsize;
             }
+
             int tcount = procfs_get_task_thread_count(p);
             if (tcount > 0) {
                 info.pti_threadnum = tcount;
             }
+
             if (info.pti_policy == 0) {
                 info.pti_policy = POLICY_TIMESHARE;
             }
@@ -239,8 +263,10 @@ procfs_dotaskinfo(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_dothreadinfo(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    // Get the process id and thread from the node id in the pfsnode and locate
-    // the process.
+    /*
+     * Get the process id and thread from the node id in the pfsnode and locate
+     * the process.
+     */
     int error = 0;
 
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
@@ -248,9 +274,11 @@ procfs_dothreadinfo(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         struct proc_threadinfo info;
         uint64_t threadid = pnp->node_id.nodeid_objectid;
 
-        // Preferred: the daemon returns the exact per-thread info via
-        // proc_pidinfo(PROC_PIDTHREADID64INFO), keyed on thread_id == our tid.
-        // Fall back to the local (zeroed on arm64) proc_pidthreadinfo otherwise.
+        /*
+         * Preferred: the daemon returns the exact per-thread info via
+         * proc_pidinfo(PROC_PIDTHREADID64INFO), keyed on thread_id == our tid.
+         * Fall back to the local (zeroed on arm64) proc_pidthreadinfo otherwise.
+         */
         uint32_t got = 0;
         if (procfs_ctl_request(PROCFS_REQ_THREADINFO, pnp->node_id.nodeid_pid,
                 threadid, &info, sizeof(info), &got) == 0 && got == sizeof(info)) {
@@ -279,8 +307,10 @@ procfs_get_node_size_attr(pfsnode_t *pnp, kauth_cred_t creds)
     pfssnode_t *snode = pnp->node_structure_node;
     pfstype node_type = snode->psn_node_type;
 
-    // In the special cases of "." and "..", we need to first move up
-    // to the parent and grandparent structure node to get the correct result.
+    /*
+     * In the special cases of "." and "..", we need to first move up
+     * to the parent and grandparent structure node to get the correct result.
+     */
     if (node_type == PFSdirthis) {
         snode = snode->psn_parent;
     } else if (node_type == PFSdirparent) {
@@ -292,20 +322,26 @@ procfs_get_node_size_attr(pfsnode_t *pnp, kauth_cred_t creds)
 
     assert(snode != NULL);
 
-    // For file types, get the size from the node itself. For
-    // directory types, get the size by traversing child structure
-    // nodes and adding in any implied children, such as process and
-    // thread entries.
+    /*
+     * For file types, get the size from the node itself. For
+     * directory types, get the size by traversing child structure
+     * nodes and adding in any implied children, such as process and
+     * thread entries.
+     */
     size_t size = 0;
     if (procfs_is_directory_type(node_type)) {
-        // Directory
+        /*
+         * Directory
+         */
         pfssnode_t *next_snode;
         TAILQ_FOREACH(next_snode, &snode->psn_children, psn_next) {
             procfs_node_size_fn node_size_fn = next_snode->psn_getsize_fn;
             size += node_size_fn == NULL ? 1 : node_size_fn(pnp, creds);
         }
     } else {
-        // File or symlink
+        /*
+         * File or symlink
+         */
         procfs_node_size_fn node_size_fn = snode->psn_getsize_fn;
         size = node_size_fn == NULL ? snode->psn_node_size : node_size_fn(pnp, creds);
     }
@@ -319,9 +355,12 @@ procfs_get_node_size_attr(pfsnode_t *pnp, kauth_cred_t creds)
 size_t
 procfs_process_node_size(pfsnode_t *pnp, kauth_cred_t creds)
 {
-    // Nodes of this type contribute a size of 1 for each visible process.
+    /*
+     * Nodes of this type contribute a size of 1 for each visible process.
+     */
     size_t size = 0;
     int pid = pnp->node_id.nodeid_pid;
+
     proc_t p = proc_find(pid);
     if (p != PROC_NULL) {
         if (size == 0) {
@@ -339,12 +378,15 @@ procfs_process_node_size(pfsnode_t *pnp, kauth_cred_t creds)
 size_t
 procfs_thread_node_size(pfsnode_t *pnp, __unused kauth_cred_t creds)
 {
-    // Nodes of this type contribute a size of 1 for each thread
-    // in the owning process. Because of the way the file system is
-    // structured, the pid of the owning process is available in the
-    // node_id of the procfs node.
+    /*
+     * Nodes of this type contribute a size of 1 for each thread
+     * in the owning process. Because of the way the file system is
+     * structured, the pid of the owning process is available in the
+     * node_id of the procfs node.
+     */
     size_t size = 0;
     int pid = pnp->node_id.nodeid_pid;
+
     proc_t p = proc_find(pid);
     if (p != PROC_NULL) {
         int tcount = procfs_get_task_thread_count(p);

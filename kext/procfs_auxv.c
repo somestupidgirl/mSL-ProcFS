@@ -28,12 +28,13 @@
 #include <sys/uio.h>
 
 #include <bsdcompat/sys/malloc.h>
-
 #include <fs/procfs/procfs.h>
 
 int
 procfs_doauxv(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     if (uio_rw(uio) != UIO_READ) {
         return EOPNOTSUPP;       /* the node is read-only */
     }
@@ -48,7 +49,6 @@ procfs_doauxv(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         return ESRCH;
     }
 
-    int error;
     /* Zombies and system processes have no user stack to read from. */
     if ((p->p_stat == SZOMB) || (p->p_flag & P_SYSTEM) != 0) {
         error = procfs_copy_data("", 0, uio);           /* empty (EOF) */

@@ -21,7 +21,7 @@
 /*
  * Mount option flags.
  */
-#define PROCFS_MOPT_NOPROCPERMS (1 << 0) // Do not apply process permissions to the pid entries in /proc.
+#define PROCFS_MOPT_NOPROCPERMS (1 << 0) /* Do not apply process permissions to the pid entries in /proc. */
 #define MOPT_PROCFS             { "procperms", 1, PROCFS_MOPT_NOPROCPERMS, 0 }
 
 #define PROCFS_NOTELEN      64  /* max length of a note (/proc/$pid/note) */
@@ -32,7 +32,7 @@
  * and passed to the kernel by the mount(2) system call.
  */
 typedef struct pfsmount_args {
-    int mnt_options;      // The procfs mount options.
+    int mnt_options;      /* The procfs mount options. */
 } pfsmount_args_t;
 
 #pragma mark -
@@ -248,15 +248,15 @@ typedef int (*procfs_read_data_fn)(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 struct pfssnode {
     pfstype                           psn_node_type;
     char                              psn_name[MAX_STRUCT_NODE_NAME_LEN];
-    pfsbaseid_t                       psn_base_node_id;   // Base node id - unique.
-    uint16_t                          psn_flags;          // Flags - PSN_XXX (see below)
+    pfsbaseid_t                       psn_base_node_id;   /* Base node id - unique. */
+    uint16_t                          psn_flags;          /* Flags - PSN_XXX (see below) */
 
     /*
      * Structure linkage. Immutable once set.
      */
-    struct pfssnode                  *psn_parent;   // The parent node in the structure
-    TAILQ_ENTRY(pfssnode)             psn_next;     // Next sibling node within structure parent.
-    TAILQ_HEAD(pfschildren, pfssnode) psn_children; // Children of this structure node.
+    struct pfssnode                  *psn_parent;   /* The parent node in the structure */
+    TAILQ_ENTRY(pfssnode)             psn_next;     /* Next sibling node within structure parent. */
+    TAILQ_HEAD(pfschildren, pfssnode) psn_children; /* Children of this structure node. */
 
     /*
      * Function hooks. Set to null to use the defaults.
@@ -285,9 +285,9 @@ struct pfssnode {
  * in any given instance of the file system (i.e. per mount).
  */
 struct pfsid {
-    int           nodeid_pid;         // The owning process, or PRNODE_NO_PID if not process-linked
-    uint64_t      nodeid_objectid;    // The owning object within the process, or PRNODE_NO_OBJECTID if none.
-    pfsbaseid_t   nodeid_base_id;     // The id of the structure node to which this node is linked.
+    int           nodeid_pid;         /* The owning process, or PRNODE_NO_PID if not process-linked */
+    uint64_t      nodeid_objectid;    /* The owning object within the process, or PRNODE_NO_OBJECTID if none. */
+    pfsbaseid_t   nodeid_base_id;     /* The id of the structure node to which this node is linked. */
 };
 
 /*
@@ -296,10 +296,10 @@ struct pfsid {
  * preclude multiple mounts.
  */
 struct pfsmount {
-    int32_t           pmnt_id;            // A unique identifier for this mount. Shared by all nodes.
-    int               pmnt_flags;         // Flags, set from the mount command (PROCFS_MOPT_XXX).
-    struct mount     *pmnt_mp;            // VFS-level mount structure.
-    struct timespec   pmnt_mount_time;    // Time at which the file system was mounted.
+    int32_t           pmnt_id;            /* A unique identifier for this mount. Shared by all nodes. */
+    int               pmnt_flags;         /* Flags, set from the mount command (PROCFS_MOPT_XXX). */
+    struct mount     *pmnt_mp;            /* VFS-level mount structure. */
+    struct timespec   pmnt_mount_time;    /* Time at which the file system was mounted. */
 };
 
 /*
@@ -339,13 +339,13 @@ struct pfsnode {
      * (node_mnt_id, node_id) combination. The node_mnt_id value can be obtained
      * from the pmnt_id field of the pfsmount structure for the owning mount.
      */
-    int32_t             node_mnt_id;            // Identifier of the owning mount.
-    pfsid_t             node_id;                // The identifer of this node.
+    int32_t             node_mnt_id;            /* Identifier of the owning mount. */
+    pfsid_t             node_id;                /* The identifer of this node. */
 
     /*
      * Pointer to the pfssnode_t for this node.
      */
-    pfssnode_t         *node_structure_node;    // Set when allocated, never changes.
+    pfssnode_t         *node_structure_node;    /* Set when allocated, never changes. */
 };
 
 /*
@@ -355,7 +355,7 @@ struct procfs_pidlist_data
 {
     int             num_procs;
     int             max_procs;
-    kauth_cred_t    creds;     // Credential to use for access check, or NULL
+    kauth_cred_t    creds;     /* Credential to use for access check, or NULL */
     int            *pids;
 };
 
@@ -426,28 +426,36 @@ typedef void (*procfs_region_fmt_fn)(struct sbuf *sb, const struct procfs_region
 #pragma mark -
 #pragma mark Inline Conversion Functions
 
-/* Convert from procfs vnode pointer to VFS vnode pointer. */
+/*
+ * Convert from procfs vnode pointer to VFS vnode pointer.
+ */
 static inline vnode_t
 pfsnode_to_vnode(pfsnode_t *pnp)
 {
     return pnp->node_vnode;
 }
 
-/* Convert from VFS vnode pointer to procfs vnode pointer. */
+/*
+ * Convert from VFS vnode pointer to procfs vnode pointer.
+ */
 static inline pfsnode_t *
 vnode_to_procfsnode(vnode_t vp)
 {
     return (pfsnode_t *)vnode_fsnode(vp);
 }
 
-/* Convert from procfs mount pointer to VFS mount pointer. */
+/*
+ * Convert from procfs mount pointer to VFS mount pointer.
+ */
 static inline struct mount *
 procfs_mp_to_vfs_mp(pfsmount_t *pmp)
 {
     return pmp->pmnt_mp;
 }
 
-/* Convert from VFS mount pointer to procfs mount pointer. */
+/*
+ * Convert from VFS mount pointer to procfs mount pointer.
+ */
 static inline pfsmount_t *
 vfs_mp_to_procfs_mp(struct mount *vmp)
 {
@@ -457,14 +465,18 @@ vfs_mp_to_procfs_mp(struct mount *vmp)
 #pragma mark -
 #pragma mark Inline Convenience Functions
 
-/* Returns whether access checks should apply to the vnodes on a given mount point. */
+/*
+ * Returns whether access checks should apply to the vnodes on a given mount point.
+ */
 static inline boolean_t
 procfs_should_access_check(pfsmount_t *pmp)
 {
     return (pmp->pmnt_flags & PROCFS_MOPT_NOPROCPERMS) == 0;
 }
 
-/* Returns whether a given node type represents a directory. */
+/*
+ * Returns whether a given node type represents a directory.
+ */
 static inline boolean_t
 procfs_is_directory_type(pfstype type)
 {
@@ -495,7 +507,9 @@ procfs_is_directory_type(pfstype type)
         && type != PFSksyms && type != PFSmisc;
 }
 
-/* Gets the pid_t for the process corresponding to a pfsnode_t. */
+/*
+ * Gets the pid_t for the process corresponding to a pfsnode_t.
+ */
 static inline int
 procfsnode_to_pid(pfsnode_t *pfsnode)
 {
@@ -532,7 +546,7 @@ extern void procfs_structure_init(void);
 /*
  * Frees the memory for the procfs structures. Should only be called
  * while unmounting the last instance of the file system.
-*/
+ */
 extern void procfs_structure_free(void);
 
 /* 
@@ -726,6 +740,7 @@ extern int procfs_domaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosmaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_donuma_maps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+
 /*
  * Linux-compatible per-thread files (/proc/<pid>/task/<tid>/).
  */
@@ -733,6 +748,7 @@ extern int procfs_dothreadcomm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dothreadstat(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dothreadstatus(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dothreadsched(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+
 extern int procfs_doprocstatus_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_docomm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dostatm(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
@@ -756,6 +772,7 @@ extern int procfs_doclear_refs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_docpu(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dowchan(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dostack(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+
 /* 
  *Process machine state (NetBSD-style binary register dumps) and the auxiliary
  * vector (XNU's apple[] array).
@@ -763,6 +780,7 @@ extern int procfs_dostack(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doregs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dofpregs(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doauxv(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
+
 /*
  * Linux-compat-mode text variants, selected at runtime by procfs_linux_mode.
  */

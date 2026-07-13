@@ -10,67 +10,72 @@
  * x86 format, using hw.optional.arm.* sysctls and hw.cpufamily
  * for CPU identification.
  */
+#include <ptrauth.h>
 #include <stdint.h>
 #include <string.h>
+
 #if defined(__x86_64__)
 #include <i386/cpuid.h>
 #include <i386/tsc.h>
-#else
+#elif defined(__arm64__) || defined(__aarch64__)
 #include <arm/cpuid.h>
 #endif
+#if defined (__x86_64__)
+#include <i386/proc_reg.h>
+#elif defined(__arm64__) || defined(__aarch64__)
+#include <arm/proc_reg.h>
+#endif
+
 #include <kern/clock.h>
 #include <kern/thread_call.h>
+
 #include <libkern/libkern.h>
 #include <libkern/OSMalloc.h>
 #include <libkern/version.h>
+
 #include <mach/machine.h>
 #include <mach/mach_types.h>
 #include <mach/processor_info.h>
 #include <mach/thread_act.h>
+#include <mach/thread_info.h>
 #include <mach/thread_status.h>
+#include <mach/vm_prot.h>
+#include <mach/vm_statistics.h>
 #if defined(__arm64__) || defined(__aarch64__)
 #include <mach/arm/thread_status.h>
 #elif defined(__x86_64__)
 #include <mach/i386/thread_status.h>
 #endif
-#include <os/log.h>
-#include <ptrauth.h>
-#include <sys/disklabel.h>
-#include <sys/errno.h>
-#include <sys/malloc.h>
-#if defined (__x86_64__)
-#include <i386/proc_reg.h>
-#else
-#include <arm/proc_reg.h>
-#endif
-#include <sys/mount.h>
-#include <sys/queue.h>
-#include <sys/kauth.h>
-#include <sys/sbuf.h>
-#include <sys/sysctl.h>
-#include <sys/types.h>
 #if defined(__x86_64__)
 #include <mach/i386/vm_param.h>
 #else
 #include <mach/vm_param.h>
 #endif
-#include <mach/vm_prot.h>
-
-#include <mach/thread_info.h>
-#include <mach/vm_statistics.h>
-#include <sys/proc.h>
-#include <sys/proc_info.h>
 
 #include <net/kpi_interface.h>
 
+#include <os/log.h>
+
+#include <sys/disklabel.h>
+#include <sys/errno.h>
+#include <sys/malloc.h>
+#include <sys/mount.h>
+#include <sys/queue.h>
+#include <sys/kauth.h>
+#include <sys/proc.h>
+#include <sys/proc_info.h>
+#include <sys/sbuf.h>
+#include <sys/sysctl.h>
+#include <sys/types.h>
+
 #include <bsdcompat/sys/malloc.h>
+
+#include <libkprocfs/kern.h>
+#include <libkprocfs/cpu.h>
 
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_iokit.h>
 #include <fs/procfs/procfs_ctl.h>
-
-#include <libkprocfs/kern.h>
-#include <libkprocfs/cpu.h>
 
 #pragma mark -
 #pragma mark Common Definitions and Macros
@@ -78,7 +83,7 @@
 /*
  * A buffer size.
  */
-#define LBFSZ           (8 * 1024)
+#define LBFSZ (8 * 1024)
 
 /*
  * Convert pages to bytes.
@@ -109,13 +114,13 @@
 /*
  * Various conversion macros
  */
-#define T2J(x) ((long)(((x) * 100ULL) / (stathz ? stathz : hz)))    /* ticks to jiffies */
+#define T2J(x)  ((long)(((x) * 100ULL) / (stathz ? stathz : hz)))           /* ticks to jiffies */
 #define T2CS(x) ((unsigned long)(((x) * 100ULL) / (stathz ? stathz : hz)))  /* ticks to centiseconds */
-#define T2S(x) ((x) / (stathz ? stathz : hz))       /* ticks to seconds */
-#define B2K(x) ((x) >> 10)              /* bytes to kbytes */
-#define B2P(x) ((x) >> PAGE_SHIFT)          /* bytes to pages */
-#define P2B(x) ((x) << PAGE_SHIFT)          /* pages to bytes */
-#define P2K(x) ((x) << (PAGE_SHIFT - 10))       /* pages to kbytes */
+#define T2S(x)  ((x) / (stathz ? stathz : hz))                              /* ticks to seconds */
+#define B2K(x)  ((x) >> 10)                                                 /* bytes to kbytes */
+#define B2P(x)  ((x) >> PAGE_SHIFT)                                         /* bytes to pages */
+#define P2B(x)  ((x) << PAGE_SHIFT)                                         /* pages to bytes */
+#define P2K(x)  ((x) << (PAGE_SHIFT - 10))                                  /* pages to kbytes */
 #define TV2J(x) ((x)->tv_sec * 100UL + (x)->tv_usec / 10000)
 
 /**
@@ -143,6 +148,8 @@ static char linux_state[] = "RRSTZDD";
 int
 procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     int len = 0, xlen = 0;
     vm_offset_t pageno, uva;
     off_t page_offset = 0;
@@ -155,12 +162,13 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
      * Not to be conflated with cpu_cores (number of cores)
      * as these are not the same.
      */
+    uint32_t cnt_cpus = 0;
+
     /* Overall logical-processor count. The kernel's processor_count global is
      * not linkable, so read hw.logicalcpu. */
     uint32_t max_cpus = 1;
     size_t   max_cpus_size = sizeof(max_cpus);
     sysctlbyname("hw.logicalcpu", &max_cpus, &max_cpus_size, NULL, 0);
-    uint32_t cnt_cpus = 0;
 
     /*
      * Initialize the processor counter.
@@ -182,9 +190,11 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     pageno = trunc_page(uva);
     page_offset = uva - pageno;
 
-/* ============================================================
+/*
+ * ============================================================
  * x86_64 /proc/cpuinfo
- * ============================================================ */
+ * ============================================================
+ */
 #if defined(__x86_64__)
 
     /*
@@ -193,12 +203,19 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
      */
     uint64_t freq = 0;
     size_t   freq_sz = sizeof(freq);
-    sysctlbyname("machdep.tsc.frequency", &freq, &freq_sz, NULL, 0);
-    int fqmhz = 0, fqkhz = 0;
+
+    sysctlbyname("machdep.tsc.frequency",
+        &freq,
+        &freq_sz,
+        NULL,
+        0
+    );
 
     /* 
      * Set the TSC frequency variables
      */
+    int fqmhz = 0,
+        fqkhz = 0;
     if (freq != 0) {
         fqmhz = (freq + 4999) / 1000000;
         fqkhz = ((freq + 4999) / 10000) % 100;
@@ -211,7 +228,8 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
      * variable to a value of 1 and then contines increasing
      * that number by 2 for each loop.
      */
-    int apicid = 0, initial_apicid = 0;
+    int apicid = 0,
+        initial_apicid = 0;
 
     /*
      * The core id should always start at 0.
@@ -223,21 +241,21 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
      * to get the information we need. The cpuid_info() function sets up
      * the i386_cpu_info structure and returns a pointer to the structure.
      */
-    char *vendor_id      = cpuid_info()->cpuid_vendor;
-    uint8_t cpu_family   = cpuid_info()->cpuid_family;
-    uint8_t model        = cpuid_info()->cpuid_model
-                         + (cpuid_info()->cpuid_extmodel << 4);
-    char *model_name     = cpuid_info()->cpuid_brand_string;
-    int microcode        = (int)get_microcode_version();
-    uint32_t cache_size  = cpuid_info()->cpuid_cache_size;
-    uint8_t stepping     = cpuid_info()->cpuid_stepping;
-    uint32_t cpu_cores   = cpuid_info()->core_count;
-    uint32_t cpuid_level = cpu_cores;
-    uint32_t tlb_size    = cpuid_info()->cache_linesize * 40;
-    uint32_t clflush_size    = cpuid_info()->cache_linesize;
-    uint32_t cache_alignment = clflush_size;
-    uint32_t addr_bits_phys  = cpuid_info()->cpuid_address_bits_physical;
-    uint32_t addr_bits_virt  = cpuid_info()->cpuid_address_bits_virtual;
+    char *vendor_id             = cpuid_info()->cpuid_vendor;
+    uint8_t cpu_family          = cpuid_info()->cpuid_family;
+    uint8_t model               = cpuid_info()->cpuid_model
+                                + (cpuid_info()->cpuid_extmodel << 4);
+    char *model_name            = cpuid_info()->cpuid_brand_string;
+    int microcode               = (int)get_microcode_version();
+    uint32_t cache_size         = cpuid_info()->cpuid_cache_size;
+    uint8_t stepping            = cpuid_info()->cpuid_stepping;
+    uint32_t cpu_cores          = cpuid_info()->core_count;
+    uint32_t cpuid_level        = cpu_cores;
+    uint32_t tlb_size           = cpuid_info()->cache_linesize * 40;
+    uint32_t clflush_size       = cpuid_info()->cache_linesize;
+    uint32_t cache_alignment    = clflush_size;
+    uint32_t addr_bits_phys     = cpuid_info()->cpuid_address_bits_physical;
+    uint32_t addr_bits_virt     = cpuid_info()->cpuid_address_bits_virtual;
 
     /*
      * Check if the FPU feature is present.
@@ -272,14 +290,20 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
      * For now, we'll declare the pointer variables here
      * and fetch the flags inside the loop.
      */
-    char *cpuflags, *cpuextflags, *leaf7flags, *leaf7extflags, *amdflags2;
+    char    *cpuflags,
+            *cpuextflags,
+            *leaf7flags,
+            *leaf7extflags,
+            *amdflags2;
 
-    /* Power-management line and CPU bug classes (CPUID/MSR-derived, cpu.c).
+    /*
+     * Power-management line and CPU bug classes (CPUID/MSR-derived, cpu.c).
      * All bugs are reported through x86_bugs; x86_64_bugs is kept as a second
-     * (currently empty) slot so the "bugs" format string stays unchanged. */
-    char *pm = get_pm_flags();
-    char *x86_bugs = get_cpu_bugs();
-    char *x86_64_bugs = "";
+     * (currently empty) slot so the "bugs" format string stays unchanged.
+     */
+    char *pm            = get_pm_flags();
+    char *x86_bugs      = get_cpu_bugs();
+    char *x86_64_bugs   = "";
 
     /*
      * The main loop iterates over each processor number stored in the
@@ -296,14 +320,17 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         /*
          * Fetch the CPU flags.
          */
-        cpuflags     = get_cpu_flags();
-        /* On AMD, the 0x80000001 flags come from the AMD getters (correct Linux
+        cpuflags        = get_cpu_flags();
+
+        /*
+         * On AMD, the 0x80000001 flags come from the AMD getters (correct Linux
          * names, EDX + ECX) instead of the generic ext getter, avoiding both the
-         * Intel-style names (xd/em64t/...) and duplicate entries. */
-        cpuextflags  = is_amd_cpu() ? get_amd_feature_flags() : get_cpu_ext_flags();
-        amdflags2    = get_amd_feature2_flags();   /* empty on Intel */
-        leaf7flags   = get_leaf7_flags();
-        leaf7extflags = get_leaf7_ext_flags();
+         * Intel-style names (xd/em64t/...) and duplicate entries.
+         */
+        cpuextflags     = is_amd_cpu() ? get_amd_feature_flags() : get_cpu_ext_flags();
+        amdflags2       = get_amd_feature2_flags();   /* empty on Intel */
+        leaf7flags      = get_leaf7_flags();
+        leaf7extflags   = get_leaf7_ext_flags();
 
         if (cnt_cpus <= max_cpus) {
             /* 
@@ -418,22 +445,11 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
             break;
         }
     }
-
-/* ============================================================
+/*
+ * ============================================================
  * ARM64 /proc/cpuinfo
- *
- * Produces one entry per logical CPU in Linux AArch64 format:
- *
- *   processor       : 0
- *   BogoMIPS        : 48.00
- *   Features        : fp asimd aes pmull sha1 sha2 crc32 ...
- *   CPU implementer : 0x61
- *   CPU architecture: 8
- *   CPU variant     : 0x0
- *   CPU part        : 0x22
- *   CPU revision    : 0
- *
- * ============================================================ */
+ * ============================================================
+ */
 #elif defined(__arm64__) || defined(__aarch64__)
 
     const char *bogomips     = arm64_bogomips();
@@ -499,8 +515,7 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 #endif /* __x86_64__ / __arm64__ */
 
     free(buffer, M_TEMP);
-
-    return 0;
+    return error;
 }
 
 /*
@@ -511,29 +526,37 @@ procfs_doloadavg(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 {
     int error = 0;
     int len = 0, xlen = 0;
+
     vm_offset_t off = uio_offset(uio);
     vm_offset_t pgno = trunc_page(off);
     off_t pgoff = (off - pgno);
 
     char *buf = malloc(LBFSZ, M_TEMP, M_WAITOK);
 
-    // The load averages come from the procfsd daemon, which returns the kernel's
-    // true 1/5/15-minute averages (getloadavg), scaled x100. A run-queue load
-    // average is otherwise unreachable on arm64 (averunnable and every run-queue
-    // source are stripped). Without a connected daemon the values read 0.00.
-    int load1 = 0, load5 = 0, load15 = 0;
+    /*
+     * The load averages come from the procfsd daemon, which returns the kernel's
+     * true 1/5/15-minute averages (getloadavg), scaled x100. A run-queue load
+     * average is otherwise unreachable on arm64 (averunnable and every run-queue
+     * source are stripped). Without a connected daemon the values read 0.00.
+     */
+    int load1 = 0,
+        load5 = 0,
+        load15 = 0,
+        running = 1,
+        lastpid = 0;
+
+    int total_procs = procfs_get_process_count(vfs_context_ucred(ctx));
+
     uint32_t la[3] = { 0, 0, 0 };
     uint32_t got = 0;
-    if (procfs_ctl_request(PROCFS_REQ_LOADAVG, 0, 0, &la, sizeof(la), &got) == 0 &&
-        got == sizeof(la)) {
+
+    if (procfs_ctl_request(PROCFS_REQ_LOADAVG, 0, 0, &la,
+        sizeof(la), &got) == 0 && got == sizeof(la)) {
+
         load1  = (int)la[0];
         load5  = (int)la[1];
         load15 = (int)la[2];
     }
-
-    int total_procs = procfs_get_process_count(vfs_context_ucred(ctx));
-    int running = 1;
-    int lastpid = 0;
 
     len = snprintf(buf, LBFSZ,
         "%d.%02d %d.%02d %d.%02d %d/%d %d\n",
@@ -549,7 +572,6 @@ procfs_doloadavg(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     error = uiomove((const char *)buf, xlen, uio);
 
     free(buf, M_TEMP);
-
     return error;
 }
 
@@ -566,13 +588,15 @@ procfs_doloadavg(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 int
 procfs_dostat(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 2048, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int    ncpu = 0;
-    size_t sz   = sizeof(ncpu);
+    int ncpu = 0;
+    size_t sz = sizeof(ncpu);
     if (sysctlbyname("hw.logicalcpu", &ncpu, &sz, NULL, 0) != 0 || ncpu <= 0) {
         ncpu = 1;
     }
@@ -588,29 +612,30 @@ procfs_dostat(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     struct cpuline agg = { 0, 0, 0, 0 };
     struct procfs_cpu_load ld[64];
     bzero(ld, sizeof(ld));
+
     uint32_t got = 0;
     if (procfs_ctl_request(PROCFS_REQ_CPULOAD, 0, 0, ld, sizeof(ld), &got) == 0) {
         uint32_t nld = got / (uint32_t)sizeof(ld[0]);
         for (int i = 0; i < ncpu && (uint32_t)i < nld; i++) {
-            cl[i].user = ld[i].user;
-            cl[i].nice = ld[i].nice;
-            cl[i].sys  = ld[i].sys;
-            cl[i].idle = ld[i].idle;
-            agg.user += cl[i].user;
-            agg.nice += cl[i].nice;
-            agg.sys  += cl[i].sys;
-            agg.idle += cl[i].idle;
+            cl[i].user  = ld[i].user;
+            cl[i].nice  = ld[i].nice;
+            cl[i].sys   = ld[i].sys;
+            cl[i].idle  = ld[i].idle;
+            agg.user   += cl[i].user;
+            agg.nice   += cl[i].nice;
+            agg.sys    += cl[i].sys;
+            agg.idle   += cl[i].idle;
         }
     }
 
     /* cpu line columns: user nice system idle iowait irq softirq steal guest guest_nice */
     sbuf_printf(&sb, "cpu  %llu %llu %llu %llu 0 0 0 0 0 0\n",
         (unsigned long long)agg.user, (unsigned long long)agg.nice,
-        (unsigned long long)agg.sys,  (unsigned long long)agg.idle);
+        (unsigned long long)agg.sys, (unsigned long long)agg.idle);
     for (int i = 0; i < ncpu; i++) {
         sbuf_printf(&sb, "cpu%d %llu %llu %llu %llu 0 0 0 0 0 0\n", i,
             (unsigned long long)cl[i].user, (unsigned long long)cl[i].nice,
-            (unsigned long long)cl[i].sys,  (unsigned long long)cl[i].idle);
+            (unsigned long long)cl[i].sys, (unsigned long long)cl[i].idle);
     }
     free(cl, M_TEMP);
 
@@ -631,7 +656,7 @@ procfs_dostat(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     sbuf_printf(&sb, "procs_blocked 0\n");
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
 
     return error;
@@ -648,6 +673,8 @@ procfs_dostat(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 int
 procfs_dovmstat(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     vm_statistics64_data_t vm;
     bzero(&vm, sizeof(vm));
     uint32_t got = 0;
@@ -694,7 +721,7 @@ procfs_dovmstat(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         (unsigned long long)vm.decompressions, (unsigned long long)vm.compressions);
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
 
     return error;
@@ -716,8 +743,11 @@ procfs_dovmstat(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_dobuddyinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     vm_statistics64_data_t vm;
     bzero(&vm, sizeof(vm));
+
     uint32_t got = 0;
     (void)procfs_ctl_request(PROCFS_REQ_VMSTAT, 0, 0, &vm, sizeof(vm), &got);
 
@@ -734,14 +764,16 @@ procfs_dobuddyinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ct
         return ENOMEM;
     }
     sbuf_printf(&sb, "Node 0, zone %8s ", "Normal");
+
     for (int order = 0; order < PROCFS_BUDDY_ORDERS; order++) {
         sbuf_printf(&sb, "%6llu ", (unsigned long long)count[order]);
     }
     sbuf_printf(&sb, "\n");
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -759,20 +791,26 @@ procfs_dobuddyinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ct
 int
 procfs_dopagetypeinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     static const char *const mtype[] = {
         "Unmovable", "Movable", "Reclaimable", "HighAtomic", "Isolate"
     };
+
     const int nmtype = (int)(sizeof(mtype) / sizeof(mtype[0]));
-    const int MOVABLE = 1;              /* index of "Movable" in mtype[] */
+
+    /* index of "Movable" in mtype[] */
+    const int MOVABLE = 1;
 
     /* Free page count from host_statistics64 via the daemon (as buddyinfo). */
     vm_statistics64_data_t vm;
     bzero(&vm, sizeof(vm));
+
     uint32_t got = 0;
     (void)procfs_ctl_request(PROCFS_REQ_VMSTAT, 0, 0, &vm, sizeof(vm), &got);
-
     uint64_t remaining = (uint64_t)vm.free_count;
     uint64_t count[PROCFS_BUDDY_ORDERS];
+
     for (int order = PROCFS_BUDDY_ORDERS - 1; order >= 0; order--) {
         uint64_t blk = (uint64_t)1 << order;
         count[order] = remaining / blk;
@@ -793,12 +831,14 @@ procfs_dopagetypeinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t
     sbuf_printf(&sb, "Page block order: %d\n", PROCFS_PAGEBLOCK_ORDER);
     sbuf_printf(&sb, "Pages per block:  %lu\n\n",
         (unsigned long)((uint64_t)1 << PROCFS_PAGEBLOCK_ORDER));
-
     sbuf_printf(&sb, "Free pages count per migrate type at order ");
+
     for (int order = 0; order < PROCFS_BUDDY_ORDERS; order++) {
         sbuf_printf(&sb, "%6d ", order);
     }
+
     sbuf_printf(&sb, "\n");
+
     for (int t = 0; t < nmtype; t++) {
         sbuf_printf(&sb, "Node    0, zone   Normal, type %12s ", mtype[t]);
         for (int order = 0; order < PROCFS_BUDDY_ORDERS; order++) {
@@ -809,20 +849,25 @@ procfs_dopagetypeinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t
     }
 
     sbuf_printf(&sb, "\nNumber of blocks type ");
+
     for (int t = 0; t < nmtype; t++) {
         sbuf_printf(&sb, "%12s ", mtype[t]);
     }
+
     sbuf_printf(&sb, "\n");
     sbuf_printf(&sb, "Node 0, zone   Normal ");
+
     for (int t = 0; t < nmtype; t++) {
         sbuf_printf(&sb, "%12llu ",
             (t == MOVABLE) ? (unsigned long long)blocks : 0ULL);
     }
+
     sbuf_printf(&sb, "\n");
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -838,19 +883,24 @@ procfs_dopagetypeinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t
 int
 procfs_dodma(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 64, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
+
 #if defined(__x86_64__)
     /* Channel 4 cascades the two 8237 controllers; it is the one channel the
      * x86 DMA init always reserves, so it is what /proc/dma always shows. */
     sbuf_printf(&sb, "%2d: %s\n", 4, "cascade");
 #endif
+
     /* arm64: no 8237 ISA DMA controller -> no channels in use (empty). */
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -865,10 +915,13 @@ procfs_dodma(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_doioports(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
+
 #if defined(__x86_64__)
     sbuf_printf(&sb,
         "0000-001f : dma1\n"
@@ -882,10 +935,12 @@ procfs_doioports(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         "00c0-00df : dma2\n"
         "00f0-00ff : fpu\n");
 #endif
+
     /* arm64: no port-mapped I/O -> empty. */
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -902,10 +957,17 @@ procfs_doioports(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_doiomem(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    uint64_t total = 0, usable = 0;
-    size_t   sz;
-    sz = sizeof(total);  (void)sysctlbyname("hw.memsize", &total, &sz, NULL, 0);
-    sz = sizeof(usable); (void)sysctlbyname("hw.memsize_usable", &usable, &sz, NULL, 0);
+    int error = 0;
+
+    size_t sz;
+    uint64_t total = 0;
+    uint64_t usable = 0;
+
+    sz = sizeof(total);
+    (void)sysctlbyname("hw.memsize", &total, &sz, NULL, 0);
+    sz = sizeof(usable);
+    (void)sysctlbyname("hw.memsize_usable", &usable, &sz, NULL, 0);
+
     if (usable == 0 || usable > total) {
         usable = total;
     }
@@ -914,6 +976,7 @@ procfs_doiomem(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     if (sbuf_new(&sb, NULL, 256, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
+
     if (total > 0) {
         sbuf_printf(&sb, "%08llx-%08llx : System RAM\n",
             0ULL, (unsigned long long)(usable - 1));
@@ -922,9 +985,11 @@ procfs_doiomem(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
                 (unsigned long long)usable, (unsigned long long)(total - 1));
         }
     }
+
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -943,10 +1008,11 @@ static uint32_t procfs_online_cpus(void);   /* defined with the /proc/irq nodes 
 int
 procfs_dosoftirqs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    uint32_t ncpu = procfs_online_cpus();
+    int error = 0;
 
     /* Per-CPU interrupt counters from the daemon (one request for all CPUs), then
      * map each CPU onto the softirq vectors. */
+    uint32_t ncpu = procfs_online_cpus();
     struct procfs_cpu_stat cs[64];
     (void)procfs_cpu_stat_all(cs, ncpu);
 
@@ -954,11 +1020,14 @@ procfs_dosoftirqs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
     if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
-    sbuf_printf(&sb, "                    ");            /* pad over the name column */
+
+    /* pad over the name column */
+    sbuf_printf(&sb, "                    ");
     for (uint32_t c = 0; c < ncpu; c++) {
         sbuf_printf(&sb, "CPU%-8u", c);
     }
     sbuf_printf(&sb, "\n");
+
     for (int t = 0; t < PROCFS_NR_SOFTIRQ; t++) {
         sbuf_printf(&sb, "%12s:", procfs_softirq_names[t]);
         for (uint32_t c = 0; c < ncpu; c++) {
@@ -968,9 +1037,11 @@ procfs_dosoftirqs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
         }
         sbuf_printf(&sb, "\n");
     }
+
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -986,26 +1057,28 @@ procfs_dosoftirqs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
 int
 procfs_dortc(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    clock_sec_t  secs = 0;
+    int error = 0;
+
+    clock_sec_t secs = 0;
     clock_usec_t usecs = 0;
     clock_get_calendar_microtime(&secs, &usecs);
 
-    uint64_t sod  = (uint64_t)secs % 86400;      /* seconds within the day */
-    int hour = (int)(sod / 3600);
-    int min  = (int)((sod % 3600) / 60);
-    int sec  = (int)(sod % 60);
+    uint64_t sod    = (uint64_t)secs % 86400;      /* seconds within the day */
+    int hour        = (int)(sod / 3600);
+    int min         = (int)((sod % 3600) / 60);
+    int sec         = (int)(sod % 60);
 
     /* Days since the Unix epoch -> civil (year, month, day). */
-    int64_t z = (int64_t)((uint64_t)secs / 86400) + 719468;
-    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
-    uint64_t doe = (uint64_t)(z - era * 146097);                 /* [0, 146096] */
-    uint64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; /* [0,399] */
-    int64_t  year = (int64_t)yoe + era * 400;
-    uint64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);      /* [0, 365] */
-    uint64_t mp  = (5 * doy + 2) / 153;                          /* [0, 11] */
-    int day   = (int)(doy - (153 * mp + 2) / 5 + 1);            /* [1, 31] */
-    int month = (int)(mp < 10 ? mp + 3 : mp - 9);              /* [1, 12] */
-    year += (month <= 2);
+    int64_t z       = (int64_t)((uint64_t)secs / 86400) + 719468;
+    int64_t era     = (z >= 0 ? z : z - 146096) / 146097;
+    uint64_t doe    = (uint64_t)(z - era * 146097);                            /* [0, 146096] */
+    uint64_t yoe    = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;   /* [0,399] */
+    int64_t  year   = (int64_t)yoe + era * 400;
+    uint64_t doy    = doe - (365 * yoe + yoe / 4 - yoe / 100);                 /* [0, 365] */
+    uint64_t mp     = (5 * doy + 2) / 153;                                     /* [0, 11] */
+    int day         = (int)(doy - (153 * mp + 2) / 5 + 1);                        /* [1, 31] */
+    int month       = (int)(mp < 10 ? mp + 3 : mp - 9);                           /* [1, 12] */
+    year           += (month <= 2);
 
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
@@ -1027,8 +1100,9 @@ procfs_dortc(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         hour, min, sec, (long long)year, month, day);
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -1043,12 +1117,16 @@ procfs_dortc(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_doexecdomains(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    /* pers_low-pers_high  name(left-justified)  [module]  - the classic
+    /*
+     * pers_low-pers_high  name(left-justified)  [module]  - the classic
      * exec_domain print format. The personality is "Linux" when a Linux kernel
-     * version is being spoofed, otherwise macOS's native "Darwin". */
+     * version is being spoofed, otherwise macOS's native "Darwin".
+     */
     const char *name = (procfs_spoofed_release() != NULL) ? "Linux" : "Darwin";
+
     char buf[64];
     int  len = snprintf(buf, sizeof(buf), "0-0\t%-16s\t[kernel]\n", name);
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -1070,32 +1148,31 @@ procfs_doexecdomains(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
 int
 procfs_domeminfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
+    unsigned long cached = 0, buffers = 0, memfree = 0;
+    unsigned long long swaptotal = 0, swapfree = 0;
+
+    char buf[512];
+
     uint64_t memtotal = 0;                       /* total memory in bytes */
-    size_t   sz = sizeof(memtotal);
+    size_t sz = sizeof(memtotal);
     (void)sysctlbyname("hw.memsize", &memtotal, &sz, NULL, 0);
 
     vm_statistics64_data_t vm;
     bzero(&vm, sizeof(vm));
     uint32_t got = 0;
 
-    unsigned long memfree = 0;
     if (procfs_ctl_request(PROCFS_REQ_VMSTAT, 0, 0, &vm, sizeof(vm), &got) == 0 &&
         got == sizeof(vm)) {
         uint64_t wired = (uint64_t)vm.wire_count * PAGE_SIZE;
         memfree = (unsigned long)(memtotal > wired ? memtotal - wired : 0);
     }
 
-    unsigned long      cached    = 0;
-    unsigned long      buffers   = 0;
-    unsigned long long swaptotal = 0;
-    unsigned long long swapfree  = 0;
-
-    char buf[512];
     struct sbuf sb;
     if (sbuf_new(&sb, buf, sizeof(buf), SBUF_FIXEDLEN) == NULL) {
         return ENOMEM;
     }
-
     sbuf_printf(&sb,
         "MemTotal: %9lu kB\n"
         "MemFree:  %9lu kB\n"
@@ -1107,9 +1184,9 @@ procfs_domeminfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         (unsigned long)B2K(memtotal), (unsigned long)B2K(memfree), 0UL,
         (unsigned long)B2K(buffers), (unsigned long)B2K(cached),
         (unsigned long long)B2K(swaptotal), (unsigned long long)B2K(swapfree));
-    sbuf_finish(&sb);
 
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    sbuf_finish(&sb);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
 
     return error;
@@ -1139,15 +1216,16 @@ procfs_partitions_cb(mount_t mp, void *arg)
     struct vfsstatfs *st = vfs_statfs(mp);
 
     if (st == NULL || strncmp(st->f_mntfromname, "/dev/", 5) != 0) {
-        return VFS_RETURNED;        /* skip non-block-device mounts */
+        /* skip non-block-device mounts */
+        return VFS_RETURNED;
     }
 
-    dev_t    dev    = (dev_t)st->f_fsid.val[0];
+    dev_t dev = (dev_t)st->f_fsid.val[0];
     uint64_t blocks = ((uint64_t)st->f_blocks * st->f_bsize) >> 10;  /* 1K blocks */
 
     sbuf_printf(pc->sb, "%4d %7d %10llu %s\n",
         major(dev), minor(dev), (unsigned long long)blocks,
-        st->f_mntfromname + 5 /* strip "/dev/" */);
+        st->f_mntfromname + 5); /* strip "/dev/" */
 
     return VFS_RETURNED;
 }
@@ -1155,11 +1233,12 @@ procfs_partitions_cb(mount_t mp, void *arg)
 int
 procfs_dopartitions(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 2048, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
-
     sbuf_printf(&sb, "major minor  #blocks  name\n\n");
 
     /*
@@ -1169,8 +1248,10 @@ procfs_dopartitions(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
      * matching fails.
      */
     enum { PROCFS_MAX_PARTS = 128 };
+
     struct procfs_partition *parts = (struct procfs_partition *)
         OSMalloc(PROCFS_MAX_PARTS * sizeof(struct procfs_partition), procfs_osmalloc_tag);
+
     int n = 0;
     if (parts != NULL &&
         procfs_iokit_get_partitions(parts, PROCFS_MAX_PARTS, &n) == 0 && n > 0) {
@@ -1183,12 +1264,13 @@ procfs_dopartitions(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
         struct procfs_part_ctx pc = { &sb };
         vfs_iterate(0, procfs_partitions_cb, &pc);
     }
+
     if (parts != NULL) {
         OSFree(parts, PROCFS_MAX_PARTS * sizeof(struct procfs_partition), procfs_osmalloc_tag);
     }
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
 
     return error;
@@ -1207,14 +1289,18 @@ procfs_dopartitions(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
 int
 procfs_dodiskstats(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 1024, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
     enum { PROCFS_MAX_DISKS = 64 };
+
     struct procfs_diskstat *ds = (struct procfs_diskstat *)
         OSMalloc(PROCFS_MAX_DISKS * sizeof(struct procfs_diskstat), procfs_osmalloc_tag);
+
     int n = 0;
     if (ds != NULL && procfs_iokit_get_diskstats(ds, PROCFS_MAX_DISKS, &n) == 0) {
         for (int i = 0; i < n; i++) {
@@ -1231,13 +1317,15 @@ procfs_dodiskstats(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ct
                 (unsigned long long)(d->read_ticks_ms + d->write_ticks_ms));
         }
     }
+
     if (ds != NULL) {
         OSFree(ds, PROCFS_MAX_DISKS * sizeof(struct procfs_diskstat), procfs_osmalloc_tag);
     }
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -1297,6 +1385,8 @@ procfs_mtab_cb(mount_t mp, void *arg)
 int
 procfs_domtab(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
@@ -1306,7 +1396,7 @@ procfs_domtab(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     vfs_iterate(0, procfs_mtab_cb, &mc);
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
 
     return error;
@@ -1328,7 +1418,7 @@ procfs_maps_fmt_linux(struct sbuf *sb, const struct procfs_region *r)
         (r->prot & VM_PROT_READ)    ? 'r' : '-',
         (r->prot & VM_PROT_WRITE)   ? 'w' : '-',
         (r->prot & VM_PROT_EXECUTE) ? 'x' : '-',
-        r->shared ? 's' : 'p',
+         r->shared                  ? 's' : 'p',
         (unsigned long long)r->offset);
 }
 
@@ -1357,9 +1447,11 @@ procfs_smaps_cb(const struct procfs_ext_region *r, void *arg)
     uint64_t size_kb  = (r->end - r->start) / 1024;
     uint64_t rss_kb   = (uint64_t)r->resident_pages * PROCFS_PAGE_KB;
     uint64_t dirty_kb = (uint64_t)r->dirty_pages    * PROCFS_PAGE_KB;
+
     if (dirty_kb > rss_kb) {
         dirty_kb = rss_kb;
     }
+
     uint64_t clean_kb = rss_kb - dirty_kb;
     uint64_t swap_kb  = (uint64_t)r->swapped_pages  * PROCFS_PAGE_KB;
     uint64_t anon_kb  = r->anonymous ? rss_kb : 0;
@@ -1369,7 +1461,9 @@ procfs_smaps_cb(const struct procfs_ext_region *r, void *arg)
         (r->prot & VM_PROT_READ)    ? 'r' : '-',
         (r->prot & VM_PROT_WRITE)   ? 'w' : '-',
         (r->prot & VM_PROT_EXECUTE) ? 'x' : '-',
-        r->shared ? 's' : 'p', 0ULL);
+        r->shared                   ? 's' : 'p',
+        0ULL);
+
     sbuf_printf(sb,
         "Size:           %8llu kB\n"
         "KernelPageSize: %8llu kB\n"
@@ -1384,45 +1478,60 @@ procfs_smaps_cb(const struct procfs_ext_region *r, void *arg)
         "Anonymous:      %8llu kB\n"
         "Swap:           %8llu kB\n",
         (unsigned long long)size_kb,
-        (unsigned long long)PROCFS_PAGE_KB, (unsigned long long)PROCFS_PAGE_KB,
-        (unsigned long long)rss_kb, (unsigned long long)rss_kb,
+        (unsigned long long)PROCFS_PAGE_KB,
+        (unsigned long long)PROCFS_PAGE_KB,
+        (unsigned long long)rss_kb,
+        (unsigned long long)rss_kb,
         (unsigned long long)(r->shared ? clean_kb : 0),
         (unsigned long long)(r->shared ? dirty_kb : 0),
         (unsigned long long)(r->shared ? 0 : clean_kb),
         (unsigned long long)(r->shared ? 0 : dirty_kb),
-        (unsigned long long)rss_kb, (unsigned long long)anon_kb,
+        (unsigned long long)rss_kb,
+        (unsigned long long)anon_kb,
         (unsigned long long)swap_kb);
+
     sbuf_printf(sb, "VmFlags:%s%s%s%s\n",
         (r->prot & VM_PROT_READ)    ? " rd" : "",
         (r->prot & VM_PROT_WRITE)   ? " wr" : "",
         (r->prot & VM_PROT_EXECUTE) ? " ex" : "",
-        r->shared ? " sh" : "");
+         r->shared                  ? " sh" : "");
 }
 
 int
 procfs_dosmaps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
-    int error = procfs_map_foreach_ext(pnp, ctx, procfs_smaps_cb, &sb);
+
+    error = procfs_map_foreach_ext(pnp, ctx, procfs_smaps_cb, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return error;
     }
+
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
 /* Accumulator for smaps_rollup: sums across every mapping. */
 struct procfs_rollup {
-    uint64_t first, last;
-    uint64_t rss, shared_clean, shared_dirty, private_clean, private_dirty;
-    uint64_t anon, swap;
-    int      seen;
+    uint64_t    first;
+    uint64_t    last;
+    uint64_t    rss;
+    uint64_t    shared_clean;
+    uint64_t    shared_dirty;
+    uint64_t    private_clean;
+    uint64_t    private_dirty;
+    uint64_t    anon;
+    uint64_t    swap;
+    int         seen;
 };
 
 static void
@@ -1434,19 +1543,27 @@ procfs_rollup_cb(const struct procfs_ext_region *r, void *arg)
         t->first = r->start;
         t->seen  = 1;
     }
+
     t->last = r->end;
 
-    uint64_t rss_kb   = (uint64_t)r->resident_pages * PROCFS_PAGE_KB;
-    uint64_t dirty_kb = (uint64_t)r->dirty_pages    * PROCFS_PAGE_KB;
+    uint64_t rss_kb = (uint64_t)r->resident_pages * PROCFS_PAGE_KB;
+    uint64_t dirty_kb = (uint64_t)r->dirty_pages * PROCFS_PAGE_KB;
+
     if (dirty_kb > rss_kb) {
         dirty_kb = rss_kb;
     }
+
     uint64_t clean_kb = rss_kb - dirty_kb;
 
     t->rss  += rss_kb;
     t->swap += (uint64_t)r->swapped_pages * PROCFS_PAGE_KB;
-    if (r->shared) { t->shared_clean  += clean_kb; t->shared_dirty  += dirty_kb; }
-    else           { t->private_clean += clean_kb; t->private_dirty += dirty_kb; }
+
+    if (r->shared) {
+        t->shared_clean += clean_kb; t->shared_dirty += dirty_kb;
+    } else {
+        t->private_clean += clean_kb; t->private_dirty += dirty_kb;
+    }
+
     if (r->anonymous) {
         t->anon += rss_kb;
     }
@@ -1455,9 +1572,12 @@ procfs_rollup_cb(const struct procfs_ext_region *r, void *arg)
 int
 procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 {
+    int error = 0;
+
     struct procfs_rollup t;
     bzero(&t, sizeof(t));
-    int error = procfs_map_foreach_ext(pnp, ctx, procfs_rollup_cb, &t);
+
+    error = procfs_map_foreach_ext(pnp, ctx, procfs_rollup_cb, &t);
     if (error != 0) {
         return error;
     }
@@ -1478,15 +1598,20 @@ procfs_dosmaps_rollup(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
         "Referenced:     %8llu kB\n"
         "Anonymous:      %8llu kB\n"
         "Swap:           %8llu kB\n",
-        (unsigned long long)t.rss, (unsigned long long)t.rss,
-        (unsigned long long)t.shared_clean, (unsigned long long)t.shared_dirty,
-        (unsigned long long)t.private_clean, (unsigned long long)t.private_dirty,
-        (unsigned long long)t.rss, (unsigned long long)t.anon,
+        (unsigned long long)t.rss,
+        (unsigned long long)t.rss,
+        (unsigned long long)t.shared_clean,
+        (unsigned long long)t.shared_dirty,
+        (unsigned long long)t.private_clean,
+        (unsigned long long)t.private_dirty,
+        (unsigned long long)t.rss,
+        (unsigned long long)t.anon,
         (unsigned long long)t.swap);
 
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -1497,6 +1622,7 @@ procfs_numa_cb(const struct procfs_ext_region *r, void *arg)
     struct sbuf *sb = (struct sbuf *)arg;
 
     sbuf_printf(sb, "%llx default", (unsigned long long)r->start);
+
     if (r->anonymous && r->resident_pages > 0) {
         sbuf_printf(sb, " anon=%u", r->resident_pages);
     }
@@ -1509,24 +1635,30 @@ procfs_numa_cb(const struct procfs_ext_region *r, void *arg)
     if (r->resident_pages > 0) {
         sbuf_printf(sb, " N0=%u", r->resident_pages);   /* single NUMA node */
     }
+
     sbuf_printf(sb, " kernelpagesize_kB=%llu\n", (unsigned long long)PROCFS_PAGE_KB);
 }
 
 int
 procfs_donuma_maps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
-    int error = procfs_map_foreach_ext(pnp, ctx, procfs_numa_cb, &sb);
+
+    error = procfs_map_foreach_ext(pnp, ctx, procfs_numa_cb, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return error;
     }
+
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -1544,13 +1676,17 @@ procfs_donuma_maps(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 static int
 procfs_thread_info(pfsnode_t *pnp, struct proc_threadinfo *ti)
 {
+    int error = 0;
+
     bzero(ti, sizeof(*ti));
     uint32_t got = 0;
+
     if (procfs_ctl_request(PROCFS_REQ_THREADINFO, pnp->node_id.nodeid_pid,
             pnp->node_id.nodeid_objectid, ti, sizeof(*ti), &got) == 0 &&
         got == sizeof(*ti)) {
-        return 0;
+        return error;
     }
+
     return ENOTSUP;     /* best-effort: callers format the zeroed struct */
 }
 
@@ -1558,12 +1694,16 @@ procfs_thread_info(pfsnode_t *pnp, struct proc_threadinfo *ti)
 static int
 procfs_task_info(pfsnode_t *pnp, struct proc_taskinfo *ti)
 {
+    int error = 0;
+
     bzero(ti, sizeof(*ti));
     uint32_t got = 0;
+
     if (procfs_ctl_request(PROCFS_REQ_TASKINFO, pnp->node_id.nodeid_pid, 0,
             ti, sizeof(*ti), &got) == 0 && got == sizeof(*ti)) {
-        return 0;
+        return error;
     }
+
     return ENOTSUP;     /* best-effort: callers format the zeroed struct */
 }
 
@@ -1583,10 +1723,14 @@ procfs_proc_state(int p_stat)
 
 /* Process-level context for the thread's owning process. */
 struct procfs_pctx {
-    int      pid, ppid, pgid, sid, nthreads;
+    int      pid;
+    int      ppid;
+    int      pgid;
+    int      sid;
+    int      nthreads;
     uint64_t vsize, rsize;
     char     comm[MAXCOMLEN + 1];
-    char     state;     /* Linux process-state char from p_stat */
+    char     state;                 /* Linux process-state char from p_stat */
 };
 
 static void
@@ -1595,16 +1739,20 @@ procfs_pctx_get(pfsnode_t *pnp, struct procfs_pctx *c)
     bzero(c, sizeof(*c));
     c->state = 'S';
     c->pid = pnp->node_id.nodeid_pid;
+
     proc_t p = proc_find(c->pid);
     if (p == PROC_NULL) {
         return;
     }
+
     c->ppid     = proc_ppid(p);
     c->pgid     = proc_pgrpid(p);
     c->sid      = proc_sessionid(p);
     c->nthreads = procfs_get_task_thread_count(p);
     c->state    = procfs_proc_state(p->p_stat);
+
     (void)procfs_task_vm_sizes(p, &c->vsize, &c->rsize);
+
     proc_name(c->pid, c->comm, sizeof(c->comm));
     proc_rele(p);
 }
@@ -1643,6 +1791,7 @@ procfs_dothreadcomm(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 
     const char *name = ti.pth_name[0] ? ti.pth_name : NULL;
     char comm[MAXCOMLEN + 1] = { 0 };
+
     if (name == NULL) {
         proc_name(pnp->node_id.nodeid_pid, comm, sizeof(comm));
         name = comm;
@@ -1650,6 +1799,7 @@ procfs_dothreadcomm(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 
     char buf[MAXTHREADNAMESIZE + 2];
     int len = snprintf(buf, sizeof(buf), "%s\n", name);
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -1657,32 +1807,47 @@ int
 procfs_dothreadstat(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     struct proc_threadinfo ti;
-    struct procfs_pctx     c;
+    struct procfs_pctx c;
+
     procfs_thread_info(pnp, &ti);
     procfs_pctx_get(pnp, &c);
 
-    uint64_t    tid   = pnp->node_id.nodeid_objectid;
-    const char *name  = ti.pth_name[0] ? ti.pth_name : c.comm;
-    char        state = procfs_thread_state(ti.pth_run_state);
-    uint64_t    utime = ti.pth_user_time   / PROCFS_NS_PER_TICK;
-    uint64_t    stime = ti.pth_system_time / PROCFS_NS_PER_TICK;
-    uint64_t    rss_pages = c.rsize / PAGE_SIZE;
+    uint64_t tid = pnp->node_id.nodeid_objectid;
 
-    /* Linux /proc/<pid>/task/<tid>/stat: 52 space-separated fields. Field 41 is
-     * the scheduling policy; fields with no macOS source are 0/-1. */
+    const char *name  = ti.pth_name[0] ? ti.pth_name : c.comm;
+    char state = procfs_thread_state(ti.pth_run_state);
+
+    uint64_t utime = ti.pth_user_time / PROCFS_NS_PER_TICK;
+    uint64_t stime = ti.pth_system_time / PROCFS_NS_PER_TICK;
+    uint64_t rss_pages = c.rsize / PAGE_SIZE;
+
+    /*
+     * Linux /proc/<pid>/task/<tid>/stat: 52 space-separated fields. Field 41 is
+     * the scheduling policy; fields with no macOS source are 0/-1.
+     */
     char buf[640];
+
     int len = snprintf(buf, sizeof(buf),
-        "%llu (%s) %c %d %d %d 0 -1 0 0 0 0 0 "                /* 1-13  */
-        "%llu %llu 0 0 %d 0 %d 0 0 "                           /* 14-22 */
-        "%llu %llu 18446744073709551615 "                     /* 23-25 */
-        "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 "                       /* 26-40 */
-        "%d "                                                  /* 41 policy */
-        "0 0 0 0 0 0 0 0 0 0 0\n",                             /* 42-52 */
-        (unsigned long long)tid, name, state, c.ppid, c.pgid, c.sid,
-        (unsigned long long)utime, (unsigned long long)stime,
-        ti.pth_curpri, c.nthreads,
-        (unsigned long long)c.vsize, (unsigned long long)rss_pages,
+        "%llu (%s) %c %d %d %d 0 -1 0 0 0 0 0 "     /* 1-13  */
+        "%llu %llu 0 0 %d 0 %d 0 0 "                /* 14-22 */
+        "%llu %llu 18446744073709551615 "           /* 23-25 */
+        "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 "            /* 26-40 */
+        "%d "                                       /* 41 policy */
+        "0 0 0 0 0 0 0 0 0 0 0\n",                  /* 42-52 */
+        (unsigned long long)tid,
+        name,
+        state,
+        c.ppid,
+        c.pgid,
+        c.sid,
+        (unsigned long long)utime,
+        (unsigned long long)stime,
+        ti.pth_curpri,
+        c.nthreads,
+        (unsigned long long)c.vsize,
+        (unsigned long long)rss_pages,
         ti.pth_policy);
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -1690,13 +1855,14 @@ int
 procfs_dothreadstatus(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     struct proc_threadinfo ti;
-    struct procfs_pctx     c;
+    struct procfs_pctx c;
+
     procfs_thread_info(pnp, &ti);
     procfs_pctx_get(pnp, &c);
 
-    uint64_t    tid  = pnp->node_id.nodeid_objectid;
+    uint64_t tid  = pnp->node_id.nodeid_objectid;
     const char *name = ti.pth_name[0] ? ti.pth_name : c.comm;
-    char        st   = procfs_thread_state(ti.pth_run_state);
+    char st = procfs_thread_state(ti.pth_run_state);
 
     char buf[512];
     int len = snprintf(buf, sizeof(buf),
@@ -1713,6 +1879,7 @@ procfs_dothreadstatus(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         name, st, procfs_thread_state_word(st),
         c.pid, (unsigned long long)tid, c.ppid,
         (unsigned long long)(c.vsize >> 10), 0ULL, c.nthreads);
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -1720,11 +1887,11 @@ int
 procfs_dothreadsched(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     struct proc_threadinfo ti;
-    struct procfs_pctx     c;
+    struct procfs_pctx c;
     procfs_thread_info(pnp, &ti);
     procfs_pctx_get(pnp, &c);
 
-    uint64_t    tid  = pnp->node_id.nodeid_objectid;
+    uint64_t tid  = pnp->node_id.nodeid_objectid;
     const char *name = ti.pth_name[0] ? ti.pth_name : c.comm;
 
     /* Linux's CFS-internal se.* metrics (vruntime, load.weight, avg.*) have no
@@ -1739,6 +1906,7 @@ procfs_dothreadsched(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         name, (unsigned long long)tid, c.nthreads,
         (unsigned long long)(ti.pth_user_time + ti.pth_system_time),
         ti.pth_policy, ti.pth_curpri);
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -1758,6 +1926,7 @@ static const char *const procfs_linux_versions[] = {
     "5.10.0",
     "2.5.47",       /* pre-kallsyms era: exposes /proc/ksyms, not /proc/kallsyms */
 };
+
 #define PROCFS_LINUX_NVERSIONS \
     (int)(sizeof(procfs_linux_versions) / sizeof(procfs_linux_versions[0]))
 
@@ -1775,6 +1944,8 @@ procfs_spoofed_release(void)
 static int
 procfs_vercmp(const char *a, const char *b)
 {
+    int error = 0;
+
     while (*a != '\0' || *b != '\0') {
         int na = 0, nb = 0;
         while (*a >= '0' && *a <= '9') { na = na * 10 + (*a++ - '0'); }
@@ -1783,7 +1954,8 @@ procfs_vercmp(const char *a, const char *b)
         if (*a == '.') { a++; }
         if (*b == '.') { b++; }
     }
-    return 0;
+
+    return error;
 }
 
 /*
@@ -1797,17 +1969,22 @@ boolean_t
 procfs_node_version_hidden(const char *name)
 {
     const char *rel = procfs_spoofed_release();
+
     if (rel == NULL) {
         return FALSE;                       /* spoof off -> show both */
     }
+
     boolean_t is_ksyms    = (strcmp(name, "ksyms") == 0);
     boolean_t is_kallsyms = (strcmp(name, "kallsyms") == 0);
+
     if (!is_ksyms && !is_kallsyms) {
         return FALSE;
     }
+
     if (procfs_vercmp(rel, "2.5.47") <= 0) {
         return is_kallsyms;                 /* ksyms era: hide kallsyms */
     }
+
     return is_ksyms;                        /* kallsyms era: hide ksyms */
 }
 
@@ -1815,9 +1992,11 @@ int
 procfs_build_linux_version(char *buf, size_t sz)
 {
     const char *rel = procfs_spoofed_release();
+
     if (rel == NULL) {
         return 0;
     }
+
     return snprintf(buf, sz,
         "Linux version %s (builder@linux-build-env) "
         "(gcc version 10.3.0 (Ubuntu 10.3.0-1ubuntu1)) "
@@ -1833,8 +2012,8 @@ procfs_doversion(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     int error = 0;
     int len = 0, xlen = 0;
-
     char vb[LBFSZ];
+
     int vlen = procfs_build_linux_version(vb, sizeof(vb));
     if (vlen > 0) {
         return procfs_copy_data(vb, (size_t)vlen, uio);
@@ -1850,12 +2029,10 @@ procfs_doversion(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
      * Print out the kernel version string.
      */
     len = snprintf(buf, LBFSZ, "%s\n", version);
-
     xlen = (len - pgoff);
     error = uiomove((const char *)buf, xlen, uio);
 
     free(buf, M_TEMP);
-
     return error;
 }
 
@@ -1875,6 +2052,8 @@ procfs_doversion(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_doregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     if (uio_rw(uio) != UIO_READ) {
         return EOPNOTSUPP;
     }
@@ -1883,8 +2062,10 @@ procfs_doregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     if (p == PROC_NULL) {
         return ESRCH;
     }
+
     int sysproc = (p->p_stat == SZOMB) || (p->p_flag & P_SYSTEM) != 0;
     proc_rele(p);
+
     if (sysproc) {
         return ESRCH;
     }
@@ -1899,12 +2080,15 @@ procfs_doregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 #if defined(__arm64__) || defined(__aarch64__)
     arm_thread_state64_t st;
     uint32_t got = 0;
+
     if (procfs_ctl_request(PROCFS_REQ_REGS, pnp->node_id.nodeid_pid, 0,
-                           &st, sizeof(st), &got) == 0 && got > 0) {
+        &st, sizeof(st), &got) == 0 && got > 0) {
+
         /* non-opaque arm_thread_state64 layout; pc/lr carry PAC bits, emitted raw. */
         for (int i = 0; i < 29; i++) {
             sbuf_printf(&sb, "x%-2d  0x%016llx\n", i, (uint64_t)st.x[i]);
         }
+
         sbuf_printf(&sb, "fp   0x%016llx\n", (uint64_t)st.fp);
         sbuf_printf(&sb, "lr   0x%016llx\n", (uint64_t)st.lr);
         sbuf_printf(&sb, "sp   0x%016llx\n", (uint64_t)st.sp);
@@ -1914,6 +2098,7 @@ procfs_doregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 #elif defined(__x86_64__)
     x86_thread_state64_t st;
     uint32_t got = 0;
+
     if (procfs_ctl_request(PROCFS_REQ_REGS, pnp->node_id.nodeid_pid, 0,
                            &st, sizeof(st), &got) == 0 && got > 0) {
         sbuf_printf(&sb, "rax 0x%016llx\nrbx 0x%016llx\nrcx 0x%016llx\n"
@@ -1922,20 +2107,23 @@ procfs_doregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
             (uint64_t)st.rax, (uint64_t)st.rbx, (uint64_t)st.rcx,
             (uint64_t)st.rdx, (uint64_t)st.rsi, (uint64_t)st.rdi,
             (uint64_t)st.rbp, (uint64_t)st.rsp);
+
         sbuf_printf(&sb, "r8  0x%016llx\nr9  0x%016llx\nr10 0x%016llx\n"
                          "r11 0x%016llx\nr12 0x%016llx\nr13 0x%016llx\n"
                          "r14 0x%016llx\nr15 0x%016llx\n",
             (uint64_t)st.r8,  (uint64_t)st.r9,  (uint64_t)st.r10,
             (uint64_t)st.r11, (uint64_t)st.r12, (uint64_t)st.r13,
             (uint64_t)st.r14, (uint64_t)st.r15);
+
         sbuf_printf(&sb, "rip 0x%016llx\nrflags 0x%016llx\n",
             (uint64_t)st.rip, (uint64_t)st.rflags);
     }
 #endif
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -1949,6 +2137,8 @@ procfs_doregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_dofpregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     if (uio_rw(uio) != UIO_READ) {
         return EOPNOTSUPP;
     }
@@ -1957,8 +2147,10 @@ procfs_dofpregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     if (p == PROC_NULL) {
         return ESRCH;
     }
+
     int sysproc = (p->p_stat == SZOMB) || (p->p_flag & P_SYSTEM) != 0;
     proc_rele(p);
+
     if (sysproc) {
         return ESRCH;
     }
@@ -1980,6 +2172,7 @@ procfs_dofpregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
             sbuf_printf(&sb, "q%-2d  0x%016llx%016llx\n", i,
                         (uint64_t)qw[1], (uint64_t)qw[0]);
         }
+
         sbuf_printf(&sb, "fpsr 0x%08x\n", (uint32_t)st.fpsr);
         sbuf_printf(&sb, "fpcr 0x%08x\n", (uint32_t)st.fpcr);
     }
@@ -1990,8 +2183,9 @@ procfs_dofpregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 #endif
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2012,6 +2206,8 @@ procfs_dofpregs_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_doauxv_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     if (uio_rw(uio) != UIO_READ) {
         return EOPNOTSUPP;
     }
@@ -2038,8 +2234,9 @@ procfs_doauxv_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     kauth_cred_unref(&cr);
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     proc_rele(p);
     return error;
 }
@@ -2056,6 +2253,7 @@ procfs_docomm(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 
     char buf[MAXCOMLEN + 2];
     int len = snprintf(buf, sizeof(buf), "%s\n", c.comm);
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -2074,6 +2272,7 @@ procfs_dostatm(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     int len = snprintf(buf, sizeof(buf), "%llu %llu 0 0 0 0 0\n",
         (unsigned long long)(c.vsize / PAGE_SIZE),
         (unsigned long long)(c.rsize / PAGE_SIZE));
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -2087,12 +2286,16 @@ procfs_dostatm(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_doio(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 {
+    int error = 0;
+
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
     if (p == PROC_NULL) {
         return ESRCH;
     }
-    int error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
+
+    error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
     proc_rele(p);
+
     if (error != 0) {
         return error;
     }
@@ -2100,11 +2303,13 @@ procfs_doio(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     uint64_t read_bytes = 0, write_bytes = 0;
     uint64_t io[2] = { 0, 0 };
     uint32_t got = 0;
+
+    /* daemon absent/failed -> zeros (best-effort, like the other daemon nodes) */
     if (procfs_ctl_request(PROCFS_REQ_RUSAGE, pnp->node_id.nodeid_pid, 0,
-                           io, sizeof(io), &got) == 0 && got == sizeof(io)) {
+        io, sizeof(io), &got) == 0 && got == sizeof(io)) {
         read_bytes  = io[0];
         write_bytes = io[1];
-    }   /* daemon absent/failed -> zeros (best-effort, like the other daemon nodes) */
+    }
 
     char buf[256];
     int len = snprintf(buf, sizeof(buf),
@@ -2115,7 +2320,9 @@ procfs_doio(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
         "read_bytes: %llu\n"
         "write_bytes: %llu\n"
         "cancelled_write_bytes: 0\n",
-        (unsigned long long)read_bytes, (unsigned long long)write_bytes);
+        (unsigned long long)read_bytes,
+        (unsigned long long)write_bytes);
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -2127,26 +2334,28 @@ procfs_doio(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 int
 procfs_doprocstat(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    struct procfs_pctx   c;
+    struct procfs_pctx c;
     struct proc_taskinfo ti;
+
     procfs_pctx_get(pnp, &c);
     procfs_task_info(pnp, &ti);
 
-    uint64_t utime = ti.pti_total_user   / PROCFS_NS_PER_TICK;
+    uint64_t utime = ti.pti_total_user / PROCFS_NS_PER_TICK;
     uint64_t stime = ti.pti_total_system / PROCFS_NS_PER_TICK;
     uint64_t rss_pages = c.rsize / PAGE_SIZE;
 
     char buf[640];
     int len = snprintf(buf, sizeof(buf),
-        "%d (%s) %c %d %d %d 0 -1 0 0 0 0 0 "                  /* 1-13  */
-        "%llu %llu 0 0 20 0 %d 0 0 "                           /* 14-22 */
-        "%llu %llu 18446744073709551615 "                     /* 23-25 */
-        "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 "                       /* 26-40 */
-        "0 "                                                  /* 41 policy */
-        "0 0 0 0 0 0 0 0 0 0 0\n",                             /* 42-52 */
+        "%d (%s) %c %d %d %d 0 -1 0 0 0 0 0 "                   /* 1-13  */
+        "%llu %llu 0 0 20 0 %d 0 0 "                            /* 14-22 */
+        "%llu %llu 18446744073709551615 "                       /* 23-25 */
+        "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 "                        /* 26-40 */
+        "0 "                                                    /* 41 policy */
+        "0 0 0 0 0 0 0 0 0 0 0\n",                              /* 42-52 */
         c.pid, c.comm, c.state, c.ppid, c.pgid, c.sid,
         (unsigned long long)utime, (unsigned long long)stime, c.nthreads,
         (unsigned long long)c.vsize, (unsigned long long)rss_pages);
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -2162,12 +2371,14 @@ procfs_doprocstat(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_docpu(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct proc_taskinfo ti;
     procfs_task_info(pnp, &ti);
 
-    uint64_t utime = ti.pti_total_user   / PROCFS_NS_PER_TICK;
+    uint64_t utime = ti.pti_total_user / PROCFS_NS_PER_TICK;
     uint64_t stime = ti.pti_total_system / PROCFS_NS_PER_TICK;
-    uint32_t ncpu  = procfs_online_cpus();
+    uint32_t ncpu = procfs_online_cpus();
 
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 256, SBUF_AUTOEXTEND) == NULL) {
@@ -2176,6 +2387,7 @@ procfs_docpu(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 
     sbuf_printf(&sb, "cpu  %llu %llu\n",
         (unsigned long long)utime, (unsigned long long)stime);
+
     for (uint32_t i = 0; i < ncpu; i++) {
         sbuf_printf(&sb, "cpu%u %llu %llu\n", i,
             (unsigned long long)(i == 0 ? utime : 0),
@@ -2183,8 +2395,9 @@ procfs_docpu(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     }
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2223,12 +2436,15 @@ procfs_wchan_init_slide(void)
     if (g_wchan_slide_known) {
         return;
     }
+
     uint64_t ref = 0;
     uint32_t got = 0;
+
     if (procfs_ctl_request(PROCFS_REQ_KSYM_REF, 0, 0, &ref, sizeof(ref), &got) == 0 &&
         got == sizeof(ref) && ref != 0) {
         uintptr_t rt = (uintptr_t)ptrauth_strip((void *)proc_pid,
             ptrauth_key_function_pointer);
+
         g_wchan_slide = (int64_t)((uint64_t)rt - ref);
         g_wchan_slide_known = 1;
     }
@@ -2246,35 +2462,46 @@ procfs_wchan_init_slide(void)
 static size_t
 procfs_wchan_resolve(proc_t p, char *buf, size_t cap)
 {
+    int error = 0;
+
     buf[0] = '\0';
 
     procfs_wchan_init_slide();
 
     uint64_t runtime = 0;
     (void)procfs_thread_continuation(p, &runtime);
+
     if (runtime == 0 || !g_wchan_slide_known) {
-        return 0;
+        return error;
     }
 
-    /* Map the runtime continuation to the symbol source's layout. */
+    /*
+     * Map the runtime continuation to the symbol source's layout.
+     */
     uint64_t img = runtime - (uint64_t)g_wchan_slide;
-    char     sym[128];
     uint32_t got = 0;
+    char sym[128];
+
     if (procfs_ctl_request(PROCFS_REQ_KSYM_LOOKUP, 0, img,
             sym, sizeof(sym) - 1, &got) != 0 || got == 0) {
-        return 0;
+        return error;
     }
+
     if (got > sizeof(sym) - 1) {
         got = sizeof(sym) - 1;
     }
+
     sym[got] = '\0';
     if (sym[0] == '\0') {
-        return 0;
+        return error;
     }
 
-    /* Drop the Mach C-symbol leading underscore for Linux style. */
+    /*
+     * Drop the Mach C-symbol leading underscore for Linux style.
+     */
     const char *s = (sym[0] == '_') ? sym + 1 : sym;
     strlcpy(buf, s, cap);
+
     return strlen(buf);
 }
 
@@ -2284,6 +2511,7 @@ procfs_dowchan(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     char name[128];
     name[0] = '0';
     name[1] = '\0';
+
     int outlen = 1;
 
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
@@ -2321,7 +2549,7 @@ int
 procfs_dostack(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     char out[160];
-    int  len = 0;
+    int len = 0;
 
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
     if (p != PROC_NULL) {
@@ -2343,11 +2571,14 @@ procfs_dostack(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_doprocstatus_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct procfs_pctx c;
     procfs_pctx_get(pnp, &c);
 
     uid_t ruid = 0, euid = 0, svuid = 0;
     gid_t rgid = 0, egid = 0, svgid = 0;
+
     proc_t p = proc_find(pnp->node_id.nodeid_pid);
     if (p != PROC_NULL) {
         kauth_cred_t cr = kauth_cred_proc_ref(p);
@@ -2365,6 +2596,7 @@ procfs_doprocstatus_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     if (sbuf_new(&sb, NULL, 1024, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
+
     sbuf_printf(&sb,
         "Name:\t%s\n"
         "State:\t%c (%s)\n"
@@ -2379,48 +2611,68 @@ procfs_doprocstatus_linux(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         "Threads:\t%d\n"
         "voluntary_ctxt_switches:\t0\n"
         "nonvoluntary_ctxt_switches:\t0\n",
-        c.comm, c.state, procfs_thread_state_word(c.state),
-        c.pid, c.pid, c.ppid,
-        ruid, euid, svuid, euid,        /* Uid: real effective saved fs (fs~=eff) */
-        rgid, egid, svgid, egid,        /* Gid: real effective saved fs           */
+        c.comm,
+        c.state,
+        procfs_thread_state_word(c.state),
+        c.pid,
+        c.pid,
+        c.ppid,
+        ruid,
+        euid,
+        svuid,
+        euid,                               /* Uid: real effective saved fs (fs~=eff) */
+        rgid,
+        egid,
+        svgid,
+        egid,                               /* Gid: real effective saved fs */
         (unsigned long long)(c.vsize >> 10),
         (unsigned long long)(c.rsize >> 10),
         c.nthreads);
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
-/* /proc/uptime - seconds since boot and (approximate) idle seconds. */
+/*
+ * /proc/uptime - seconds since boot and (approximate) idle seconds.
+ */
 int
 procfs_douptime(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     struct timeval tv;
     microuptime(&tv);
 
-    /* Field 2 is summed CPU idle time; macOS has no cheap kernel-context source
-     * for it here, so report 0.00 (the common consumer, uptime(1), uses field 1). */
+    /*
+     * Field 2 is summed CPU idle time; macOS has no cheap kernel-context source
+     * for it here, so report 0.00 (the common consumer, uptime(1), uses field 1).
+     */
     char buf[64];
     int len = snprintf(buf, sizeof(buf), "%lld.%02d 0.00\n",
         (long long)tv.tv_sec, (int)(tv.tv_usec / 10000));
+
     return procfs_copy_data(buf, len, uio);
 }
 
-/* /proc/swaps - macOS uses dynamic swap files under /private/var/vm; report the
- * aggregate usage from the vm.swapusage sysctl as a single swap area. */
+/*
+ * /proc/swaps - macOS uses dynamic swap files under /private/var/vm .
+ * Report the aggregate usage from the vm.swapusage sysctl as a single swap area.
+ */
 int
 procfs_doswaps(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
+    struct xsw_usage xsu;
+    size_t len = sizeof(xsu);
     if (sbuf_new(&sb, NULL, 256, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
     sbuf_printf(&sb, "Filename\t\t\t\tType\t\tSize\tUsed\tPriority\n");
 
-    struct xsw_usage xsu;
-    size_t len = sizeof(xsu);
     if (sysctlbyname("vm.swapusage", &xsu, &len, NULL, 0) == 0 && xsu.xsu_total > 0) {
         sbuf_printf(&sb, "/private/var/vm/swapfile\tfile\t\t%llu\t%llu\t-1\n",
             (unsigned long long)(xsu.xsu_total / 1024),
@@ -2428,8 +2680,9 @@ procfs_doswaps(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     }
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2441,11 +2694,13 @@ procfs_fs_is_nodev(const char *type)
         "devfs", "procfs", "autofs", "nullfs", "fdesc", "tmpfs", "mtmfs",
         "lifs", "bindfs", "webdav", "nfs", "smbfs", "ftp", NULL
     };
+
     for (int i = 0; nodev[i] != NULL; i++) {
         if (strncmp(type, nodev[i], MFSTYPENAMELEN) == 0) {
             return TRUE;
         }
     }
+
     return FALSE;
 }
 
@@ -2459,19 +2714,24 @@ static int
 procfs_fstypes_cb(mount_t mp, void *arg)
 {
     struct procfs_fstypes_ctx *fc = (struct procfs_fstypes_ctx *)arg;
+
     struct vfsstatfs *st = vfs_statfs(mp);
     if (st == NULL) {
         return VFS_RETURNED;
     }
+
     for (int i = 0; i < fc->count; i++) {
         if (strncmp(fc->names[i], st->f_fstypename, MFSTYPENAMELEN) == 0) {
-            return VFS_RETURNED;                /* already seen this type */
+            /* Already seen this type. */
+            return VFS_RETURNED;
         }
     }
+
     if (fc->count < (int)(sizeof(fc->names) / sizeof(fc->names[0]))) {
         strlcpy(fc->names[fc->count], st->f_fstypename, MFSTYPENAMELEN);
         fc->count++;
     }
+
     return VFS_RETURNED;
 }
 
@@ -2483,6 +2743,8 @@ procfs_fstypes_cb(mount_t mp, void *arg)
 int
 procfs_dofilesystems(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct procfs_fstypes_ctx fc;
     bzero(&fc, sizeof(fc));
     vfs_iterate(0, procfs_fstypes_cb, &fc);
@@ -2491,14 +2753,16 @@ procfs_dofilesystems(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
     if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
+
     for (int i = 0; i < fc.count; i++) {
         sbuf_printf(&sb, "%s\t%s\n",
             procfs_fs_is_nodev(fc.names[i]) ? "nodev" : "", fc.names[i]);
     }
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2524,12 +2788,14 @@ procfs_domodules(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_dodevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_DEVICES, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_DEVICES, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
@@ -2538,6 +2804,7 @@ procfs_dodevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2553,12 +2820,14 @@ procfs_dodevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_dopcidevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 4096, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_PCIDEVICES, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_PCIDEVICES, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
@@ -2567,6 +2836,7 @@ procfs_dopcidevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2580,12 +2850,14 @@ procfs_dopcidevices(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
 int
 procfs_dofb(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 512, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_FBDEVICES, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_FBDEVICES, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
@@ -2594,6 +2866,7 @@ procfs_dofb(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2609,12 +2882,14 @@ procfs_dofb(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_dointerrupts(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_INTERRUPTS, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_INTERRUPTS, &sb);
     if (error != 0 && error != ENOTCONN) {
         sbuf_delete(&sb);
         return error;
@@ -2629,30 +2904,41 @@ procfs_dointerrupts(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
      * CPU-column header is emitted first to keep the summary aligned.
      */
     uint32_t ncpu = procfs_online_cpus();
+
     if (sbuf_len(&sb) == 0) {
         sbuf_printf(&sb, "     ");
+
         for (uint32_t c = 0; c < ncpu; c++) {
             sbuf_printf(&sb, "CPU%-8u", c);
         }
+
         sbuf_printf(&sb, "\n");
     }
 
     struct procfs_cpu_stat cs[64];
     (void)procfs_cpu_stat_all(cs, ncpu);
+
     sbuf_printf(&sb, "%4s:", "LOC");
+
     for (uint32_t c = 0; c < ncpu; c++) {
-        sbuf_printf(&sb, " %10llu", (unsigned long long)cs[c].timer);
+        sbuf_printf(&sb, " %10llu",
+        (unsigned long long)cs[c].timer);
     }
+
     sbuf_printf(&sb, "   Local timer interrupts\n");
     sbuf_printf(&sb, "%4s:", "RES");
+
     for (uint32_t c = 0; c < ncpu; c++) {
-        sbuf_printf(&sb, " %10llu", (unsigned long long)cs[c].ipi);
+        sbuf_printf(&sb, " %10llu",
+        (unsigned long long)cs[c].ipi);
     }
+
     sbuf_printf(&sb, "   Rescheduling interrupts\n");
 
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2669,10 +2955,12 @@ static uint32_t
 procfs_online_cpus(void)
 {
     uint32_t ncpu = 1;
-    size_t   sz = sizeof(ncpu);
+    size_t sz = sizeof(ncpu);
+
     if (sysctlbyname("hw.logicalcpu", &ncpu, &sz, NULL, 0) != 0 || ncpu < 1) {
         ncpu = 1;
     }
+
     return (ncpu > 64) ? 64 : ncpu;
 }
 
@@ -2684,7 +2972,8 @@ procfs_doirq_affinity(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t
     /* cpumask in hex, comma-separated 32-bit groups (high group first), all
      * bits set for the online CPUs. */
     char buf[64];
-    int  len;
+    int len;
+
     if (ncpu <= 32) {
         uint32_t mask = (ncpu == 32) ? 0xffffffffu : ((1u << ncpu) - 1u);
         len = snprintf(buf, sizeof(buf), "%x\n", mask);
@@ -2692,6 +2981,7 @@ procfs_doirq_affinity(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t
         uint32_t hi = (ncpu == 64) ? 0xffffffffu : ((1u << (ncpu - 32)) - 1u);
         len = snprintf(buf, sizeof(buf), "%x,ffffffff\n", hi);
     }
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -2701,8 +2991,9 @@ procfs_doirq_affinity_list(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_cont
     uint32_t ncpu = procfs_online_cpus();
 
     char buf[32];
-    int  len = (ncpu <= 1) ? snprintf(buf, sizeof(buf), "0\n")
-                           : snprintf(buf, sizeof(buf), "0-%u\n", ncpu - 1);
+    int len = (ncpu <= 1) ? snprintf(buf, sizeof(buf), "0\n")
+        : snprintf(buf, sizeof(buf), "0-%u\n", ncpu - 1);
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -2715,12 +3006,14 @@ procfs_doirq_affinity_list(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_cont
 int
 procfs_dotty_drivers(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 1024, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_TTYDRIVERS, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_TTYDRIVERS, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
@@ -2729,6 +3022,7 @@ procfs_dotty_drivers(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2741,6 +3035,7 @@ int
 procfs_dotty_ldiscs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     static const char text[] = "tty\t\t0\n";
+
     return procfs_copy_data(text, sizeof(text) - 1, uio);
 }
 
@@ -2756,12 +3051,14 @@ procfs_dotty_ldiscs(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
 int
 procfs_dovmallocinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_VMALLOCINFO, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_VMALLOCINFO, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
@@ -2770,6 +3067,7 @@ procfs_dovmallocinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2786,12 +3084,14 @@ procfs_dovmallocinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
 int
 procfs_doslabinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_SLABINFO, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_SLABINFO, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
@@ -2800,6 +3100,7 @@ procfs_doslabinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2814,6 +3115,8 @@ procfs_doslabinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
 int
 procfs_dolocks(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 2048, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
@@ -2822,8 +3125,9 @@ procfs_dolocks(__unused pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     procfs_build_locks(&sb, ctx);
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2905,20 +3209,24 @@ procfs_dokcore(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_dokmsg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_KMSG, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_KMSG, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
-        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+        /* No daemon -> empty node */
+        return (error == ENOTCONN) ? 0 : error;
     }
 
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2934,20 +3242,24 @@ procfs_dokmsg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_dolast_kmsg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_LAST_KMSG, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_LAST_KMSG, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
-        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+        /* No daemon -> empty node */
+        return (error == ENOTCONN) ? 0 : error;
     }
 
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -2971,15 +3283,18 @@ procfs_dolast_kmsg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ct
 static int
 procfs_do_symtab(uio_t uio, vfs_context_t ctx, int req_type)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(req_type, &sb);
+    error = procfs_ctl_request_blob(req_type, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
-        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+        /* No daemon -> empty node */
+        return (error == ENOTCONN) ? 0 : error;
     }
 
     sbuf_finish(&sb);
@@ -2987,12 +3302,13 @@ procfs_do_symtab(uio_t uio, vfs_context_t ctx, int req_type)
     kauth_cred_t cred = vfs_context_ucred(ctx);
     if (cred == NULL || kauth_cred_getuid(cred) != 0) {
         char *d = sbuf_data(&sb);
-        int   n = sbuf_len(&sb);
+        int n = sbuf_len(&sb);
         boolean_t at_line_start = TRUE;
+
         for (int i = 0; i < n; i++) {
             if (at_line_start && d[i] != '\n') {
                 for (int k = 0; k < 16 && (i + k) < n &&
-                     d[i + k] != ' ' && d[i + k] != '\n'; k++) {
+                    d[i + k] != ' ' && d[i + k] != '\n'; k++) {
                     d[i + k] = '0';
                 }
                 at_line_start = FALSE;
@@ -3005,6 +3321,7 @@ procfs_do_symtab(uio_t uio, vfs_context_t ctx, int req_type)
 
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -3055,20 +3372,24 @@ procfs_doide_drivers(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
 int
 procfs_domisc(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 1024, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_MISC, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_MISC, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
-        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+        /* No daemon -> empty node */
+        return (error == ENOTCONN) ? 0 : error;
     }
 
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -3095,20 +3416,24 @@ procfs_doisapnp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_doscsi(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 2048, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_SCSI, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_SCSI, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
-        return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
+        /* No daemon -> empty node */
+        return (error == ENOTCONN) ? 0 : error;
     }
 
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -3124,12 +3449,14 @@ procfs_doscsi(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 static int
 procfs_sysvipc_node(uio_t uio, uint32_t req_type, const char *hdr, int hdrlen)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 2048, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(req_type, &sb);
+    error = procfs_ctl_request_blob(req_type, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         /* No daemon: still show the header (an empty table), as Linux does. */
@@ -3139,6 +3466,7 @@ procfs_sysvipc_node(uio_t uio, uint32_t req_type, const char *hdr, int hdrlen)
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -3178,12 +3506,14 @@ procfs_dosysvipc_msg(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t 
 static int
 procfs_net_pcb_node(uio_t uio, uint32_t req_type, const char *hdr, int hdrlen)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 2048, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(req_type, &sb);
+    error = procfs_ctl_request_blob(req_type, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         /* No daemon: still show the header (an empty table), as Linux does. */
@@ -3193,6 +3523,7 @@ procfs_net_pcb_node(uio_t uio, uint32_t req_type, const char *hdr, int hdrlen)
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -3201,6 +3532,7 @@ procfs_donettcp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     static const char hdr[] =
         "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+
     return procfs_net_pcb_node(uio, PROCFS_REQ_NETTCP, hdr, sizeof(hdr) - 1);
 }
 
@@ -3209,6 +3541,7 @@ procfs_donettcp6(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     static const char hdr[] =
         "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+
     return procfs_net_pcb_node(uio, PROCFS_REQ_NETTCP6, hdr, sizeof(hdr) - 1);
 }
 
@@ -3217,6 +3550,7 @@ procfs_donetudp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     static const char hdr[] =
         "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+
     return procfs_net_pcb_node(uio, PROCFS_REQ_NETUDP, hdr, sizeof(hdr) - 1);
 }
 
@@ -3225,6 +3559,7 @@ procfs_donetudp6(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     static const char hdr[] =
         "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+
     return procfs_net_pcb_node(uio, PROCFS_REQ_NETUDP6, hdr, sizeof(hdr) - 1);
 }
 
@@ -3238,6 +3573,7 @@ procfs_donetunix(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     static const char hdr[] =
         "Num       RefCount Protocol Flags    Type St Inode Path\n";
+
     return procfs_net_pcb_node(uio, PROCFS_REQ_NETUNIX, hdr, sizeof(hdr) - 1);
 }
 
@@ -3250,6 +3586,7 @@ procfs_donetroute(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
 {
     static const char hdr[] =
         "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n";
+
     return procfs_net_pcb_node(uio, PROCFS_REQ_NETROUTE, hdr, sizeof(hdr) - 1);
 }
 
@@ -3262,6 +3599,7 @@ procfs_donetarp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
     static const char hdr[] =
         "IP address       HW type     Flags       HW address            Mask     Device\n";
+
     return procfs_net_pcb_node(uio, PROCFS_REQ_NETARP, hdr, sizeof(hdr) - 1);
 }
 
@@ -3298,12 +3636,14 @@ procfs_donetsnmp(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_donfsexports(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 1024, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_NFSEXPORTS, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_NFSEXPORTS, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
@@ -3312,6 +3652,7 @@ procfs_donfsexports(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -3326,12 +3667,14 @@ procfs_donfsexports(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
 int
 procfs_doallocinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 8192, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
 
-    int error = procfs_ctl_request_blob(PROCFS_REQ_ALLOCINFO, &sb);
+    error = procfs_ctl_request_blob(PROCFS_REQ_ALLOCINFO, &sb);
     if (error != 0) {
         sbuf_delete(&sb);
         return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
@@ -3340,6 +3683,7 @@ procfs_doallocinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ct
     sbuf_finish(&sb);
     error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -3353,13 +3697,18 @@ procfs_doallocinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ct
 int
 procfs_doapm(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
+    int error = 0;
+
     struct procfs_apm_info info = { -1, 0, 0, -1, -1 };
     struct procfs_apm_info tmp;
+
     uint32_t got = 0;
-    int error = procfs_ctl_request(PROCFS_REQ_APM, 0, 0, &tmp, sizeof(tmp), &got);
+
+    error = procfs_ctl_request(PROCFS_REQ_APM, 0, 0, &tmp, sizeof(tmp), &got);
     if (error != 0) {
         return (error == ENOTCONN) ? 0 : error;    /* no daemon -> empty node */
     }
+
     if (got == sizeof(tmp)) {
         info = tmp;
     }
@@ -3367,6 +3716,7 @@ procfs_doapm(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     int ac = (info.ac_online == 1) ? 0x01 : (info.ac_online == 0) ? 0x00 : 0xff;
     int pct = info.percentage, tmin = info.time_minutes;
     int bstatus, bflag;
+
     if (!info.battery_present) {
         bstatus = 0xff; bflag = 0x80;               /* no battery */
         pct = -1; tmin = -1;
@@ -3379,12 +3729,14 @@ procfs_doapm(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
     } else {
         bstatus = 0x02; bflag = 0x04;               /* critical */
     }
+
     const char *units = (tmin >= 0) ? "min" : "?";
 
     char buf[128];
     int len = snprintf(buf, sizeof(buf),
         "1.16 1.2 0x02 0x%02x 0x%02x 0x%02x %d%% %d %s\n",
         ac, bstatus, bflag, pct, tmin, units);
+
     return procfs_copy_data(buf, len, uio);
 }
 
@@ -3399,9 +3751,12 @@ procfs_doapm(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_donetdev(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    ifnet_t  *iflist = NULL;
-    uint32_t  count  = 0;
-    errno_t   kerr   = ifnet_list_get(IFNET_FAMILY_ANY, &iflist, &count);
+    int error = 0;
+
+    ifnet_t *iflist = NULL;
+    uint32_t count = 0;
+
+    errno_t kerr   = ifnet_list_get(IFNET_FAMILY_ANY, &iflist, &count);
     if (kerr != 0) {
         return (int)kerr;
     }
@@ -3431,20 +3786,26 @@ procfs_donetdev(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
             "%8llu %7llu %4llu %4llu %4llu %5llu %7llu %10llu\n",
             name,
             /* Receive: bytes packets errs drop fifo frame compressed multicast */
-            (unsigned long long)st.bytes_in,   (unsigned long long)st.packets_in,
-            (unsigned long long)st.errors_in,  (unsigned long long)st.dropped,
-            0ULL, 0ULL, 0ULL,                  (unsigned long long)st.multicasts_in,
+            (unsigned long long)st.bytes_in,
+            (unsigned long long)st.packets_in,
+            (unsigned long long)st.errors_in,
+            (unsigned long long)st.dropped,
+            0ULL, 0ULL, 0ULL,
+            (unsigned long long)st.multicasts_in,
             /* Transmit: bytes packets errs drop fifo colls carrier compressed */
-            (unsigned long long)st.bytes_out,  (unsigned long long)st.packets_out,
-            (unsigned long long)st.errors_out, 0ULL,
-            0ULL, (unsigned long long)st.collisions, 0ULL, 0ULL);
+            (unsigned long long)st.bytes_out,
+            (unsigned long long)st.packets_out,
+            (unsigned long long)st.errors_out,
+            0ULL, 0ULL,
+            (unsigned long long)st.collisions,
+            0ULL, 0ULL);
     }
-
     ifnet_list_free(iflist);
 
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -3459,20 +3820,24 @@ procfs_donetdev(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 int
 procfs_dokcmdline(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    char   raw[1024];
+    int error = 0;
+
+    char raw[1024];
     size_t rawlen = sizeof(raw);
 
     if (sysctlbyname("kern.bootargs", raw, &rawlen, NULL, 0) != 0 || rawlen == 0) {
         uint32_t dlen = 0;
         if (procfs_ctl_request_named(PROCFS_REQ_SYSCTL, 0, 0, "kern.bootargs",
-                raw, sizeof(raw), &dlen) == 0) {
+            raw, sizeof(raw), &dlen) == 0) {
             rawlen = dlen;
         } else {
             rawlen = 0;
         }
     }
+
     if (rawlen > 0 && raw[rawlen - 1] == '\0') {
-        rawlen--;                        /* drop the trailing NUL */
+        /* Drop the trailing NUL */
+        rawlen--;
     }
 
     struct sbuf sb;
@@ -3480,9 +3845,11 @@ procfs_dokcmdline(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
         return ENOMEM;
     }
     sbuf_printf(&sb, "%.*s\n", (int)rawlen, raw);
+
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 
@@ -3499,36 +3866,41 @@ procfs_dokcmdline(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
 int
 procfs_dobootconfig(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 {
-    char   raw[1024];
+    int error = 0;
+    char raw[1024];
     size_t rawlen = sizeof(raw);
 
     if (sysctlbyname("kern.bootargs", raw, &rawlen, NULL, 0) != 0 || rawlen == 0) {
         uint32_t dlen = 0;
         if (procfs_ctl_request_named(PROCFS_REQ_SYSCTL, 0, 0, "kern.bootargs",
-                raw, sizeof(raw), &dlen) == 0) {
+            raw, sizeof(raw), &dlen) == 0) {
             rawlen = dlen;
         } else {
             rawlen = 0;
         }
     }
+
     if (rawlen > 0 && raw[rawlen - 1] == '\0') {
-        rawlen--;                        /* drop the trailing NUL */
+        /* Drop the trailing NUL */
+        rawlen--;
     }
 
     struct sbuf sb;
     if (sbuf_new(&sb, NULL, 256, SBUF_AUTOEXTEND) == NULL) {
         return ENOMEM;
     }
+
     if (rawlen > 0) {
         /* Boot config (the kernel command line), then the bootloader-parameters
          * note - on macOS both are the boot loader's boot-args. */
         sbuf_printf(&sb, "%.*s\n", (int)rawlen, raw);
-        sbuf_printf(&sb, "# Parameters from bootloader:\n# %.*s\n",
-            (int)rawlen, raw);
+        sbuf_printf(&sb, "# Parameters from bootloader:\n# %.*s\n", (int)rawlen, raw);
     }
+
     sbuf_finish(&sb);
-    int error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
+    error = procfs_copy_data(sbuf_data(&sb), sbuf_len(&sb), uio);
     sbuf_delete(&sb);
+
     return error;
 }
 

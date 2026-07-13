@@ -1,5 +1,10 @@
+/*
+ * Copyright (c) 2026 Sunneva N. Mariu
+ *
+ * procfs_node.c
+ *
+ */
 /*	$NetBSD: procfs_note.c,v 1.15 2006/11/16 01:33:38 christos Exp $	*/
-
 /*
  * Copyright (c) 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -33,7 +38,6 @@
  *
  *	@(#)procfs_note.c	8.2 (Berkeley) 1/21/94
  */
-
 /*
  * Copyright (c) 1993 Jan-Simon Pendry
  *
@@ -69,9 +73,6 @@
  * SUCH DAMAGE.
  *
  *	@(#)procfs_note.c	8.2 (Berkeley) 1/21/94
- */
-/*
- * Copyright (c) 2026 Sunneva N. Mariu
  */
 #include <sys/errno.h>
 #include <sys/types.h>

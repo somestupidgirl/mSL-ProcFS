@@ -16,6 +16,7 @@
  * declared in Info.plist.
  */
 #include <IOKit/IOService.h>
+
 #include <libkern/c++/OSObject.h>
 #include <libkern/c++/OSString.h>
 #include <libkern/c++/OSNumber.h>
@@ -23,6 +24,7 @@
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSIterator.h>
 #include <libkern/libkern.h>
+
 #include <sys/errno.h>
 
 #include <fs/procfs/procfs_iokit.h>
@@ -101,15 +103,19 @@ static uint64_t
 procfs_stat_u64(OSDictionary *stats, const char *key)
 {
     OSNumber *n = OSDynamicCast(OSNumber, stats->getObject(key));
+
     return n != nullptr ? n->unsigned64BitValue() : 0;
 }
 
 extern "C" int
 procfs_iokit_get_diskstats(struct procfs_diskstat *out, int max, int *count)
 {
+    int n = 0;
+
     if (out == nullptr || count == nullptr || max <= 0) {
         return EINVAL;
     }
+
     *count = 0;
 
     OSDictionary *match = IOService::serviceMatching(PROCFS_IOMEDIA_CLASS);
@@ -122,7 +128,6 @@ procfs_iokit_get_diskstats(struct procfs_diskstat *out, int max, int *count)
         return EIO;
     }
 
-    int n = 0;
     OSObject *obj;
     while (n < max && (obj = it->getNextObject()) != nullptr) {
         IOService *media = OSDynamicCast(IOService, obj);
@@ -135,6 +140,7 @@ procfs_iokit_get_diskstats(struct procfs_diskstat *out, int max, int *count)
         if (whole == nullptr || !whole->isTrue()) {
             continue;
         }
+
         OSString *name = OSDynamicCast(OSString, media->getProperty(PROCFS_KEY_BSD_NAME));
         if (name == nullptr) {
             continue;
@@ -146,8 +152,10 @@ procfs_iokit_get_diskstats(struct procfs_diskstat *out, int max, int *count)
         OSDictionary *stats = (drv != nullptr)
             ? OSDynamicCast(OSDictionary, drv->getProperty(PROCFS_KEY_STATISTICS))
             : nullptr;
+
         if (stats == nullptr) {
-            continue;                       /* no stats (e.g. synthesized media) */
+            /* no stats (e.g. synthesized media) */
+            continue;
         }
 
         OSNumber *major = OSDynamicCast(OSNumber, media->getProperty(PROCFS_KEY_BSD_MAJOR));
@@ -168,5 +176,6 @@ procfs_iokit_get_diskstats(struct procfs_diskstat *out, int max, int *count)
     it->release();
 
     *count = n;
+
     return 0;
 }

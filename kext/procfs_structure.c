@@ -41,218 +41,315 @@ STATIC pfssnode_t *add_file(pfssnode_t *parent, const char *name, pfsbaseid_t no
 
 STATIC void release_node(pfssnode_t *node);
 
-// Next node id. No need to lock this value because access
-// is guaranteed to be single-threaded. Start at 2 because the
-// root node is always 1.
+/*
+ * Next node id. No need to lock this value because access
+ * is guaranteed to be single-threaded. Start at 2 because the
+ * root node is always 1.
+ */
 STATIC uint16_t next_node_id = PROCFS_ROOT_NODE_BASE_ID + 1;
 
-// The root of the file system structure.
+/*
+ * The root of the file system structure.
+ */
 static pfssnode_t *root_node;
 
 #pragma mark - 
 #pragma mark Externally Visible Functions
 
-// Gets the root node of the file system structure.
+/*
+ * Gets the root node of the file system structure.
+ */
 pfssnode_t *
 procfs_structure_root_node(void)
 {
     return root_node;
 }
 
-// Initializes the procfs structures. Should only be called
-// while mounting a file system. Given that restriction, we do
-// not need to lock access to the structure data when deciding
-// whether to creating it.
-//
-// NOTE: it is essential that the entries that expand to dynamic
-// content be the last in their parent's child list. This makes
-// the code that implements the readdir operation as simple as
-// possible.
+/*
+ * Initializes the procfs structures. Should only be called
+ * while mounting a file system. Given that restriction, we do
+ * not need to lock access to the structure data when deciding
+ * whether to creating it.
+ *
+ * NOTE: it is essential that the entries that expand to dynamic
+ * content be the last in their parent's child list. This makes
+ * the code that implements the readdir operation as simple as
+ * possible.
+ */
 void
 procfs_structure_init(void)
 {
-    // Only do this on first mount.
+    /*
+     * Only do this on first mount.
+     */
     if (root_node == NULL) {
-        // The root directory of the file system. This happens to be the only node
-        // that has the same node id on all instance of this file system.
+        /*
+         * The root directory of the file system. This happens to be the only node
+         * that has the same node id on all instance of this file system.
+         */
         root_node = add_directory(NULL, "/", PFSroot, PROCFS_ROOT_NODE_BASE_ID, 0, 0, NULL, NULL);
 
-        // A directory that contains all of the visible processes, listed by command name.
-        // Each entry in this directory is a symbolic link to the process entry in root (e.g. "../123).
+        /*
+         * A directory that contains all of the visible processes, listed by command name.
+         * Each entry in this directory is a symbolic link to the process entry in root (e.g. "../123).
+         */
         pfssnode_t *proc_by_name_dir = add_directory(root_node, "byname",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
 
-        // Linux-compatible /proc/cpuinfo
+        /*
+         * Linux-compatible /proc/cpuinfo
+         */
         pfssnode_t *cpuinfo = add_node(root_node, "cpuinfo",
                         PFScpuinfo, next_node_id++, 0, 0, NULL, procfs_docpuinfo);
 
-        // A link in the root node to the current process entry. This will become a symbolic link.
+        /*
+         * A link in the root node to the current process entry. This will become a symbolic link.
+         */
         pfssnode_t *curproc = add_node(root_node, "curproc",
                         PFScurproc, next_node_id++, 0, 0, NULL, NULL);
 
-        // Linux-compatible /proc/cpuinfo
+        /*
+         * Linux-compatible /proc/cpuinfo
+         */
         pfssnode_t *loadavg = add_node(root_node, "loadavg",
                         PFSloadavg, next_node_id++, 0, 0, NULL, procfs_doloadavg);
 
-        // Linux-style /proc/kcore (ELF64 core header only; no kernel memory).
+        /*
+         * Linux-style /proc/kcore (ELF64 core header only; no kernel memory).
+         */
         pfssnode_t *kcore = add_node(root_node, "kcore",
                         PFSkcore, next_node_id++, 0, 0, NULL, procfs_dokcore);
 
-        // Linux-style /proc/kmsg (kernel message buffer snapshot via procfsd).
+        /*
+         * Linux-style /proc/kmsg (kernel message buffer snapshot via procfsd).
+         */
         pfssnode_t *kmsg = add_node(root_node, "kmsg",
                         PFSkmsg, next_node_id++, 0, 0, NULL, procfs_dokmsg);
 
-        // Linux-style /proc/last_kmsg (newest kernel panic report via procfsd).
+        /*
+         * Linux-style /proc/last_kmsg (newest kernel panic report via procfsd).
+         */
         pfssnode_t *last_kmsg = add_node(root_node, "last_kmsg",
                         PFSlastkmsg, next_node_id++, 0, 0, NULL, procfs_dolast_kmsg);
 
-        // Linux-style /proc/ksyms (kernel symbol table via procfsd; kptr_restrict).
+        /*
+         * Linux-style /proc/ksyms (kernel symbol table via procfsd; kptr_restrict).
+         */
         pfssnode_t *ksyms = add_node(root_node, "ksyms",
                         PFSksyms, next_node_id++, 0, 0, NULL, procfs_doksyms);
 
-        // Modern Linux's /proc/kallsyms: the exported kernel symbols (as /proc/
-        // ksyms) plus the non-exported names recovered from the XNU source.
-        // Reuses the PFSksyms node class; its own handler serves the fuller set.
+        /*
+         * Modern Linux's /proc/kallsyms: the exported kernel symbols (as /proc/
+         * ksyms) plus the non-exported names recovered from the XNU source.
+         * Reuses the PFSksyms node class; its own handler serves the fuller set.
+         */
         pfssnode_t *kallsyms = add_node(root_node, "kallsyms",
                         PFSksyms, next_node_id++, 0, 0, NULL, procfs_dokallsyms);
 
-        // Linux-style /proc/locks (held byte-range file locks, walked per-vnode).
+        /*
+         * Linux-style /proc/locks (held byte-range file locks, walked per-vnode).
+         */
         pfssnode_t *locks = add_node(root_node, "locks",
                         PFSlocks, next_node_id++, 0, 0, NULL, procfs_dolocks);
 
-        // Linux-compatible /proc/meminfo
+        /*
+         * Linux-compatible /proc/meminfo
+         */
         pfssnode_t *meminfo = add_node(root_node, "meminfo",
                         PFSmeminfo, next_node_id++, 0, 0, NULL, procfs_domeminfo);
 
-        // Linux-style /proc/misc (misc char-device registry; none on macOS).
+        /*
+         * Linux-style /proc/misc (misc char-device registry; none on macOS).
+         */
         pfssnode_t *misc = add_node(root_node, "misc",
                         PFSmisc, next_node_id++, 0, 0, NULL, procfs_domisc);
 
-        // Linux-compatible /proc/mtab
+        /*
+         * Linux-compatible /proc/mtab
+         */
         pfssnode_t *mtab = add_node(root_node, "mtab",
                         PFSmtab, next_node_id++, 0, 0, NULL, procfs_domtab);
 
-        // Linux-compatible /proc/mounts (same mounted-filesystem table as mtab).
+        /*
+         * Linux-compatible /proc/mounts (same mounted-filesystem table as mtab).
+         */
         pfssnode_t *mounts = add_node(root_node, "mounts",
                         PFSmtab, next_node_id++, 0, 0, NULL, procfs_domtab);
 
-        // Linux-compatible /proc/stat
+        /*
+         * Linux-compatible /proc/stat
+         */
         pfssnode_t *stat = add_node(root_node, "stat",
                         PFSstat, next_node_id++, 0, 0, NULL, procfs_dostat);
 
-        // Linux-compatible /proc/vmstat
+        /*
+         * Linux-compatible /proc/vmstat
+         */
         pfssnode_t *vmstat = add_node(root_node, "vmstat",
                         PFSvmstat, next_node_id++, 0, 0, NULL, procfs_dovmstat);
 
+        /*
+         * Linux-compatible /proc/partitions
+         */
         pfssnode_t *partitions = add_node(root_node, "partitions",
                         PFSpartitions, next_node_id++, 0, 0, NULL, procfs_dopartitions);
 
-        // Linux-compatible /proc/version
+        /*
+         * Linux-compatible /proc/version
+         */
         pfssnode_t *version = add_node(root_node, "version",
                         PFSversion, next_node_id++, 0, 0, NULL, procfs_doversion);
 
-        // Linux-compatible /proc/uptime
+        /*
+         * Linux-compatible /proc/uptime
+         */
         pfssnode_t *uptime = add_node(root_node, "uptime",
                         PFSuptime, next_node_id++, 0, 0, NULL, procfs_douptime);
 
-        // Linux-compatible /proc/swaps
+        /*
+         * Linux-compatible /proc/swaps
+         */
         pfssnode_t *swaps = add_node(root_node, "swaps",
                         PFSswaps, next_node_id++, 0, 0, NULL, procfs_doswaps);
 
-        // Linux-compatible /proc/filesystems
+        /*
+         * Linux-compatible /proc/filesystems
+         */
         pfssnode_t *filesystems = add_node(root_node, "filesystems",
                         PFSfilesystems, next_node_id++, 0, 0, NULL, procfs_dofilesystems);
 
-        // Linux-compatible /proc/sys - a dynamic mirror of the sysctl tree. This
-        // single PFSsysctl node backs /proc/sys and every descendant; the
-        // specific sysctl oid is carried per-vnode in the node id's objectid
-        // (0 == the tree root). No static children or read fn (see procfs_sysctl.c).
+        /*
+         * Linux-compatible /proc/sys - a dynamic mirror of the sysctl tree. This
+         * single PFSsysctl node backs /proc/sys and every descendant; the
+         * specific sysctl oid is carried per-vnode in the node id's objectid
+         * (0 == the tree root). No static children or read fn (see procfs_sysctl.c).
+         */
         pfssnode_t *sysctl = add_node(root_node, "sys",
                         PFSsysctl, next_node_id++, 0, 0, NULL, NULL);
 
-        // macOS-style loaded kernel-extension listing (data from procfsd).
+        /*
+         * macOS-style loaded kernel-extension listing (data from procfsd).
+         */
         pfssnode_t *extensions = add_node(root_node, "extensions",
                         PFSextensions, next_node_id++, 0, 0, NULL, procfs_doextensions);
 
-        // Linux-style loaded kernel-module listing (same data, /proc/modules format).
+        /*
+         * Linux-style loaded kernel-module listing (same data, /proc/modules format).
+         */
         pfssnode_t *modules = add_node(root_node, "modules",
                         PFSmodules, next_node_id++, 0, 0, NULL, procfs_domodules);
 
-        // Linux-style block-device I/O statistics (IOKit IOBlockStorageDriver).
+        /*
+         * Linux-style block-device I/O statistics (IOKit IOBlockStorageDriver).
+         */
         pfssnode_t *diskstats = add_node(root_node, "diskstats",
                         PFSdiskstats, next_node_id++, 0, 0, NULL, procfs_dodiskstats);
 
-        // Linux-style char/block device major listing (derived from /dev by procfsd).
+        /*
+         * Linux-style char/block device major listing (derived from /dev by procfsd).
+         */
         pfssnode_t *devices = add_node(root_node, "devices",
                         PFSdevices, next_node_id++, 0, 0, NULL, procfs_dodevices);
 
-        // Linux-style /proc/allocinfo (per-zone allocation stats via mach_zone_info in procfsd).
+        /*
+         * Linux-style /proc/allocinfo (per-zone allocation stats via mach_zone_info in procfsd).
+         */
         pfssnode_t *allocinfo = add_node(root_node, "allocinfo",
                         PFSallocinfo, next_node_id++, 0, 0, NULL, procfs_doallocinfo);
 
-        // Linux-style /proc/vmallocinfo - the kernel's non-zone VM allocations by
-        // tagged site (mach_memory_info via procfsd).
+        /*
+         * Linux-style /proc/vmallocinfo - the kernel's non-zone VM allocations by
+         * tagged site (mach_memory_info via procfsd).
+         */
         pfssnode_t *vmallocinfo = add_node(root_node, "vmallocinfo",
                         PFSvmallocinfo, next_node_id++, 0, 0, NULL, procfs_dovmallocinfo);
 
-        // Linux-style /proc/apm (power/battery state via IOKit power sources in procfsd).
+        /*
+         * Linux-style /proc/apm (power/battery state via IOKit power sources in procfsd).
+         */
         pfssnode_t *apm = add_node(root_node, "apm",
                         PFSapm, next_node_id++, 0, 0, NULL, procfs_doapm);
 
-        // Linux-style /proc/bootconfig (macOS boot-args as the boot config + bootloader note).
+        /*
+         * Linux-style /proc/bootconfig (macOS boot-args as the boot config + bootloader note).
+         */
         pfssnode_t *bootconfig = add_node(root_node, "bootconfig",
                         PFSbootconfig, next_node_id++, 0, 0, NULL, procfs_dobootconfig);
 
-        // Linux-style /proc/buddyinfo (free pages decomposed into buddy orders).
+        /*
+         * Linux-style /proc/buddyinfo (free pages decomposed into buddy orders).
+         */
         pfssnode_t *buddyinfo = add_node(root_node, "buddyinfo",
                         PFSbuddyinfo, next_node_id++, 0, 0, NULL, procfs_dobuddyinfo);
 
-        // Linux-style /proc/pagetypeinfo (buddy free pages/blocks by migrate type).
+        /*
+         * Linux-style /proc/pagetypeinfo (buddy free pages/blocks by migrate type).
+         */
         pfssnode_t *pagetypeinfo = add_node(root_node, "pagetypeinfo",
                         PFSpagetypeinfo, next_node_id++, 0, 0, NULL, procfs_dopagetypeinfo);
 
-        // Linux-style /proc/slabinfo (zone allocator caches via mach_zone_info in procfsd).
+        /*
+         * Linux-style /proc/slabinfo (zone allocator caches via mach_zone_info in procfsd).
+         */
         pfssnode_t *slabinfo = add_node(root_node, "slabinfo",
                         PFSslabinfo, next_node_id++, 0, 0, NULL, procfs_doslabinfo);
 
-        // Linux-style /proc/dma (ISA DMA channels in use; x86 cascade only, else empty).
+        /*
+         * Linux-style /proc/dma (ISA DMA channels in use; x86 cascade only, else empty).
+         */
         pfssnode_t *dma = add_node(root_node, "dma",
                         PFSdma, next_node_id++, 0, 0, NULL, procfs_dodma);
 
-        // Linux-style /proc/ioports (x86 I/O port regions; legacy PC ports on x86,
-        // empty on Apple Silicon which has no port-mapped I/O).
+        /*
+         * Linux-style /proc/ioports (x86 I/O port regions; legacy PC ports on x86,
+         * empty on Apple Silicon which has no port-mapped I/O).
+         */
         pfssnode_t *ioports = add_node(root_node, "ioports",
                         PFSioports, next_node_id++, 0, 0, NULL, procfs_doioports);
 
-        // Linux-style /proc/iomem (physical memory map; System RAM + Reserved from
-        // hw.memsize / hw.memsize_usable, as macOS publishes no full physical map).
+        /*
+         * Linux-style /proc/iomem (physical memory map; System RAM + Reserved from
+         * hw.memsize / hw.memsize_usable, as macOS publishes no full physical map).
+         */
         pfssnode_t *iomem = add_node(root_node, "iomem",
                         PFSiomem, next_node_id++, 0, 0, NULL, procfs_doiomem);
 
-        // Linux-style /proc/softirqs (per-CPU softirq counts; macOS has no softirqs,
-        // so the standard type list is reported with all-zero counts).
+        /*
+         * Linux-style /proc/softirqs (per-CPU softirq counts; macOS has no softirqs,
+         * so the standard type list is reported with all-zero counts).
+         */
         pfssnode_t *softirqs = add_node(root_node, "softirqs",
                         PFSsoftirqs, next_node_id++, 0, 0, NULL, procfs_dosoftirqs);
 
-        // Linux-style /proc/rtc (real-time-clock state; UTC calendar time + status fields).
+        /*
+         * Linux-style /proc/rtc (real-time-clock state; UTC calendar time + status fields).
+         */
         pfssnode_t *rtc = add_node(root_node, "rtc",
                         PFSrtc, next_node_id++, 0, 0, NULL, procfs_dortc);
 
-        // Linux-style /proc/execdomains (registered execution personalities).
+        /*
+         * Linux-style /proc/execdomains (registered execution personalities).
+         */
         pfssnode_t *execdomains = add_node(root_node, "execdomains",
                         PFSexecdomains, next_node_id++, 0, 0, NULL, procfs_doexecdomains);
 
-        // Linux-style /proc/fb (framebuffer devices via IOKit, from procfsd).
+        /*
+         * Linux-style /proc/fb (framebuffer devices via IOKit, from procfsd).
+         */
         pfssnode_t *fb = add_node(root_node, "fb",
                         PFSfb, next_node_id++, 0, 0, NULL, procfs_dofb);
 
-        // Linux-style /proc/interrupts (IRQ topology via IOKit, from procfsd).
+        /*
+         * Linux-style /proc/interrupts (IRQ topology via IOKit, from procfsd).
+         */
         pfssnode_t *interrupts = add_node(root_node, "interrupts",
                         PFSinterrupts, next_node_id++, 0, 0, NULL, procfs_dointerrupts);
 
-        // Linux-style /proc/irq/ - IRQ-to-CPU affinity. macOS routes interrupts via
-        // the AIC with no user-settable per-IRQ affinity, so only the default masks
-        // (all online CPUs) are exposed; per-IRQ subdirectories are omitted.
+        /*
+         * Linux-style /proc/irq/ - IRQ-to-CPU affinity. macOS routes interrupts via
+         * the AIC with no user-settable per-IRQ affinity, so only the default masks
+         * (all online CPUs) are exposed; per-IRQ subdirectories are omitted.
+         */
         pfssnode_t *irq_dir = add_directory(root_node, "irq",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
         pfssnode_t *irq_aff = add_node(irq_dir, "default_smp_affinity",
@@ -260,8 +357,10 @@ procfs_structure_init(void)
         pfssnode_t *irq_afl = add_node(irq_dir, "default_smp_affinity_list",
                         PFSirq, next_node_id++, 0, 0, NULL, procfs_doirq_affinity_list);
 
-        // Linux-style /proc/tty/ - tty driver table (from /dev via procfsd) and the
-        // line disciplines.
+        /*
+         * Linux-style /proc/tty/ - tty driver table (from /dev via procfsd) and the
+         * line disciplines.
+         */
         pfssnode_t *tty_dir = add_directory(root_node, "tty",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
         pfssnode_t *tty_drv = add_node(tty_dir, "drivers",
@@ -269,47 +368,57 @@ procfs_structure_init(void)
         pfssnode_t *tty_ld = add_node(tty_dir, "ldiscs",
                         PFStty, next_node_id++, 0, 0, NULL, procfs_dotty_ldiscs);
 
-        // Linux-style /proc/ide/ - the IDE (ATA/PATA) subsystem. macOS has no IDE
-        // subsystem, so the directory is present for compatibility with an empty
-        // drivers file and no drive entries (as on a Linux host with no IDE
-        // hardware).
+        /*
+         * Linux-style /proc/ide/ - the IDE (ATA/PATA) subsystem. macOS has no IDE
+         * subsystem, so the directory is present for compatibility with an empty
+         * drivers file and no drive entries (as on a Linux host with no IDE
+         * hardware).
+         */
         pfssnode_t *ide_dir = add_directory(root_node, "ide",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
         pfssnode_t *ide_drv = add_node(ide_dir, "drivers",
                         PFSide, next_node_id++, 0, 0, NULL, procfs_doide_drivers);
 
-        // Linux-style /proc/video/ - the legacy bttv (Bt848/878 capture-card)
-        // proc tree, home of /proc/video/bttv/<cardN>. macOS has no bttv /
-        // Video4Linux subsystem (video capture is CoreMediaIO/AVFoundation, not
-        // V4L), so /proc/video/bttv is an empty directory with no per-card
-        // entries, as on a Linux host with the bttv module present but no Bt8x8
-        // hardware.
+        /*
+         * Linux-style /proc/video/ - the legacy bttv (Bt848/878 capture-card)
+         * proc tree, home of /proc/video/bttv/<cardN>. macOS has no bttv /
+         * Video4Linux subsystem (video capture is CoreMediaIO/AVFoundation, not
+         * V4L), so /proc/video/bttv is an empty directory with no per-card
+         * entries, as on a Linux host with the bttv module present but no Bt8x8
+         * hardware.
+         */
         pfssnode_t *video_dir = add_directory(root_node, "video",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
         pfssnode_t *bttv_dir = add_directory(video_dir, "bttv",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
 
-        // Linux-style /proc/isapnp - the ISA Plug-and-Play device listing. The
-        // ISA bus is long obsolete and macOS has no ISA/ISA-PnP support at all, so
-        // (like a modern Linux host with no ISA PnP cards) the file is empty.
+        /*
+         * Linux-style /proc/isapnp - the ISA Plug-and-Play device listing. The
+         * ISA bus is long obsolete and macOS has no ISA/ISA-PnP support at all, so
+         * (like a modern Linux host with no ISA PnP cards) the file is empty.
+         */
         pfssnode_t *isapnp = add_node(root_node, "isapnp",
                         PFSisapnp, next_node_id++, 0, 0, NULL, procfs_doisapnp);
 
-        // Linux-style /proc/scsi/ - SCSI subsystem info. /proc/scsi/scsi is the
-        // attached-device list; macOS SCSI-protocol peripherals (USB/external
-        // storage via the SCSI Architecture Model) come from IOKit through the
-        // procfsd daemon. Empty "Attached devices:" listing when none present.
+        /*
+         * Linux-style /proc/scsi/ - SCSI subsystem info. /proc/scsi/scsi is the
+         * attached-device list; macOS SCSI-protocol peripherals (USB/external
+         * storage via the SCSI Architecture Model) come from IOKit through the
+         * procfsd daemon. Empty "Attached devices:" listing when none present.
+         */
         pfssnode_t *scsi_dir = add_directory(root_node, "scsi",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
         pfssnode_t *scsi_scsi = add_node(scsi_dir, "scsi",
                         PFSscsi, next_node_id++, 0, 0, NULL, procfs_doscsi);
 
-        // Linux-style /proc/sysvipc/ - the System V IPC object tables (msg queues,
-        // semaphore sets, shared-memory segments). macOS has SysV IPC but no
-        // userspace way to enumerate the objects (no SHM_STAT/MSG_STAT/SEM_STAT
-        // index extensions, no /dev/kmem under SIP), so each file emits the Linux
-        // header line with an empty body - exactly as on a Linux host with no IPC
-        // objects of that type.
+        /*
+         * Linux-style /proc/sysvipc/ - the System V IPC object tables (msg queues,
+         * semaphore sets, shared-memory segments). macOS has SysV IPC but no
+         * userspace way to enumerate the objects (no SHM_STAT/MSG_STAT/SEM_STAT
+         * index extensions, no /dev/kmem under SIP), so each file emits the Linux
+         * header line with an empty body - exactly as on a Linux host with no IPC
+         * objects of that type.
+         */
         pfssnode_t *sysvipc_dir = add_directory(root_node, "sysvipc",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
         pfssnode_t *sysvipc_msg = add_node(sysvipc_dir, "msg",
@@ -319,8 +428,10 @@ procfs_structure_init(void)
         pfssnode_t *sysvipc_shm = add_node(sysvipc_dir, "shm",
                         PFSsysvipc, next_node_id++, 0, 0, NULL, procfs_dosysvipc_shm);
 
-        // Linux-style /proc/fs/ - filesystem parameters. Currently /proc/fs/nfs/exports,
-        // the NFS export table (macOS /etc/exports, read by procfsd).
+        /*
+         * Linux-style /proc/fs/ - filesystem parameters. Currently /proc/fs/nfs/exports,
+         * the NFS export table (macOS /etc/exports, read by procfsd).
+         */
         pfssnode_t *fs_dir = add_directory(root_node, "fs",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
         pfssnode_t *nfs_dir = add_directory(fs_dir, "nfs",
@@ -328,15 +439,19 @@ procfs_structure_init(void)
         pfssnode_t *nfs_exports = add_node(nfs_dir, "exports",
                         PFSnfsexports, next_node_id++, 0, 0, NULL, procfs_donfsexports);
 
-        // Linux-style /proc/driver/ - driver-specific files grouped here. Currently
-        // just /proc/driver/rtc, the same RTC state as /proc/rtc (reuses PFSrtc).
+        /*
+         * Linux-style /proc/driver/ - driver-specific files grouped here. Currently
+         * just /proc/driver/rtc, the same RTC state as /proc/rtc (reuses PFSrtc).
+         */
         pfssnode_t *driver_dir = add_directory(root_node, "driver",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
         pfssnode_t *driver_rtc = add_node(driver_dir, "rtc",
                         PFSrtc, next_node_id++, 0, 0, NULL, procfs_dortc);
 
-        // Linux-style /proc/bus/ - bus-specific info. macOS provides PCI via IOKit:
-        // /proc/bus/pci/devices (the classic PCI device table).
+        /*
+         * Linux-style /proc/bus/ - bus-specific info. macOS provides PCI via IOKit:
+         * /proc/bus/pci/devices (the classic PCI device table).
+         */
         pfssnode_t *bus_dir = add_directory(root_node, "bus",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
         pfssnode_t *pci_dir = add_directory(bus_dir, "pci",
@@ -344,22 +459,30 @@ procfs_structure_init(void)
         pfssnode_t *pci_devices = add_node(pci_dir, "devices",
                         PFSpcidevices, next_node_id++, 0, 0, NULL, procfs_dopcidevices);
 
-        // Linux-style kernel boot command line (macOS boot-args / kern.bootargs).
+        /*
+         * Linux-style kernel boot command line (macOS boot-args / kern.bootargs).
+         */
         pfssnode_t *kcmdline = add_node(root_node, "cmdline",
                         PFSkcmdline, next_node_id++, 0, 0, NULL, procfs_dokcmdline);
 
-        // Linux-compatible /proc/self (symlink to the calling process; resolves
-        // exactly like "curproc", the BSD name).
+        /*
+         * Linux-compatible /proc/self (symlink to the calling process; resolves
+         * exactly like "curproc", the BSD name).
+         */
         pfssnode_t *self = add_node(root_node, "self",
                         PFScurproc, next_node_id++, 0, 0, NULL, NULL);
 
-        // Linux-style /proc/net/ subdirectory and its network-interface stats file.
+        /*
+         * Linux-style /proc/net/ subdirectory and its network-interface stats file.
+         */
         pfssnode_t *net_dir = add_directory(root_node, "net",
                         PFSdir, next_node_id++, 0, 0, NULL, NULL);
         pfssnode_t *netdev = add_node(net_dir, "dev",
                         PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetdev);
-        // TCP/UDP connection tables (via procfsd's net.inet.*.pcblist_n). All
-        // reuse the PFSnetdev node class; each has its own read handler.
+        /*
+         * TCP/UDP connection tables (via procfsd's net.inet.*.pcblist_n). All
+         * reuse the PFSnetdev node class; each has its own read handler.
+         */
         pfssnode_t *nettcp = add_node(net_dir, "tcp",
                         PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donettcp);
         pfssnode_t *nettcp6 = add_node(net_dir, "tcp6",
@@ -379,52 +502,72 @@ procfs_structure_init(void)
         pfssnode_t *netsnmp = add_node(net_dir, "snmp",
                         PFSnetdev, next_node_id++, 0, 0, NULL, procfs_donetsnmp);
 
-        // A pseudo-entry below "byname" that is replaced by nodes for all of the visible processes.
-        // NOTE: this must be the last child entry for the "byname" node.
+        /*
+         * A pseudo-entry below "byname" that is replaced by nodes for all of the visible processes.
+         * NOTE: this must be the last child entry for the "byname" node.
+         */
         pfssnode_t *proc_name_dir = add_directory(proc_by_name_dir, "__Process_N__",
                         PFSprocnamedir, next_node_id++, PSN_FLAG_PROCESS, 0, procfs_process_node_size, NULL);
 
-        // A pseudo-entry below "/" that is replaced by nodes for all of the visible processes.
-        // NOTE: this must be the last child entry for the root node.
+        /*
+         * A pseudo-entry below "/" that is replaced by nodes for all of the visible processes.
+         * NOTE: this must be the last child entry for the root node.
+         */
         pfssnode_t *one_proc_dir = add_directory(root_node, "__Process__",
                        PFSproc, next_node_id++, PSN_FLAG_PROCESS, 0, procfs_process_node_size, NULL);
 
-        // A directory below the node for a process to hold all the file descriptors for that process.
+        /*
+         * A directory below the node for a process to hold all the file descriptors for that process.
+         */
         pfssnode_t *fd_dir = add_directory(one_proc_dir, "fd",
                        PFSdir, next_node_id++, PSN_FLAG_PROCESS, 0, NULL, NULL);
 
-        // A pseudo-entry below the "fd" node that is replaced by nodes for all the open files of
-        // the current process.
-        // NOTE: this must be the last child entry for the "fd" node.
+        /*
+         * A pseudo-entry below the "fd" node that is replaced by nodes for all the open files of
+         * the current process.
+         * NOTE: this must be the last child entry for the "fd" node.
+         */
         pfssnode_t *one_fd_dir = add_directory(fd_dir, "__File__",
                       PFSfd, next_node_id++, PSN_FLAG_PROCESS, 0, procfs_fd_node_size, NULL);
 
-        // A directory below the node for a process to hold all the threads for that process.
+        /*
+         * A directory below the node for a process to hold all the threads for that process.
+         */
         pfssnode_t *threads_dir = add_directory(one_proc_dir, "threads",
                        PFSdir, next_node_id++, PSN_FLAG_PROCESS, 0, NULL, NULL);
 
-        // A pseudo-entry below the "threads" node that is replaced by nodes for all the threads of
-        // the current process.
-        // NOTE: this must be the last child entry for the threads node.
+        /*
+         * A pseudo-entry below the "threads" node that is replaced by nodes for all the threads of
+         * the current process.
+         * NOTE: this must be the last child entry for the threads node.
+         */
         pfssnode_t *one_thread_dir = add_directory(threads_dir, "__Thread__",
                       PFSthread, next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, 0, procfs_thread_node_size, NULL);
 
-        // The Linux name for the same per-thread view: /proc/<pid>/task/<tid>.
-        // It mirrors "threads" (a separate structure node, so thread fileids do
-        // not collide between the two).
+        /*
+         * The Linux name for the same per-thread view: /proc/<pid>/task/<tid>.
+         * It mirrors "threads" (a separate structure node, so thread fileids do
+         * not collide between the two).
+         */
         pfssnode_t *task_dir = add_directory(one_proc_dir, "task",
                        PFSdir, next_node_id++, PSN_FLAG_PROCESS, 0, NULL, NULL);
 
-        // A pseudo-entry below "task" that is replaced by nodes for all the
-        // threads of the current process.
-        // NOTE: this must be the last child entry for the task node.
+        /*
+         * A pseudo-entry below "task" that is replaced by nodes for all the
+         * threads of the current process.
+         * NOTE: this must be the last child entry for the task node.
+         */
         pfssnode_t *one_task_dir = add_directory(task_dir, "__Thread__",
                       PFSthread, next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, 0, procfs_thread_node_size, NULL);
 
-        // --- Per-proccess sub-directories and files.
+        /*
+         * --- Per-proccess sub-directories and files.
+         */
 
-        // Files that returns the process's pid, parent pid, process group id,
-        // session id and controlling terminal name.
+        /*
+         * Files that returns the process's pid, parent pid, process group id,
+         * session id and controlling terminal name.
+         */
         add_file(one_proc_dir, "cmdline", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doprocargs);
         add_file(one_proc_dir, "pid", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dopid);
         add_file(one_proc_dir, "ppid", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doppid);
@@ -445,13 +588,17 @@ procfs_structure_init(void)
         add_file(one_proc_dir, "numa_maps", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_donuma_maps);
         add_file(one_proc_dir, "pagemap", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dopagemap);
 
-        // Linux-compatible per-process symlinks: exe/cwd/root (target resolved
-        // by node name in vnop_readlink; read fn is NULL).
+        /*
+         * Linux-compatible per-process symlinks: exe/cwd/root (target resolved
+         * by node name in vnop_readlink; read fn is NULL).
+         */
         add_node(one_proc_dir, "exe",  PFSproclink, next_node_id++, PSN_FLAG_PROCESS, 0, NULL, NULL);
         add_node(one_proc_dir, "cwd",  PFSproclink, next_node_id++, PSN_FLAG_PROCESS, 0, NULL, NULL);
         add_node(one_proc_dir, "root", PFSproclink, next_node_id++, PSN_FLAG_PROCESS, 0, NULL, NULL);
 
-        // Linux-compatible per-process text files.
+        /*
+         * Linux-compatible per-process text files.
+         */
         add_file(one_proc_dir, "comm", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_docomm);
         add_file(one_proc_dir, "cpu", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_docpu);
         add_file(one_proc_dir, "stat", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doprocstat);
@@ -459,43 +606,57 @@ procfs_structure_init(void)
         add_file(one_proc_dir, "io", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doio);
         add_file(one_proc_dir, "environ", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doenviron);
 
-        // Native Mach register dumps for the process's representative thread.
+        /*
+         * Native Mach register dumps for the process's representative thread.
+         */
         add_file(one_proc_dir, "regs", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doregs);
         add_file(one_proc_dir, "fpregs", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dofpregs);
 
-        // Auxiliary vector (XNU's apple[] array - the macOS auxv equivalent).
+        /*
+         * Auxiliary vector (XNU's apple[] array - the macOS auxv equivalent).
+         */
         add_file(one_proc_dir, "auxv", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_doauxv);
         add_file(one_proc_dir, "wchan", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dowchan);
         add_file(one_proc_dir, "stack", next_node_id++, PSN_FLAG_PROCESS, 0, NULL, procfs_dostack);
 
-        // --- Per thread files.
+        /*
+         * --- Per thread files.
+         */
         add_file(one_thread_dir, "info", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, sizeof(struct proc_threadinfo), NULL, procfs_dothreadinfo);
         add_file(one_task_dir, "info", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, sizeof(struct proc_threadinfo), NULL, procfs_dothreadinfo);
 
-        // Linux-compatible per-thread files under /proc/<pid>/task/<tid>/.
-        // maps reuses the process map walk (threads share the address space).
+        /*
+         * Linux-compatible per-thread files under /proc/<pid>/task/<tid>/.
+         * maps reuses the process map walk (threads share the address space).
+         */
         add_file(one_task_dir, "comm", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, 0, NULL, procfs_dothreadcomm);
         add_file(one_task_dir, "stat", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, 0, NULL, procfs_dothreadstat);
         add_file(one_task_dir, "status", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, 0, NULL, procfs_dothreadstatus);
         add_file(one_task_dir, "sched", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, 0, NULL, procfs_dothreadsched);
         add_file(one_task_dir, "maps", next_node_id++, PSN_FLAG_PROCESS | PSN_FLAG_THREAD, 0, NULL, procfs_domaps);
 
-        // --- Per file descriptor files.
+        /*
+         * --- Per file descriptor files.
+         */
         add_file(one_fd_dir, "details", next_node_id++, PSN_FLAG_PROCESS, sizeof(struct vnode_fdinfowithpath), NULL, procfs_dofd);
         add_file(one_fd_dir, "socket", next_node_id++, PSN_FLAG_PROCESS, sizeof(struct socket_fdinfo), NULL, procfs_dosocket);
     }
 }
 
-// Frees the memory for the procfs structures. Should only be called
-// while unmounting the last instance of the file system. Given that
-// restriction, we do not need to lock access to the structure data
-// when freeing it.
+/*
+ * Frees the memory for the procfs structures. Should only be called
+ * while unmounting the last instance of the file system. Given that
+ * restriction, we do not need to lock access to the structure data
+ * when freeing it.
+ */
 void
 procfs_structure_free()
 {
     if (root_node != NULL) {
-        // Release the root node. This recursively releases
-        // all descendent nodes.
+        /*
+         * Release the root node. This recursively releases
+         * all descendent nodes.
+         */
         release_node(root_node);
         root_node = NULL;
     }
@@ -530,10 +691,14 @@ add_node(pfssnode_t *parent, const char *name, pfstype type, pfsbaseid_t node_id
 
     TAILQ_INIT(&node->psn_children);
     if (parent != NULL) {
-        // Add this node to the tail of its parent's child list.
+        /*
+         * Add this node to the tail of its parent's child list.
+         */
         TAILQ_INSERT_TAIL(&parent->psn_children, node, psn_next);
 
-        // Propagate the PSN_FLAG_PROCESS and PSN_FLAG_THREAD flags downward.
+        /*
+         * Propagate the PSN_FLAG_PROCESS and PSN_FLAG_THREAD flags downward.
+         */
         node->psn_flags |= (parent->psn_flags & (PSN_FLAG_PROCESS | PSN_FLAG_THREAD));
     }
     return node;
@@ -548,12 +713,16 @@ STATIC pfssnode_t *
 add_directory(pfssnode_t *parent, const char *name, pfstype type, pfsbaseid_t node_id, uint16_t flags, boolean_t raw,
                 procfs_node_size_fn node_size_fn, procfs_read_data_fn node_read_data_fn)
 {
-    // Add the directory node.
+    /*
+     * Add the directory node.
+     */
     pfssnode_t *snode = add_node(parent, name, type, node_id, flags, 0, node_size_fn, node_read_data_fn);
 
-    // Add the "." and ".." directory entries, preserving the flags that indicate whether
-    // the node is process- and/or thread-specific. The "raw" argument is used to stop
-    // this being a recursive process.
+    /*
+     * Add the "." and ".." directory entries, preserving the flags that indicate whether
+     * the node is process- and/or thread-specific. The "raw" argument is used to stop
+     * this being a recursive process.
+     */
     if (!raw) {
         add_directory(snode, ".", PFSdirthis, next_node_id++, flags & (PSN_FLAG_PROCESS | PSN_FLAG_THREAD), 1, NULL, NULL);
         add_directory(snode, "..", PFSdirparent, next_node_id++, flags & (PSN_FLAG_PROCESS | PSN_FLAG_THREAD), 1, NULL, NULL);
@@ -583,12 +752,16 @@ add_file(pfssnode_t *parent, const char *name, pfsbaseid_t node_id, uint16_t fla
 void
 release_node(pfssnode_t *snode)
 {
-    // Remove from its parent's children list, if it has one.
+    /*
+     * Remove from its parent's children list, if it has one.
+     */
     if (snode->psn_parent != NULL) {
         TAILQ_REMOVE(&snode->psn_parent->psn_children, snode, psn_next);
     }
 
-    // Release all child nodes.
+    /*
+     * Release all child nodes.
+     */
     pfssnode_t *child = TAILQ_FIRST(&snode->psn_children);
     while (child != NULL) {
         TAILQ_REMOVE(&snode->psn_children, child, psn_next);
@@ -596,6 +769,8 @@ release_node(pfssnode_t *snode)
         child = TAILQ_FIRST(&snode->psn_children);
     }
 
-    // Free this node's memory.
+    /*
+     * Free this node's memory.
+     */
     OSFree(snode, sizeof(pfssnode_t), procfs_osmalloc_tag);
 }

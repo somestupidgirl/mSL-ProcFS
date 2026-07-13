@@ -1,18 +1,18 @@
-//
-//  mount_procfs.c
-//  mount_procfs
-//
-//  Created by Kim Topley on 12/1/15.
-//
-// The procfs-specific mount command, which must be installed in
-// the /sbin directory. In addition to the standard mount options,
-// the option "procperms" and its inverse ("noprocperms") is
-// supported. When "noprocperms" is used, all files and directories
-// in the mounted file system have access permissions that allow
-// any process to read them. This, of course, is a huge security
-// loophole, so it should only be used for testing. The default is
-// "procperms" (which is secure).
-//
+/*
+ *  mount_procfs.c
+ *  mount_procfs
+ *
+ *  Created by Kim Topley on 12/1/15.
+ *
+ * The procfs-specific mount command, which must be installed in
+ * the /sbin directory. In addition to the standard mount options,
+ * the option "procperms" and its inverse ("noprocperms") is
+ * supported. When "noprocperms" is used, all files and directories
+ * in the mounted file system have access permissions that allow
+ * any process to read them. This, of course, is a huge security
+ * loophole, so it should only be used for testing. The default is
+ * "procperms" (which is secure).
+ */
 
 #ifndef __FSBUNDLE__
 #define __FSBUNDLE__
@@ -32,14 +32,20 @@
 
 #include <libutil/mntopts.h>
 
-// Forward declarations of local functions.
+/*
+ * Forward declarations of local functions.
+ */
 static void usage(char *name);
 
-// Verbose logging flag and logging level for syslog(3)
+/*
+ * Verbose logging flag and logging level for syslog(3)
+ */
 static const int PROCFS_SYSLOG_LEVEL = LOG_INFO;
 static _Bool verbose = FALSE;
 
-// Mount options.
+/*
+ * Mount options.
+ */
 static struct mntopt mopts[] = {
     MOPT_STDOPTS,
     MOPT_PROCFS,
@@ -47,46 +53,47 @@ static struct mntopt mopts[] = {
 
 int main(int argc, char *argv[])
 {
-    /* -- Argument processing. Extracts mount options -- */
+    /*
+     * -- Argument processing. Extracts mount options --
+     */
     char *prog_name = basename(argv[0]);
 
-    // Default generic mount options and procfs options, which can be overridden
-    // using the -o option.
+    /*
+     * Default generic mount options and procfs options, which can be overridden
+     * using the -o option.
+     */
     int generic_options = 0;
     int procfs_options = 0;
 
-    opterr = 0;  // Silence default messages from getopt()
+    opterr = 0;  /* Silence default messages from getopt() */
     int option;
     while ((option = getopt(argc, argv, "vo:?h")) != -1) {
         switch (option) {
         case '?':
-            /*FALLTHRU*/
+            /* FALLTHRU */
         case 'h':
             usage(prog_name);
-            /*NOTREACHED*/
-                
+            /* NOTREACHED */
         case 'v':
             verbose = TRUE;
             break;
-                
         case 'o': {
             mntoptparse_t mntops = getmntopts(optarg, mopts, &generic_options, &procfs_options);
             freemntopts(mntops);
             break;
         }
-                
-        default: // Unrecognized option.
+        default: /* Unrecognized option. */
             usage(prog_name);
-            /*NOTREACHED*/
+            /* NOTREACHED */
         }
     }
     argc -= optind;
     argv += optind;
 
     if (argc != 2) {
-        // Expecting special and mount point arguments.
+        /* Expecting special and mount point arguments. */
         usage(argv[0]);
-        /*NOTREACHED*/
+        /* NOTREACHED */
     }
 
     /*

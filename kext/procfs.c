@@ -37,6 +37,8 @@ extern vfstable_t procfs_vfs_table_ref;
 int
 procfs_init(__unused struct vfsconf *vfsconf)
 {
+    int error = 0;
+
     static int initialized;  // Protect against multiple calls.
 
     if (!initialized) {
@@ -54,7 +56,7 @@ procfs_init(__unused struct vfsconf *vfsconf)
         pfsnode_hash_mutex = lck_mtx_alloc_init(pfsnode_lck_grp, LCK_ATTR_NULL);
     }
 
-    return 0;
+    return error;
 }
 
 /*
@@ -64,6 +66,8 @@ procfs_init(__unused struct vfsconf *vfsconf)
 int
 procfs_fini(void)
 {
+    int error = 0;
+
     if (procfs_osmalloc_tag != NULL) {
         OSMalloc_Tagfree(procfs_osmalloc_tag);
         procfs_osmalloc_tag = NULL;
@@ -79,7 +83,7 @@ procfs_fini(void)
         pfsnode_lck_grp = NULL;
     }
 
-    return 0;
+    return error;
 }
 
 #pragma mark -
@@ -88,14 +92,15 @@ procfs_fini(void)
 kern_return_t
 procfs_start(kmod_info_t *ki, __unused void *d)
 {
+    uuid_string_t uuid;
     struct vfsconf *vfsc = NULL;
     int ret = 0;
-    uuid_string_t uuid;
 
     os_log(OS_LOG_DEFAULT, "%s \n", version);     /* Print darwin kernel version */
 
     ret = libkext_vma_uuid(ki->address, uuid);
     kassert(ret == 0);
+
     os_log(OS_LOG_DEFAULT, "kext executable uuid %s \n", uuid);
 
     ret = procfs_init(vfsc);
@@ -103,6 +108,7 @@ procfs_start(kmod_info_t *ki, __unused void *d)
         os_log(OS_LOG_DEFAULT, "procfs_init() failed errno:  %d \n", ret);
         return KERN_FAILURE;
     }
+
     os_log(OS_LOG_DEFAULT, "lock group(%s) allocated \n", PROCFS_LCKGRP_NAME);
 
     ret = vfs_fsadd(&procfs_vfsentry, &procfs_vfs_table_ref);
@@ -112,13 +118,18 @@ procfs_start(kmod_info_t *ki, __unused void *d)
         procfs_fini();
         return KERN_FAILURE;
     }
+
     os_log(OS_LOG_DEFAULT, "%s file system registered", procfs_vfsentry.vfe_fsname);
 
-    /* Register the kernel-control bridge so the procfsd daemon can supply the
-     * proc_pidinfo-backed fields the kext cannot compute itself. Non-fatal. */
+    /*
+     * Register the kernel-control bridge so the procfsd daemon can supply the
+     * proc_pidinfo-backed fields the kext cannot compute itself. Non-fatal.
+     */
     (void)procfs_ctl_register();
 
-    /* Register the `procfs.linux` sysctl (native vs Linux presentation mode). */
+    /*
+     * Register the `procfs.linux` sysctl (native vs Linux presentation mode).
+     */
     procfs_sysctl_register();
 
     os_log(OS_LOG_DEFAULT, "loaded %s version %s build %s (%s) \n",
@@ -139,10 +150,14 @@ procfs_stop(__unused kmod_info_t *ki, __unused void *d)
         return KERN_FAILURE;
     }
 
-    /* Remove the `procfs.linux` sysctl. */
+    /*
+     * Remove the `procfs.linux` sysctl.
+     */
     procfs_sysctl_unregister();
 
-    /* Tear down the kernel-control bridge. */
+    /*
+     * Tear down the kernel-control bridge.
+     */
     procfs_ctl_deregister();
 
     if (procfs_vfs_table_ref != NULL) {

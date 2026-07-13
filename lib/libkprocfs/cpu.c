@@ -25,8 +25,11 @@
 
 #include <stddef.h>
 #include <string.h>
+
 #include <libkext/libkext.h>
+
 #include <mach/machine.h>
+
 #include <sys/errno.h>
 #include <sys/fcntl.h>
 #include <sys/ioccom.h>
@@ -37,9 +40,11 @@
 
 #include "cpu.h"
 
-/* ============================================================
+/*
+ * ============================================================
  * x86_64 implementation
- * ============================================================ */
+ * ============================================================
+ */
 #if defined(__x86_64__)
 
 #include <i386/cpuid.h>
@@ -123,7 +128,9 @@ procfs_cpuid_info(void)
 
     uint32_t reg[4];
 
-    /* Leaf 0: max basic leaf + vendor string (EBX, EDX, ECX). */
+    /*
+     * Leaf 0: max basic leaf + vendor string (EBX, EDX, ECX).
+     */
     do_cpuid(0, reg);
     info.cpuid_max_basic = reg[eax];
     memcpy(&info.cpuid_vendor[0], &reg[ebx], 4);
@@ -131,7 +138,9 @@ procfs_cpuid_info(void)
     memcpy(&info.cpuid_vendor[8], &reg[ecx], 4);
     info.cpuid_vendor[12] = '\0';
 
-    /* Leaf 1: signature (family/model/stepping) + feature bits (EDX:ECX). */
+    /*
+     * Leaf 1: signature (family/model/stepping) + feature bits (EDX:ECX).
+     */
     do_cpuid(1, reg);
     info.cpuid_signature = reg[eax];
     info.cpuid_stepping  = (uint8_t)(reg[eax] & 0xf);
@@ -142,14 +151,18 @@ procfs_cpuid_info(void)
     info.cpuid_features  = quad(reg[ecx], reg[edx]);
     info.cache_linesize  = ((reg[ebx] >> 8) & 0xff) * 8;    /* CLFLUSH line size */
 
-    /* Leaf 7 (subleaf 0): structured extended features (EBX:ECX, EDX). */
+    /*
+     * Leaf 7 (subleaf 0): structured extended features (EBX:ECX, EDX).
+     */
     if (info.cpuid_max_basic >= 7) {
         do_cpuid(7, reg);
         info.cpuid_leaf7_features    = quad(reg[ecx], reg[ebx]);
         info.cpuid_leaf7_extfeatures = reg[edx];
     }
 
-    /* Extended leaves. */
+    /*
+     * Extended leaves.
+     */
     do_cpuid(0x80000000, reg);
     info.cpuid_max_ext = reg[eax];
 
@@ -177,7 +190,9 @@ procfs_cpuid_info(void)
         info.cpuid_address_bits_virtual  = (reg[eax] >> 8) & 0xff;
     }
 
-    /* Core count and L2 size are cleaner from the public sysctls. */
+    /*
+     * Core count and L2 size are cleaner from the public sysctls.
+     */
     uint32_t v;
     size_t   sz = sizeof(v);
     if (sysctlbyname("machdep.cpu.core_count", &v, &sz, NULL, 0) == 0 && v != 0) {
@@ -445,16 +460,20 @@ feature_flags[] = {
 char *
 get_cpu_flags(void)
 {
-    /* Static buffer (mirrors the arm64 getters): a real char array so sizeof()
+    /*
+     * Static buffer (mirrors the arm64 getters): a real char array so sizeof()
      * is the byte capacity, initialised before use, and valid after return -
-     * unlike the former VLA-of-pointers which was uninitialised and dangling. */
+     * unlike the former VLA-of-pointers which was uninitialised and dangling.
+     */
     static char flags[512];
     int i = 0;
 
     flags[0] = '\0';
     if (cpuid_info()->cpuid_features) {
         while (i < (int)ARRAY_COUNT(feature_flags)) {
-            /* If the CPU supports a feature in feature_list[], append its flag. */
+            /*
+             * If the CPU supports a feature in feature_list[], append its flag.
+             */
             if (cpuid_info()->cpuid_features & feature_list[i]) {
                 strlcat(flags, feature_flags[i], sizeof(flags));
                 strlcat(flags, " ", sizeof(flags));
@@ -724,7 +743,9 @@ get_cpu_bugs(void)
 
     bugs[0] = '\0';
 
-    /* IA32_ARCH_CAPABILITIES is enumerated by CPUID.(7,0).EDX[29]. */
+    /*
+     * IA32_ARCH_CAPABILITIES is enumerated by CPUID.(7,0).EDX[29].
+     */
     do_cpuid(0x7, reg);
     if (reg[edx] & CPUID7_EDX_ARCH_CAPABILITIES) {
         arch_cap = rdmsr64(MSR_IA32_ARCH_CAPABILITIES);
@@ -767,7 +788,9 @@ get_cpu_bugs(void)
  * real bit position of every entry in the corresponding register.
  */
 
-/* 0x80000001 EDX bit positions, paired with amd_feature_flags[]. */
+/*
+ * 0x80000001 EDX bit positions, paired with amd_feature_flags[].
+ */
 uint32_t amd_feature_list[] = {
     11, 19, 20, 22, 25, 26, 27, 29, 30, 31
 };
@@ -786,8 +809,10 @@ amd_feature_flags[] = {
     /* 9 */ "3dnow",
 };
 
-/* 0x80000001 ECX bit positions, paired with amd_feature2_flags[] (bits 14/18/
- * 20/28 are reserved and skipped). */
+/*
+ * 0x80000001 ECX bit positions, paired with amd_feature2_flags[] (bits 14/18/
+ * 20/28 are reserved and skipped).
+ */
 uint32_t amd_feature2_list[] = {
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 19, 21, 22,
     23, 24, 25, 26, 27, 29
@@ -888,7 +913,9 @@ get_pm_flags(void)
 
     flags[0] = '\0';
 
-    /* Guard: the power-management leaf must be within the max extended leaf. */
+    /*
+     * Guard: the power-management leaf must be within the max extended leaf.
+     */
     do_cpuid(0x80000000, reg);
     if (reg[eax] < 0x80000007) {
         return flags;
@@ -967,7 +994,8 @@ get_amd_feature2_flags(void)
 
 
 
-/* ============================================================
+/*
+ * ============================================================
  * ARM64 implementation
  *
  * Produces output compatible with Linux /proc/cpuinfo ARM64
@@ -990,7 +1018,8 @@ get_amd_feature2_flags(void)
  *     accessible, otherwise reported as 0
  *   - Features are enumerated via hw.optional.arm.* sysctls
  *
- * ============================================================ */
+ * ============================================================
+ */
 #elif defined(__arm64__) || defined(__aarch64__)
 
 #include <arm/cpuid.h>
@@ -1035,7 +1064,10 @@ cpuid_info(void)
  * Returns the ARM part number string for a given hw.cpufamily value.
  * Part numbers follow ARM convention (0xXXX hex).
  */
-/* Performance-core MIDR part number for a hw.cpufamily. */
+
+/*
+ * Performance-core MIDR part number for a hw.cpufamily.
+ */
 static uint32_t
 arm64_cpu_part_num(uint32_t cpufamily)
 {
@@ -1312,7 +1344,9 @@ get_cpu_flags(void)
     };
     const size_t hwcap_count = sizeof(hwcap_order) / sizeof(hwcap_order[0]);
 
-    /* Collect the present, de-duplicated flags plus each one's sort key. */
+    /*
+     * Collect the present, de-duplicated flags plus each one's sort key.
+     */
     const char *present[map_count];
     int         order[map_count];
     size_t      n = 0;
@@ -1324,6 +1358,7 @@ get_cpu_flags(void)
             || val == 0) {
             continue;
         }
+
         boolean_t already = FALSE;
         for (size_t j = 0; j < n; j++) {
             if (strcmp(present[j], feature_map[i].flag) == 0) {
@@ -1331,10 +1366,14 @@ get_cpu_flags(void)
                 break;
             }
         }
+
         if (already) {
             continue;
         }
-        /* HWCAP position, or after the known list (in map order) if unlisted. */
+
+        /*
+         * HWCAP position, or after the known list (in map order) if unlisted.
+         */
         int ord = (int)(hwcap_count + i);
         for (size_t k = 0; k < hwcap_count; k++) {
             if (strcmp(hwcap_order[k], feature_map[i].flag) == 0) {
@@ -1348,7 +1387,9 @@ get_cpu_flags(void)
     }
 
     if (procfs_linux_mode) {
-        /* Stable insertion sort into HWCAP order. */
+        /*
+         * Stable insertion sort into HWCAP order.
+         */
         for (size_t i = 1; i < n; i++) {
             const char *pf = present[i];
             int         po = order[i];
@@ -1368,7 +1409,9 @@ get_cpu_flags(void)
         strlcat(flags, " ", sizeof(flags));
     }
 
-    /* Trim trailing space */
+    /*
+     * Trim trailing space
+     */
     size_t slen = strlen(flags);
     if (slen > 0 && flags[slen - 1] == ' ') {
         flags[slen - 1] = '\0';
@@ -1387,6 +1430,7 @@ char *
 get_cpu_ext_flags(void)
 {
     static char flags[1] = "";
+
     return flags;
 }
 
@@ -1399,6 +1443,7 @@ char *
 get_leaf7_flags(void)
 {
     static char flags[1] = "";
+
     return flags;
 }
 
@@ -1411,6 +1456,7 @@ char *
 get_leaf7_ext_flags(void)
 {
     static char flags[1] = "";
+
     return flags;
 }
 
@@ -1464,6 +1510,7 @@ arm64_cpu_variant(void)
     static char variant_str[8];
     uint32_t variant = (uint32_t)((arm64_read_midr() >> 20) & 0xf);
     snprintf(variant_str, sizeof(variant_str), "0x%x", variant);
+
     return variant_str;
 }
 
@@ -1480,6 +1527,7 @@ arm64_family(void)
     uint32_t cpufamily = 0;
     size_t len = sizeof(cpufamily);
     sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0);
+
     return cpufamily;
 }
 
@@ -1506,6 +1554,7 @@ arm64_cpu_revision(void)
     static char rev_str[8];
     uint32_t rev = (uint32_t)(arm64_read_midr() & 0xf);
     snprintf(rev_str, sizeof(rev_str), "%u", rev);
+
     return rev_str;
 }
 
@@ -1521,6 +1570,7 @@ arm64_cpu_name(void)
     uint32_t cpufamily = 0;
     size_t len = sizeof(cpufamily);
     sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0);
+
     return arm64_cpu_name_string(cpufamily);
 }
 
@@ -1567,7 +1617,8 @@ arm64_bogomips(void)
 
 #endif /* __arm64__ */
 
-/* ============================================================
+/*
+ * ============================================================
  * Per-CPU interrupt / softirq accounting (all architectures)
  *
  * The XNU-side analog of Linux softirqs. XNU has no softirq layer, but every
@@ -1577,7 +1628,8 @@ arm64_bogomips(void)
  * daemon (userspace host_processor_info) over the control bridge; the kext then
  * maps them onto the softirq vectors. So /proc/interrupts and /proc/softirqs
  * report real per-CPU numbers when the daemon is connected, zero otherwise.
- * ============================================================ */
+ * ============================================================
+ */
 
 /* Implemented in kext/procfs_ctl.c; resolved when libkprocfs is linked into the
  * kext. Declared here to avoid pulling the whole kext procfs.h into the lib. */
@@ -1596,14 +1648,17 @@ procfs_cpu_stat_all(struct procfs_cpu_stat *out, uint32_t ncpu)
         out[i].hwirq = out[i].ipi = out[i].timer = 0;
     }
 
-    /* One request returns every CPU's counters; bounce through a buffer sized to
-     * the bridge payload, then copy in what the caller asked for. */
+    /*
+     * One request returns every CPU's counters; bounce through a buffer sized to
+     * the bridge payload, then copy in what the caller asked for.
+     */
     struct procfs_cpu_stat buf[PROCFS_CTL_MAXPAYLOAD / sizeof(struct procfs_cpu_stat)];
     uint32_t got = 0;
     int error = procfs_ctl_request(PROCFS_REQ_CPUSTAT, 0, 0,
                                    buf, sizeof(buf), &got);
     if (error != 0) {
-        return error;           /* no daemon / bridge error -> counters stay 0 */
+        /* No daemon / bridge error -> counters stay 0 */
+        return error;
     }
 
     uint32_t have = got / (uint32_t)sizeof(struct procfs_cpu_stat);
@@ -1611,6 +1666,7 @@ procfs_cpu_stat_all(struct procfs_cpu_stat *out, uint32_t ncpu)
     for (uint32_t i = 0; i < n; i++) {
         out[i] = buf[i];
     }
+
     return 0;
 }
 
@@ -1645,11 +1701,13 @@ procfs_cpu_clusters(char *out, uint32_t ncpu)
     int error = procfs_ctl_request(PROCFS_REQ_CPUCLUSTERS, 0, 0,
                                    buf, sizeof(buf), &got);
     if (error != 0) {
-        return error;           /* no daemon -> all '?' (caller falls back) */
+        /* No daemon -> all '?' (caller falls back) */
+        return error;
     }
     uint32_t n = (got < ncpu) ? got : ncpu;
     for (uint32_t i = 0; i < n; i++) {
         out[i] = buf[i];
     }
+
     return 0;
 }

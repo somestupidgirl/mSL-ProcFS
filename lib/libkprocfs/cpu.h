@@ -51,7 +51,9 @@ extern char        *get_leaf7_ext_flags(void);
  * the counters are zero.
  */
 
-/* Linux softirq vectors, in /proc/softirqs order. */
+/*
+ * Linux softirq vectors, in /proc/softirqs order.
+ */
 enum procfs_softirq {
     PROCFS_SOFTIRQ_HI = 0,
     PROCFS_SOFTIRQ_TIMER,
@@ -66,7 +68,9 @@ enum procfs_softirq {
     PROCFS_NR_SOFTIRQ
 };
 
-/* Softirq vector names, indexed by enum procfs_softirq (for /proc/softirqs). */
+/*
+ * Softirq vector names, indexed by enum procfs_softirq (for /proc/softirqs).
+ */
 extern const char *const procfs_softirq_names[PROCFS_NR_SOFTIRQ];
 
 /*
@@ -106,12 +110,16 @@ extern int procfs_cpu_clusters(char *out, uint32_t ncpu);
 extern i386_cpu_info_t *procfs_cpuid_info(void);
 #define cpuid_info() procfs_cpuid_info()
 
-/* x86-only: power-management line (CPUID 0x80000007) and CPU bug classes
- * (IA32_ARCH_CAPABILITIES + vendor/family). */
+/*
+ * x86-only: power-management line (CPUID 0x80000007) and CPU bug classes
+ * (IA32_ARCH_CAPABILITIES + vendor/family).
+ */
 extern char        *get_pm_flags(void);
 extern char        *get_cpu_bugs(void);
 
-/* AMD-only extended feature flags (CPUID 0x80000001 EDX/ECX); empty on Intel. */
+/*
+ * AMD-only extended feature flags (CPUID 0x80000001 EDX/ECX); empty on Intel.
+ */
 extern char        *get_amd_feature_flags(void);
 extern char        *get_amd_feature2_flags(void);
 #endif
@@ -137,28 +145,44 @@ extern char        *get_amd_feature2_flags(void);
  *   CPU revision    : <arm64_cpu_revision()>
  */
 
-/* ARM implementer code string, e.g. "0x61" for Apple */
+/*
+ * ARM implementer code string, e.g. "0x61" for Apple
+ */
 extern const char  *arm64_cpu_implementer(void);
 
-/* ARM architecture version string, always "8" for AArch64 */
+/*
+ * ARM architecture version string, always "8" for AArch64
+ */
 extern const char  *arm64_cpu_architecture(void);
 
-/* CPU variant hex string, e.g. "0x0" */
+/*
+ * CPU variant hex string, e.g. "0x0"
+ */
 extern const char  *arm64_cpu_variant(void);
 
-/* CPU part hex string for the performance core, e.g. "0x022" for M1 Firestorm */
+/*
+ * CPU part hex string for the performance core, e.g. "0x022" for M1 Firestorm
+ */
 extern const char  *arm64_cpu_part(void);
 
-/* CPU part hex string for the efficiency core, e.g. "0x023" for M1 Icestorm */
+/*
+ * CPU part hex string for the efficiency core, e.g. "0x023" for M1 Icestorm
+ */
 extern const char  *arm64_cpu_part_ecore(void);
 
-/* CPU revision decimal string, e.g. "0" */
+/*
+ * CPU revision decimal string, e.g. "0"
+ */
 extern const char  *arm64_cpu_revision(void);
 
-/* Human-readable chip name derived from hw.cpufamily, e.g. "Apple Firestorm/Icestorm (M1)" */
+/*
+ * Human-readable chip name derived from hw.cpufamily, e.g. "Apple Firestorm/Icestorm (M1)"
+ */
 extern const char  *arm64_cpu_name(void);
 
-/* BogoMIPS string computed from hw.tbfrequency, e.g. "48.00" */
+/*
+ * BogoMIPS string computed from hw.tbfrequency, e.g. "48.00"
+ */
 extern const char  *arm64_bogomips(void);
 
 extern arm_cpu_info_t *cpuid_info(void);

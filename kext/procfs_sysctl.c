@@ -17,37 +17,46 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <libkern/libkern.h>
+
 #include <sys/errno.h>
 #include <sys/sysctl.h>
 #include <sys/uio.h>
 #include <sys/vnode.h>
-#include <libkern/libkern.h>
 
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_ctl.h>
 
-/* In-kernel sysctl-by-name (not prototyped in the kext's sysctl.h view). */
+/*
+ * In-kernel sysctl-by-name (not prototyped in the kext's sysctl.h view).
+ */
 extern int sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
     void *newp, size_t newlen);
 
-/* The children list for a directory objectid: the tree root (objectid 0) maps to
+/*
+ * The children list for a directory objectid: the tree root (objectid 0) maps to
  * sysctl__children; a NODE oid maps to its child list (oid_arg1); anything else
- * (a leaf) has no children. */
+ * (a leaf) has no children.
+ */
 static struct sysctl_oid_list *
 procfs_sysctl_children(uint64_t objectid)
 {
     if (objectid == 0) {
         return &sysctl__children;
     }
+
     struct sysctl_oid *oid = (struct sysctl_oid *)objectid;
     if ((oid->oid_kind & CTLTYPE) != CTLTYPE_NODE) {
         return NULL;
     }
+
     return (struct sysctl_oid_list *)oid->oid_arg1;
 }
 
-/* Internal oids not shown in the listing: nameless entries, deprecated/masked
- * variables, and the mutable-anchor markers (__anchor__(...)). */
+/*
+ * Internal oids not shown in the listing: nameless entries, deprecated/masked
+ * variables, and the mutable-anchor markers (__anchor__(...)).
+ */
 static boolean_t
 procfs_sysctl_hidden(struct sysctl_oid *oid)
 {
@@ -56,18 +65,23 @@ procfs_sysctl_hidden(struct sysctl_oid *oid)
         || oid->oid_number == OID_MUTABLE_ANCHOR;
 }
 
-/* True if the node is a directory (the tree root, or a CTLTYPE_NODE oid). */
+/*
+ * True if the node is a directory (the tree root, or a CTLTYPE_NODE oid).
+ */
 boolean_t
 procfs_sysctl_is_node(uint64_t objectid)
 {
     if (objectid == 0) {
         return TRUE;
     }
+
     struct sysctl_oid *oid = (struct sysctl_oid *)objectid;
     return (oid->oid_kind & CTLTYPE) == CTLTYPE_NODE;
 }
 
-/* Find a named child of a directory objectid; sets *out_objectid on success. */
+/*
+ * Find a named child of a directory objectid; sets *out_objectid on success.
+ */
 boolean_t
 procfs_sysctl_find(uint64_t dir_objectid, const char *name, uint64_t *out_objectid)
 {
@@ -88,6 +102,7 @@ procfs_sysctl_find(uint64_t dir_objectid, const char *name, uint64_t *out_object
     if (list == NULL) {
         return FALSE;
     }
+
     struct sysctl_oid *oid;
     SLIST_FOREACH(oid, list, oid_link) {
         if (!procfs_sysctl_hidden(oid) && strcmp(oid->oid_name, name) == 0) {
@@ -95,6 +110,7 @@ procfs_sysctl_find(uint64_t dir_objectid, const char *name, uint64_t *out_object
             return TRUE;
         }
     }
+
     return FALSE;
 }
 
@@ -129,9 +145,11 @@ procfs_sysctl_child_at(uint64_t dir_objectid, int index,
     return 0;
 }
 
-/* Recover the full dotted MIB name of `target` by DFS from the tree root, since
+/*
+ * Recover the full dotted MIB name of `target` by DFS from the tree root, since
  * a sysctl_oid has no back-pointer to its parent oid. The tree is shallow, so
- * this is cheap enough for the (cold) read path. */
+ * this is cheap enough for the (cold) read path.
+ */
 static boolean_t
 procfs_sysctl_build_name(struct sysctl_oid_list *list, const char *prefix,
     uint64_t target, char *out, size_t outsz)
@@ -141,16 +159,19 @@ procfs_sysctl_build_name(struct sysctl_oid_list *list, const char *prefix,
         if (oid->oid_name == NULL) {
             continue;
         }
+
         char path[256];
         if (prefix[0] != '\0') {
             snprintf(path, sizeof(path), "%s.%s", prefix, oid->oid_name);
         } else {
             strlcpy(path, oid->oid_name, sizeof(path));
         }
+
         if ((uint64_t)oid == target) {
             strlcpy(out, path, outsz);
             return TRUE;
         }
+
         if ((oid->oid_kind & CTLTYPE) == CTLTYPE_NODE && oid->oid_arg1 != NULL) {
             if (procfs_sysctl_build_name((struct sysctl_oid_list *)oid->oid_arg1,
                     path, target, out, outsz)) {
@@ -158,11 +179,14 @@ procfs_sysctl_build_name(struct sysctl_oid_list *list, const char *prefix,
             }
         }
     }
+
     return FALSE;
 }
 
-/* DFS helper: find `target`'s parent oid, carrying the current parent id down
- * the recursion (0 for the tree root == /proc/sys). */
+/*
+ * DFS helper: find `target`'s parent oid, carrying the current parent id down
+ * the recursion (0 for the tree root == /proc/sys).
+ */
 static boolean_t
 procfs_sysctl_find_parent(struct sysctl_oid_list *list, uint64_t parent_id,
     uint64_t target, uint64_t *out_parent)
@@ -173,6 +197,7 @@ procfs_sysctl_find_parent(struct sysctl_oid_list *list, uint64_t parent_id,
             *out_parent = parent_id;
             return TRUE;
         }
+
         if ((oid->oid_kind & CTLTYPE) == CTLTYPE_NODE && oid->oid_arg1 != NULL) {
             if (procfs_sysctl_find_parent((struct sysctl_oid_list *)oid->oid_arg1,
                     (uint64_t)oid, target, out_parent)) {
@@ -180,6 +205,7 @@ procfs_sysctl_find_parent(struct sysctl_oid_list *list, uint64_t parent_id,
             }
         }
     }
+
     return FALSE;
 }
 
@@ -196,6 +222,7 @@ procfs_sysctl_parent(uint64_t objectid, uint64_t *parent_objectid)
         *parent_objectid = 0;
         return FALSE;
     }
+
     return procfs_sysctl_find_parent(&sysctl__children, 0, objectid, parent_objectid);
 }
 
@@ -250,10 +277,12 @@ procfs_sysctl_read(uint64_t objectid, uio_t uio)
     uint8_t raw[1024];
     size_t  rawlen = 0;
 
-    /* Prefer the daemon (covers all oids); fall back to the in-kernel path. */
+    /*
+     * Prefer the daemon (covers all oids); fall back to the in-kernel path.
+     */
     uint32_t dlen = 0;
     if (procfs_ctl_request_named(PROCFS_REQ_SYSCTL, 0, 0, name,
-            raw, sizeof(raw), &dlen) == 0) {
+        raw, sizeof(raw), &dlen) == 0) {
         rawlen = dlen;
     } else {
         rawlen = sizeof(raw);
@@ -261,8 +290,12 @@ procfs_sysctl_read(uint64_t objectid, uio_t uio)
             rawlen = 0;
         }
     }
+
     if (rawlen == 0) {
-        return procfs_copy_data("", 0, uio);       /* unreadable/non-KERN/empty */
+        /*
+         * unreadable/non-KERN/empty
+         */
+        return procfs_copy_data("", 0, uio);
     }
 
     char out[1100];

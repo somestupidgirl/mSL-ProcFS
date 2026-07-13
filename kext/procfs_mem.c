@@ -28,7 +28,9 @@
  * protected and hardened-runtime targets, which then report EPERM.
  */
 #include <stdint.h>
+
 #include <libkern/libkern.h>
+
 #include <sys/errno.h>
 #include <sys/malloc.h>
 #include <sys/proc.h>
@@ -150,11 +152,13 @@ procfs_dopagemap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
     if (p == PROC_NULL) {
         return ESRCH;
     }
+
     error = procfs_check_can_access_process(vfs_context_ucred(ctx), p);
     if (error != 0) {
         proc_rele(p);
         return error;
     }
+
     pid_t pid = pnp->node_id.nodeid_pid;
 
     uint8_t *buf = malloc(PROCFS_CTL_MAXPAYLOAD, M_TEMP, M_WAITOK);
@@ -178,13 +182,16 @@ procfs_dopagemap(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
             }
             break;                  /* no daemon / protected / gone */
         }
+
         if (got <= byte_in) {
             break;                  /* empty reply -> EOF (past last region) */
         }
 
         user_ssize_t resid = uio_resid(uio);
-        size_t       avail = (size_t)got - byte_in;
-        size_t       move  = (avail < (size_t)resid) ? avail : (size_t)resid;
+
+        size_t avail = (size_t)got - byte_in;
+        size_t move = (avail < (size_t)resid) ? avail : (size_t)resid;
+
         error = uiomove((const char *)buf + byte_in, (int)move, uio);
         if (error != 0) {
             break;
