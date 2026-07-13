@@ -53,6 +53,26 @@ tlink() {
     if t=$(readlink "$p" 2>/dev/null) && [ -n "$t" ]; then ok "$d -> $t"; else bad "$d readlink"; fi
 }
 
+# daemon-backed text node: non-empty -> PASS; empty -> NOTE if procfsd is not
+# running (its data source), else FAIL.
+dfile() {
+    local p="$1" d="${2:-$1}"
+    if out=$(cat "$p" 2>/dev/null) && [ -n "$out" ]; then
+        ok "$d: $(printf '%s' "$out" | wc -l | tr -d ' ') lines"
+    elif [ "$daemon" = no ]; then note "$d empty (procfsd not running)"
+    else bad "$d empty"; fi
+}
+
+# node with no macOS analog (legitimately empty, e.g. ISA/IDE): readable is
+# enough - non-empty is reported, empty is a NOTE rather than a failure.
+efile() {
+    local p="$1" d="${2:-$1}"
+    if out=$(cat "$p" 2>/dev/null); then
+        if [ -n "$out" ]; then ok "$d: $(printf '%s' "$out" | head -1 | cut -c1-48)"
+        else note "$d empty (no macOS analog)"; fi
+    else bad "$d unreadable"; fi
+}
+
 read_i32() { python3 -c "import struct,sys;print(struct.unpack('<i',open(sys.argv[1],'rb').read(4))[0])" "$1" 2>/dev/null; }
 
 [ -d "$PROC" ] || { echo "$PROC not mounted (set PROC=...)"; exit 2; }
@@ -92,7 +112,6 @@ tfile "$PROC/mounts"          "mounts"
 tfile "$PROC/swaps"           "swaps"
 tfile "$PROC/filesystems"     "filesystems"
 tfile "$PROC/cmdline"         "cmdline (kernel boot args)"
-tfile "$PROC/net/dev"         "net/dev (interface stats)"
 # bootconfig mirrors the boot-args; legitimately empty on a Mac with none set
 if out=$(cat "$PROC/bootconfig" 2>/dev/null); then
     if [ -n "$out" ]; then ok "bootconfig: $(printf '%s' "$out" | head -1 | cut -c1-48)"
@@ -104,6 +123,41 @@ for n in extensions modules devices allocinfo apm fb interrupts; do
     if out=$(cat "$PROC/$n" 2>/dev/null) && [ -n "$out" ]; then ok "$n: $(printf '%s' "$out" | wc -l | tr -d ' ') lines"
     elif [ "$daemon" = no ]; then note "$n empty (procfsd not running)"; else bad "$n empty"; fi
 done
+
+hdr "Root: kernel internals"
+# kcore is a size-0 dynamic node (0 in getattr), so check its content: the read
+# must yield the ELF magic (0x7f 'E' 'L' 'F') of the ELF64 core header.
+if [ "$(head -c 4 "$PROC/kcore" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]; then
+    ok "kcore (ELF64 core header, ELF magic)"
+else bad "kcore (no ELF magic)"; fi
+dfile "$PROC/kmsg"             "kmsg (kernel ring buffer)"
+dfile "$PROC/ksyms"            "ksyms (exported symbols)"
+dfile "$PROC/kallsyms"         "kallsyms (all symbols)"
+dfile "$PROC/slabinfo"         "slabinfo (zone caches)"
+dfile "$PROC/vmallocinfo"      "vmallocinfo (kernel VM allocations)"
+dfile "$PROC/pagetypeinfo"     "pagetypeinfo (buddy blocks by type)"
+dfile "$PROC/misc"             "misc (misc char devices)"
+# last_kmsg: present only after a panic report has been saved
+if out=$(cat "$PROC/last_kmsg" 2>/dev/null) && [ -n "$out" ]; then
+    ok "last_kmsg: $(printf '%s' "$out" | wc -l | tr -d ' ') lines"
+else note "last_kmsg empty (no saved panic report)"; fi
+# locks: in-kernel (vnode walk); may be empty when no byte-range locks are held
+if cat "$PROC/locks" >/dev/null 2>&1; then
+    out=$(cat "$PROC/locks" 2>/dev/null)
+    if [ -n "$out" ]; then ok "locks: $(printf '%s' "$out" | wc -l | tr -d ' ') held"
+    else note "locks empty (none held)"; fi
+else bad "locks unreadable"; fi
+
+hdr "Root: /proc/scsi + /proc/sysvipc"
+tdir  "$PROC/scsi"        "scsi dir"
+dfile "$PROC/scsi/scsi"   "scsi/scsi (attached devices)"
+tdir  "$PROC/sysvipc"     "sysvipc dir"
+for n in msg sem shm; do dfile "$PROC/sysvipc/$n" "sysvipc/$n"; done
+
+hdr "Root: legacy nodes (no macOS analog)"
+efile "$PROC/isapnp"           "isapnp (ISA PnP)"
+# ide is a directory that is empty on macOS (no IDE/ATA subsystem)
+if ls "$PROC/ide" >/dev/null 2>&1; then note "ide dir present (empty; no IDE on macOS)"; else bad "ide dir unreadable"; fi
 
 hdr "Root: /proc/bus (PCI)"
 tdir "$PROC/bus"     "bus dir"
@@ -130,6 +184,28 @@ if e=$(cat "$PROC/fs/nfs/exports" 2>/dev/null); then
     if [ -n "$e" ]; then ok "fs/nfs/exports: $(printf '%s' "$e" | wc -l | tr -d ' ') lines"
     else note "fs/nfs/exports empty (no /etc/exports or no daemon)"; fi
 else bad "fs/nfs/exports unreadable"; fi
+
+hdr "Root: /proc/net (interfaces, sockets, routing, stats)"
+tdir  "$PROC/net"        "net dir"
+# net/dev is in-kernel (ifnet KPIs), so it is populated with or without procfsd.
+tfile "$PROC/net/dev"    "net/dev (interface stats)"
+# Socket / routing / ARP tables: served by procfsd; each prints its Linux header
+# (a non-empty file) even when there are no entries.
+for n in tcp tcp6 udp udp6 unix route arp; do
+    if out=$(cat "$PROC/net/$n" 2>/dev/null) && [ -n "$out" ]; then
+        ok "net/$n: $(printf '%s' "$out" | wc -l | tr -d ' ') lines"
+    elif [ "$daemon" = no ]; then note "net/$n empty (procfsd not running)"
+    else bad "net/$n empty"; fi
+done
+# netstat/snmp: two-line SNMP-style sections; validate the section labels.
+if out=$(cat "$PROC/net/netstat" 2>/dev/null) && printf '%s' "$out" | grep -q "TcpExt:"; then
+    ok "net/netstat (TcpExt/IpExt)"
+elif [ "$daemon" = no ]; then note "net/netstat empty (procfsd not running)"
+else bad "net/netstat missing TcpExt"; fi
+if out=$(cat "$PROC/net/snmp" 2>/dev/null) && printf '%s' "$out" | grep -q "^Ip:"; then
+    ok "net/snmp (Ip/Icmp/Tcp/Udp)"
+elif [ "$daemon" = no ]; then note "net/snmp empty (procfsd not running)"
+else bad "net/snmp missing Ip:"; fi
 
 hdr "Root: symlinks + dirs"
 tlink "$PROC/self"    "self"
@@ -204,6 +280,28 @@ for n in regs fpregs; do
     elif [ "$daemon" = no ]; then note "$n empty (procfsd not running)"
     else note "$n empty (task_for_pid denied for this process?)"; fi
 done
+
+hdr "Per-process: scheduling / state (cpu/wchan/stack/pagemap/clear_refs)"
+# cpu: per-task CPU accounting (libkprocfs); needs procfsd for some fields
+dfile "$P/cpu" "cpu (per-task CPU stat)"
+# wchan: kernel symbol the task is blocked in, or "0" when on-CPU
+if w=$(cat "$P/wchan" 2>/dev/null); then ok "wchan = ${w:-<empty>}"; else bad "wchan unreadable"; fi
+# stack: continuation frame(s); empty for a running (on-CPU) task, as on Linux
+if cat "$P/stack" >/dev/null 2>&1; then
+    s=$(cat "$P/stack" 2>/dev/null)
+    if [ -n "$s" ]; then ok "stack: $(printf '%s' "$s" | head -1)"; else note "stack empty (task on-CPU)"; fi
+else bad "stack unreadable"; fi
+# pagemap: one 8-byte entry per virtual page, indexed by vaddr/pagesize (seek
+# like mem). Reuses $addr (first mapped region from maps, set above). Needs
+# task_for_pid, which is denied for SIP/AMFI/hardened processes.
+pgsz=$(getconf PAGE_SIZE 2>/dev/null || echo 16384)
+if [ -n "$addr" ] && dd if="$P/pagemap" bs=8 count=1 skip=$(( 16#$addr / pgsz )) >/dev/null 2>&1; then
+    ok "pagemap (entry for 0x$addr)"
+else note "pagemap read failed (task_for_pid denied for this process?)"; fi
+# clear_refs: write-only; accepts the digits 1-4, rejects anything else (no-op
+# on macOS, but the parse/permission path is real)
+if echo 1 > "$P/clear_refs" 2>/dev/null; then ok "clear_refs: '1' accepted"; else bad "clear_refs write rejected"; fi
+if echo 9 > "$P/clear_refs" 2>/dev/null; then bad "clear_refs: '9' accepted (should be EINVAL)"; else ok "clear_refs: '9' rejected (EINVAL)"; fi
 
 hdr "Per-process: tty"
 if t=$(cat "$P/tty" 2>/dev/null) && [ -n "$t" ]; then ok "tty = $t"; else note "tty empty (no controlling terminal?)"; fi

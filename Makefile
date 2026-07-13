@@ -7,6 +7,8 @@
 #   make ARCH=x86_64        # Intel kext + x86_64 fs
 #   make ARCH=universal     # fat kext + fs (arm64e + x86_64)
 #   make tests              # also build the test programs
+#   make check              # build tests + run tests/test_features.sh on /proc
+#   make distcheck          # clean build of the .pkg/.dmg + verify the payload
 #   sudo make install       # install everything into the system (run AFTER make)
 #   sudo make uninstall     # remove everything from the system
 #   make clean              # remove build artifacts (no sudo needed)
@@ -222,6 +224,42 @@ dmg: pkg
 tests:
 	$(MAKE) -C tests
 
+# Run the test suite: build the C test programs, then exercise the live mount
+# with tests/test_features.sh (which reports PASS/FAIL per node). The feature
+# tests need the filesystem mounted, so if $(PROC) (default /proc) is not a
+# procfs mount they are skipped rather than failed - install the kext and reboot
+# to run them. Override the mount with `make check PROC=/somewhere`.
+PROC ?= /proc
+check: tests
+	@echo "==> procfs feature tests ($(PROC))"
+	@if [ -e "$(PROC)/self" ]; then \
+		PROC="$(PROC)" tests/test_features.sh; \
+	else \
+		echo "SKIP: $(PROC) is not a mounted procfs (install the kext and reboot, or set PROC=...)"; \
+	fi
+
+# Distribution sanity check: a clean build of the installer artifacts, then
+# verify the .pkg and .dmg were produced and that the package payload carries
+# every component (kext, filesystem, daemon, LaunchDaemon plist, app, prefpane).
+distcheck:
+	@echo "==> Clean distribution build"
+	$(MAKE) clean
+	$(MAKE) dmg
+	@echo "==> Checking distribution artifacts"
+	@test -s "$(PKG_OUT)" || { echo "FAIL: $(PKG_OUT) missing or empty"; exit 1; }
+	@test -s "$(DMG_OUT)" || { echo "FAIL: $(DMG_OUT) missing or empty"; exit 1; }
+	@hdiutil imageinfo "$(DMG_OUT)" >/dev/null 2>&1 || { echo "FAIL: $(DMG_OUT) is not a valid disk image"; exit 1; }
+	@echo "  ok  built $(notdir $(PKG_OUT)) and $(notdir $(DMG_OUT))"
+	@rm -rf $(OUT)/distcheck; pkgutil --expand "$(PKG_OUT)" $(OUT)/distcheck 2>/dev/null || { echo "FAIL: cannot expand product archive"; exit 1; }
+	@bom=`find $(OUT)/distcheck -name Bom | head -1`; \
+	 test -n "$$bom" || { echo "FAIL: no component package (Bom) in archive"; exit 1; }; \
+	 for f in procfs.kext procfs.fs procfsd $(DAEMON_PLIST) ProcFS.app ProcFS.prefPane; do \
+	   lsbom "$$bom" 2>/dev/null | grep -q "$$f" || { echo "FAIL: payload missing $$f"; rm -rf $(OUT)/distcheck; exit 1; }; \
+	   echo "  ok  payload: $$f"; \
+	 done
+	@rm -rf $(OUT)/distcheck
+	@echo "==> distcheck passed"
+
 # Back-compat aliases.
 debug: kextfs
 release: TARGET=release
@@ -357,7 +395,7 @@ clean:
 	$(MAKE) -C tools clean
 	$(MAKE) -C gui clean
 
-.PHONY: all kextfs tools plists gui tests debug release pkg dmg \
+.PHONY: all kextfs tools plists gui tests check distcheck debug release pkg dmg \
         install require-root require-built preinstall \
         install-kext install-fs install-tools install-plists install-gui postinstall \
         tools-install uninstall clean
