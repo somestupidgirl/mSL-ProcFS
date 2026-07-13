@@ -1,4 +1,7 @@
 # ProcFS
+
+[![C/C++ CI](https://github.com/somestupidgirl/procfs_kext/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/somestupidgirl/procfs_kext/actions/workflows/c-cpp.yml)
+
 ProcFS is a kernel-extension implementation of the `/proc` file system for macOS, exposing
 running processes and threads as a filesystem with BSD- and Linux-compatible
 per-process information.
