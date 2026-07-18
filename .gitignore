@@ -3,11 +3,7 @@ rnd/
 wip/
 gui/ProcFS.app/
 gui/ProcFS.prefPane/
-test/test_mount
-test/test_readdir
-test/test_getdents
-test/test_getdents_multi
-tools/procfs_ksyms
+tests/test_*
 tools/procfsd
 **/*.dSYM
 **/.DS_Store
