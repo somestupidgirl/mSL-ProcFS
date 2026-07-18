@@ -1,5 +1,5 @@
 /* Compare /proc/<pid>/taskinfo (the kext) to proc_pidinfo() ground truth.
- *   cc -o /tmp/tti test/test_taskinfo.c ; /tmp/tti $$
+ *   cc -o /tmp/tti tests/test_taskinfo.c ; /tmp/tti $$
  */
 #include <stdio.h>
 #include <stdlib.h>

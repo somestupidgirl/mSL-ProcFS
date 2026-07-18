@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <dirent.h>
+#include <sys/types.h>      /* major()/minor() */
 #include <sys/stat.h>
 #include <stdlib.h>
 static void dev_family(const char *in,char *out,size_t cap){size_t i=0;

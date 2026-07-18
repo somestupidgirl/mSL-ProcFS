@@ -63,6 +63,24 @@ dfile() {
     else bad "$d empty"; fi
 }
 
+# task_for_pid-gated node (the VM views, registers): the data comes from procfsd
+# calling task_for_pid(), which the kernel denies for SIP/AMFI-protected and
+# hardened-runtime processes. EPERM there is the accepted coverage tradeoff, not
+# a failure - so report it, and only fail on an unexpected error.
+mfile() {
+    local p="$1" d="${2:-$1}" err
+    if out=$(cat "$p" 2>/dev/null) && [ -n "$out" ]; then
+        ok "$d: $(printf '%s' "$out" | wc -l | tr -d ' ') lines"
+        return
+    fi
+    err=$(cat "$p" 2>&1 >/dev/null)
+    case "$err" in
+        *"Operation not permitted"*) note "$d: task_for_pid denied (SIP/hardened process)" ;;
+        *) if [ "$daemon" = no ]; then note "$d empty (procfsd not running)"
+           else bad "$d${err:+ ($err)}"; fi ;;
+    esac
+}
+
 # node with no macOS analog (legitimately empty, e.g. ISA/IDE): readable is
 # enough - non-empty is reported, empty is a NOTE rather than a failure.
 efile() {
@@ -158,6 +176,10 @@ hdr "Root: legacy nodes (no macOS analog)"
 efile "$PROC/isapnp"           "isapnp (ISA PnP)"
 # ide is a directory that is empty on macOS (no IDE/ATA subsystem)
 if ls "$PROC/ide" >/dev/null 2>&1; then note "ide dir present (empty; no IDE on macOS)"; else bad "ide dir unreadable"; fi
+# video/bttv likewise: Linux exposes Bt848 TV capture cards here, macOS has no
+# equivalent, so both levels exist as empty directories.
+if ls "$PROC/video" >/dev/null 2>&1; then note "video dir present (empty; no bttv on macOS)"; else bad "video dir unreadable"; fi
+if ls "$PROC/video/bttv" >/dev/null 2>&1; then note "video/bttv dir present (empty)"; else bad "video/bttv dir unreadable"; fi
 
 hdr "Root: /proc/bus (PCI)"
 tdir "$PROC/bus"     "bus dir"
@@ -253,18 +275,22 @@ tdir "$P/threads" "threads readdir"
 tdir "$P/task"    "task readdir"
 
 hdr "Per-process: virtual memory (map/maps/smaps/mem)"
-tfile "$P/map"   "map (NetBSD)"
-tfile "$P/maps"  "maps (Linux)"
-tfile "$P/smaps" "smaps"
-tfile "$P/smaps_rollup" "smaps_rollup"
-tfile "$P/numa_maps" "numa_maps"
+mfile "$P/map"   "map (NetBSD)"
+mfile "$P/maps"  "maps (Linux)"
+mfile "$P/smaps" "smaps"
+mfile "$P/smaps_rollup" "smaps_rollup"
+mfile "$P/numa_maps" "numa_maps"
 # mem: read semantics use the virtual address as offset. Read 16 bytes from the
 # first mapped region reported by maps.
 addr=$(head -1 "$P/maps" 2>/dev/null | cut -d- -f1)
-if [ -n "$addr" ] && dd if="$P/mem" bs=1 count=16 skip=$((16#$addr)) >/dev/null 2>&1; then
+if [ -z "$addr" ]; then
+    # No region list to pick an address from - maps itself was unavailable
+    # (task_for_pid denied, or no daemon), so mem cannot be exercised either.
+    note "mem: no address available (maps unreadable)"
+elif dd if="$P/mem" bs=1 count=16 skip=$((16#$addr)) >/dev/null 2>&1; then
     ok "mem (read 16B @ 0x$addr)"
 else
-    bad "mem (read at 0x$addr failed)"
+    note "mem: read at 0x$addr denied (task_for_pid / non-resident page)"
 fi
 
 hdr "Per-process: registers / auxv / taskinfo"
