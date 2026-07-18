@@ -681,7 +681,15 @@ add_node(pfssnode_t *parent, const char *name, pfstype type, pfsbaseid_t node_id
 
     bzero(node, sizeof(pfssnode_t));
     node->psn_node_type = type;
-    strlcpy(node->psn_name, name, sizeof(node->psn_name));
+    /*
+     * A truncated name is not a cosmetic problem: two names sharing a prefix
+     * collapse to the same entry, so the directory lists duplicates and neither
+     * node can be looked up. Complain rather than truncate silently.
+     */
+    if (strlcpy(node->psn_name, name, sizeof(node->psn_name)) >= sizeof(node->psn_name)) {
+        LOG_ERR("node name '%s' truncated to '%s'; raise MAX_STRUCT_NODE_NAME_LEN",
+                name, node->psn_name);
+    }
     node->psn_base_node_id = node_id;
     node->psn_flags = flags;
     node->psn_parent = parent;

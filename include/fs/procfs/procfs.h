@@ -207,9 +207,15 @@ typedef int (*procfs_read_data_fn)(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx)
 #define PROCFS_ROOT_NODE_BASE_ID ((pfsbaseid_t)1)
 
 /*
- * Largest name of a structure node.
+ * Largest name of a structure node, including the terminating NUL.
+ *
+ * This must exceed the longest name registered in procfs_structure.c. At 16 it
+ * did not: /proc/irq/default_smp_affinity (20) and default_smp_affinity_list
+ * (25) were both silently truncated by strlcpy() to the same 15-character
+ * "default_smp_aff", so the directory listed two identically named entries and
+ * neither could be opened. add_node() now logs any name it has to truncate.
  */
-#define MAX_STRUCT_NODE_NAME_LEN 16
+#define MAX_STRUCT_NODE_NAME_LEN 32
 
 #pragma mark -
 #pragma mark Structure Definitions
