@@ -20,3 +20,6 @@
 [submodule "lib/libkext"]
 	path = lib/libkext
 	url = https://github.com/somestupidgirl/libkext.git
+[submodule "lib/libreadfile"]
+	path = lib/libreadfile
+	url = https://github.com/somestupidgirl/libreadfile.git
