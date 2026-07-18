@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # test_features.sh - exercises every implemented procfs feature and reports
 # PASS/FAIL per node. Run against the live mount (default /proc); override with
@@ -8,6 +8,14 @@
 # Daemon-backed nodes (loadavg true values, vmstat, taskinfo, regs/fpregs,
 # extensions/modules, /proc/sys non-KERN values) require procfsd to be running;
 # they are marked accordingly if empty.
+#
+# The interpreter matters. Because the script reads its own PID, the nodes
+# backed by task_for_pid (task/, threads/, maps, smaps, regs, ...) can only be
+# exercised if this process is one the kernel will hand out a task port for.
+# /bin/bash is an Apple platform binary (com.apple.bash), so running under it
+# gets EPERM for all of them and the coverage is silently lost. `env bash'
+# picks up a Homebrew bash first when one is installed, which is not protected.
+# Where only /bin/bash exists those checks report as notes rather than failures.
 #
 PROC=${PROC:-/proc}
 pass=0; fail=0; warn=0
@@ -74,6 +82,24 @@ mfile() {
         return
     fi
     err=$(cat "$p" 2>&1 >/dev/null)
+    case "$err" in
+        *"Operation not permitted"*) note "$d: task_for_pid denied (SIP/hardened process)" ;;
+        *) if [ "$daemon" = no ]; then note "$d empty (procfsd not running)"
+           else bad "$d${err:+ ($err)}"; fi ;;
+    esac
+}
+
+# directory counterpart of mfile(): task/ and threads/ are enumerated by the
+# daemon via task_for_pid, so they are empty with EPERM for a SIP/AMFI or
+# hardened target - including this script itself when it runs under
+# /bin/bash. Report that rather than failing on it.
+mdir() {
+    local p="$1" d="${2:-$1}" err
+    if e=$(ls "$p" 2>/dev/null) && [ -n "$e" ]; then
+        ok "$d: $(printf '%s' "$e" | wc -w | tr -d ' ') entries"
+        return
+    fi
+    err=$(ls "$p" 2>&1 >/dev/null)
     case "$err" in
         *"Operation not permitted"*) note "$d: task_for_pid denied (SIP/hardened process)" ;;
         *) if [ "$daemon" = no ]; then note "$d empty (procfsd not running)"
@@ -271,8 +297,8 @@ tlink "$P/root" "root"
 
 hdr "Per-process: fd / threads / task directories"
 tdir "$P/fd"      "fd readdir"
-tdir "$P/threads" "threads readdir"
-tdir "$P/task"    "task readdir"
+mdir "$P/threads" "threads readdir"
+mdir "$P/task"    "task readdir"
 
 hdr "Per-process: virtual memory (map/maps/smaps/mem)"
 mfile "$P/map"   "map (NetBSD)"
