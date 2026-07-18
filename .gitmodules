@@ -11,3 +11,6 @@
 [submodule "lib/libsbuf"]
 	path = lib/libsbuf
 	url = https://github.com/somestupidgirl/libsbuf.git
+[submodule "lib/libbsdmalloc"]
+	path = lib/libbsdmalloc
+	url = https://github.com/somestupidgirl/libbsdmalloc.git
