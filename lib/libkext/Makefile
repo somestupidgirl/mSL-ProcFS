@@ -26,14 +26,19 @@ CFLAGS?=    -target $(TARGET_TRIPLE)            \
             -fno-stack-protector                \
             $(ARCHFLAGS)                        \
             -Wall -Wextra -Wno-unused-function  \
-            -I../include/xnu/bsd                \
-            -I../include/xnu/libkern            \
-            -I../include/xnu/osfmk              \
-            -I../lib                            \
             -isystem $(KERNEL_HEADERS)          \
             -isystem $(KERNEL_HEADERS)/arm64    \
-            -isystem $(KERNEL_HEADERS)/arm      \
-            -DKEXTNAME_S=\"procfs\"
+            -isystem $(KERNEL_HEADERS)/arm
+
+#
+# Prefix libkext's own log/assert messages. Defaults to the library's own name
+# so a standalone build needs no configuration; a larger project embedding
+# libkext can brand them as its own kext with `make KEXTNAME=foo`. Consumers do
+# not need this to be set here: their own translation units pick up whatever
+# they define for KEXTNAME_S themselves (libkext.h defaults it either way).
+#
+KEXTNAME ?=  libkext
+CFLAGS +=    -DKEXTNAME_S=\"$(KEXTNAME)\"
 
 EXT =       a
 LIB =       libkext.$(EXT)

@@ -52,6 +52,22 @@
 #define ARRAY_LAST(a)       (ARRAY_SIZE(a) - 1u)
 
 /**
+ * Prefix for every message logged through the macros below.
+ *
+ * A consumer that builds libkext as part of a larger kernel extension can
+ * define this to its own kext name (-DKEXTNAME_S=\"foo\") so that its
+ * translation units log under that name; a standalone build of the library
+ * falls back to the library's own name.
+ *
+ * Note this is a compile-time string literal, so it is baked into whichever
+ * translation unit expands it. libkext's own sources reach it through
+ * LOG_BUG() and, in non-DEBUG builds, kassert().
+ */
+#ifndef KEXTNAME_S
+#define KEXTNAME_S "libkext"
+#endif
+
+/**
  * os_log() is only available on macOS 10.12 or newer
  *  thus os_log do have compatibility issue  use printf instead
  *
