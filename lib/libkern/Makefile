@@ -30,15 +30,13 @@ CFLAGS?=    -target $(TARGET_TRIPLE)            \
             $(ARCHFLAGS)                        \
             -Wall -Wextra -Wno-unused-function
 
-# libcpuft's own <cpuft.h> comes first; the BSD-style _MALLOC()/_FREE() wrapper
+# libkern's own <kern.h> comes first; the BSD-style _MALLOC()/_FREE() wrapper
 # (libbsdmalloc) must precede the kernel headers so its <sys/malloc.h> is found
-# ahead of them (it then #include_next's the real one). -I.. resolves the
-# sibling <libkext/libkext.h>.
+# ahead of them (it then #include_next's the real one).
 ifeq ($(findstring arm64,$(TARGET_TRIPLE)),arm64)
 CFLAGS+=    -Iinclude                            \
             -I../libbsdmalloc/include            \
             -I../libsbuf/include                \
-            -I..                                \
             -I../../include/xnu/bsd             \
             -I../../include/xnu/libkern         \
             -I../../include/xnu/osfmk           \
@@ -49,7 +47,6 @@ else
 CFLAGS+=    -Iinclude                            \
             -I../libbsdmalloc/include            \
             -I../libsbuf/include                \
-            -I..                                \
             -I../../include/xnu/bsd             \
             -I../../include/xnu/libkern         \
             -I../../include/xnu/osfmk           \

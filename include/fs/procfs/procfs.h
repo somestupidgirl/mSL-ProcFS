@@ -42,7 +42,7 @@ typedef struct pfsmount_args {
 
 #include <kern/locks.h>
 #include <libkern/OSMalloc.h>
-#include <libkext/libkext.h>
+#include <libkext.h>
 #include <mach/task.h>
 #include <sys/kernel_types.h>
 #include <sys/mount.h>

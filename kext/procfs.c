@@ -11,7 +11,7 @@
 #include <libkern/libkern.h>
 #include <libkern/OSMalloc.h>
 #include <libkern/version.h>
-#include <libkext/libkext.h>
+#include <libkext.h>
 #include <mach/kmod.h>
 #include <mach/mach_types.h>
 #include <os/log.h>

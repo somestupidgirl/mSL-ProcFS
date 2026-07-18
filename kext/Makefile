@@ -105,7 +105,7 @@ CFLAGS+= -target $(TARGET_TRIPLE) \
          -I../lib/libsbuf/include \
          -I../lib/libcpuft/include \
          -I../lib/libkern/include \
-         -I../lib \
+         -I../lib/libkext/include \
          -I../include \
          $(XNU_INCLUDES) \
          -isystem $(KERNEL_HEADERS) \
