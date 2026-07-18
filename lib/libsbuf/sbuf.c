@@ -27,7 +27,7 @@
  */
 
 /*
- * procfs kext adaptation: sbuf was written against the typed kalloc_*
+ * kext adaptation: sbuf was written against the typed kalloc_*
  * allocators (kern/kalloc.h), which are com.apple.kpi.private and not linkable
  * from a third-party kext. Back it with the public _MALLOC()/_FREE() instead;
  * the call sites below are left unchanged so this file stays close to the XNU

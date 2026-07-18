@@ -8,6 +8,7 @@ all: debug
 
 debug:
 	$(MAKE) -C libbsdmalloc
+	$(MAKE) -C libsbuf
 	$(MAKE) -C libkext
 	$(MAKE) -C libkprocfs
 	$(MAKE) -C libreadfile
@@ -17,6 +18,7 @@ release: debug
 
 clean:
 	$(MAKE) -C libbsdmalloc clean
+	$(MAKE) -C libsbuf clean
 	$(MAKE) -C libkext clean
 	$(MAKE) -C libkprocfs clean
 	$(MAKE) -C libreadfile clean
