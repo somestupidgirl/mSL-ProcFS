@@ -153,9 +153,10 @@ LIBS+= -L$(KERNEL_LIBDIR) \
        -L../lib/libkern \
        -L../lib/libsbuf \
        -L../lib/libcpuft \
+       -L../lib/libbsdmalloc \
        -L../lib/libreadfile
 
-LIBS+= -lkmod -lkext -lkern -lsbuf -lcpuft
+LIBS+= -lkmod -lkext -lkern -lsbuf -lcpuft -lbsdmalloc
 
 KLFLAGS+= -xml -c -undef-symbols
 
