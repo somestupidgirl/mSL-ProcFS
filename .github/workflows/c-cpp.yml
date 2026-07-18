@@ -13,12 +13,22 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    # The mount helper (fs/mount_procfs.c) includes <libutil/mntopts.h> from the
-    # lib/libutil submodule. Fetch only that one: lib/xnu is huge and unused at
-    # build time (the tree ships the needed headers under include/xnu), and
-    # MacKernelSDK uses an SSH URL that CI cannot authenticate.
-    - name: Check out the libutil submodule
-      run: git submodule update --init lib/libutil
+    # Fetch only the submodules the build actually needs:
+    #   libutil                        - fs/mount_procfs.c includes <libutil/mntopts.h>
+    #   libbsdmalloc, libsbuf,
+    #   libcpuft, libkext              - the kernel libraries lib/Makefile builds
+    #
+    # Deliberately excluded: lib/xnu is huge and unused at build time (the tree
+    # ships the needed headers under include/xnu), MacKernelSDK uses an SSH URL
+    # that CI cannot authenticate, and libreadfile is not currently built.
+    - name: Check out the build submodules
+      run: |
+        git submodule update --init \
+          lib/libutil \
+          lib/libbsdmalloc \
+          lib/libsbuf \
+          lib/libcpuft \
+          lib/libkext
     - name: make ARCH=arm64e
       run: make ARCH=arm64e
     - name: make ARCH=x86_64
