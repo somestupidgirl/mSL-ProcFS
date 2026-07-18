@@ -30,9 +30,15 @@ CFLAGS?=    -target $(TARGET_TRIPLE)            \
             $(ARCHFLAGS)                        \
             -Wall -Wextra -Wno-unused-function
 
+# libcpuft's own <cpuft.h> comes first; the BSD-style _MALLOC()/_FREE() wrapper
+# (libbsdmalloc) must precede the kernel headers so its <sys/malloc.h> is found
+# ahead of them (it then #include_next's the real one). -I.. resolves the
+# sibling <libkext/libkext.h>.
 ifeq ($(findstring arm64,$(TARGET_TRIPLE)),arm64)
-CFLAGS+=    -I../libbsdmalloc/include            \
+CFLAGS+=    -Iinclude                            \
+            -I../libbsdmalloc/include            \
             -I../libsbuf/include                \
+            -I..                                \
             -I../../include/xnu/bsd             \
             -I../../include/xnu/libkern         \
             -I../../include/xnu/osfmk           \
@@ -40,18 +46,17 @@ CFLAGS+=    -I../libbsdmalloc/include            \
             -isystem $(KERNEL_HEADERS)/arm64    \
             -isystem $(KERNEL_HEADERS)/arm
 else
-CFLAGS+=    -I../libbsdmalloc/include            \
+CFLAGS+=    -Iinclude                            \
+            -I../libbsdmalloc/include            \
             -I../libsbuf/include                \
+            -I..                                \
             -I../../include/xnu/bsd             \
             -I../../include/xnu/libkern         \
             -I../../include/xnu/osfmk           \
             -I../../include/xnu/pexpert
 endif
 
-CFLAGS+=    -I../../include                     \
-            -I../../lib                         \
-            -isystem $(KERNEL_HEADERS)          \
-            -isystem $(USR_HEADERS)             \
+CFLAGS+=    -isystem $(KERNEL_HEADERS)          \
             -isystem $(USR_HEADERS)
 
 # Compile the vendored XNU headers in their kernel-private configuration,
@@ -61,10 +66,10 @@ CFLAGS+=    -DKERNEL -DPRIVATE -DKERNEL_PRIVATE -DXNU_KERNEL_PRIVATE \
             -D_DARWIN_C_SOURCE -DMACH_BSD -DXNU_TARGET_OS_OSX -DXNU_PLATFORM_MacOSX
 
 EXT =       a
-LIB =       libkprocfs.$(EXT)
+LIB =       libkern.$(EXT)
 SRCS =      $(wildcard *.c)
 LIB_OBJS =  $(patsubst %.c,%.o,$(sort $(SRCS)))
-INC =       -I.
+INC =       -Iinclude
 
 all: $(LIB)
 

@@ -11,7 +11,7 @@ debug:
 	$(MAKE) -C libsbuf
 	$(MAKE) -C libkext
 	$(MAKE) -C libcpuft
-	$(MAKE) -C libkprocfs
+	$(MAKE) -C libkern
 	$(MAKE) -C libreadfile
 
 release: TARGET=release
@@ -22,7 +22,7 @@ clean:
 	$(MAKE) -C libsbuf clean
 	$(MAKE) -C libkext clean
 	$(MAKE) -C libcpuft clean
-	$(MAKE) -C libkprocfs clean
+	$(MAKE) -C libkern clean
 	$(MAKE) -C libreadfile clean
 
 .PHONY: all debug release clean

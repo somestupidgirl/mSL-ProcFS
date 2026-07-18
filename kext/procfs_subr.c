@@ -523,7 +523,7 @@ procfs_get_representative_thread(proc_t p)
 
 /*
  * Exposes the kernel-pointer validity gate (a mapped arm64 kernel address) so
- * libkprocfs can safely guard the struct-thread field reads for /proc/<pid>/wchan.
+ * libkern can safely guard the struct-thread field reads for /proc/<pid>/wchan.
  */
 boolean_t
 procfs_kernel_ptr_ok(uintptr_t va)

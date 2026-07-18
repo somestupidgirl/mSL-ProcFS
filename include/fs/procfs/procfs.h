@@ -788,6 +788,32 @@ extern int procfs_doregs_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_dofpregs_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 extern int procfs_doauxv_linux(pfsnode_t *pnp, uio_t uio, vfs_context_t ctx);
 
+/*
+ * Kernel-side helpers that belong to procfs rather than to libkern, because
+ * they depend on this kext (the OSMalloc tag, procfs_subr.c) or on the procfsd
+ * daemon. Implemented in procfs_kern.c.
+ *
+ * proc_pidtaskinfo()/proc_pidthreadinfo() are the no-daemon fallbacks: XNU's
+ * private fillers are stripped on arm64 and cannot be re-implemented in-kernel
+ * (they need the opaque Mach task/thread layout), so these zero the struct and
+ * the daemon supplies the real one.
+ */
+extern int proc_pidtaskinfo(proc_t p, struct proc_taskinfo * ptinfo);
+extern int proc_pidthreadinfo(proc_t p, uint64_t arg, bool thuniqueid, struct proc_threadinfo *pthinfo);
+
+/*
+ * Enumerate the system's held byte-range file locks into an sbuf in Linux's
+ * /proc/locks format.
+ */
+struct sbuf;
+extern void procfs_build_locks(struct sbuf *sb, vfs_context_t ctx);
+
+/*
+ * Fill *unslid with the un-slid kernel address of a process's representative
+ * thread's continuation (its wchan), or 0 if it has none. Returns 0 on success.
+ */
+extern int procfs_thread_continuation(proc_t p, uint64_t *runtime);
+
 #endif /* __FSBUNDLE__ */
 
 #endif /* procfs_h */

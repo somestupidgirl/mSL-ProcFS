@@ -67,7 +67,7 @@
 #include <sys/sbuf.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
-#include <libkprocfs/kern.h>
+#include <kern.h>
 #include <cpuft.h>
 
 #include <fs/procfs/procfs.h>
@@ -2403,7 +2403,7 @@ procfs_docpu(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
  * CONFIG_KALLSYMS wchan), or "0" if it is not blocked. XNU exposes no KPI for
  * this, so it is recovered directly:
  *
- *   1. libkprocfs reads the process's representative blocked thread's
+ *   1. procfs_kern.c reads the process's representative blocked thread's
  *      continuation - the function a blocked thread resumes at, i.e. exactly the
  *      wchan - PAC-stripped (procfs_thread_continuation). The offset of the
  *      continuation field in the opaque struct thread is discovered once at
@@ -3104,7 +3104,7 @@ procfs_doslabinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx
 /*
  * /proc/locks - Linux's table of the byte-range (advisory) file locks the kernel
  * currently holds. XNU stores these per-vnode (vp->v_lockf) with no global
- * registry, so libkprocfs enumerates every vnode with the public VFS iterators
+ * registry, so procfs_kern.c enumerates every vnode with the public VFS iterators
  * (vfs_iterate over mounts, vnode_iterate over each mount's vnodes) and emits
  * each vnode's lock list - a fully in-kernel forward-port. macOS has no
  * mandatory locking, so every lock is reported ADVISORY. Empty is normal.
