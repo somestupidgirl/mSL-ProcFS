@@ -1,5 +1,5 @@
-#ifndef cpu_h
-#define cpu_h
+#ifndef cpuft_h
+#define cpuft_h
 
 #include <stdint.h>
 
@@ -13,7 +13,7 @@
 /*
  * sysctlbyname() is an exported kernel KPI symbol, but the latest
  * <sys/sysctl.h> only prototypes it in the !KERNEL branch; declare it here for
- * this kernel-private build (both cpu.c and procfs_linux.c call it).
+ * this kernel-private build (the library and its consumers call it).
  */
 extern int sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
                         void *newp, size_t newlen);
@@ -30,73 +30,16 @@ extern uint32_t     enable_write_protection(void);
 extern uint32_t     set_microcode_version(void);
 extern uint32_t     get_microcode_version(void);
 
-extern char        *get_cpu_flags(void);
+/*
+ * get_cpu_flags() renders the CPU feature list. On ARM64 the flag order depends
+ * on linux_hwcap_order: non-zero emits them in the Linux AArch64 HWCAP print
+ * order (for a /proc/cpuinfo-compatible Features line), zero keeps the internal
+ * grouped order. The argument is ignored on x86.
+ */
+extern char        *get_cpu_flags(int linux_hwcap_order);
 extern char        *get_cpu_ext_flags(void);
 extern char        *get_leaf7_flags(void);
 extern char        *get_leaf7_ext_flags(void);
-
-#pragma mark -
-#pragma mark Per-CPU interrupt / softirq accounting
-
-#include <fs/procfs/procfs_ctl.h>   /* struct procfs_cpu_stat, PROCFS_REQ_CPUSTAT */
-
-/*
- * The XNU-side analog of the Linux softirq concept. XNU has no softirqs, but it
- * maintains per-CPU interrupt-event counters - hardware IRQs, inter-processor
- * interrupts and timer interrupts - which host_processor_info(PROCESSOR_CPU_STAT)
- * exposes. In-kernel that flavor reads zero for a kext, so the counters are
- * fetched from the procfsd daemon (userspace host_processor_info) and surfaced as
- * the per-CPU interrupt/softirq information that /proc/interrupts and
- * /proc/softirqs (and anything else built on the concept) need. Without a daemon
- * the counters are zero.
- */
-
-/*
- * Linux softirq vectors, in /proc/softirqs order.
- */
-enum procfs_softirq {
-    PROCFS_SOFTIRQ_HI = 0,
-    PROCFS_SOFTIRQ_TIMER,
-    PROCFS_SOFTIRQ_NET_TX,
-    PROCFS_SOFTIRQ_NET_RX,
-    PROCFS_SOFTIRQ_BLOCK,
-    PROCFS_SOFTIRQ_IRQ_POLL,
-    PROCFS_SOFTIRQ_TASKLET,
-    PROCFS_SOFTIRQ_SCHED,
-    PROCFS_SOFTIRQ_HRTIMER,
-    PROCFS_SOFTIRQ_RCU,
-    PROCFS_NR_SOFTIRQ
-};
-
-/*
- * Softirq vector names, indexed by enum procfs_softirq (for /proc/softirqs).
- */
-extern const char *const procfs_softirq_names[PROCFS_NR_SOFTIRQ];
-
-/*
- * Fetch per-CPU interrupt counters for all online CPUs from the procfsd daemon
- * (one PROCFS_REQ_CPUSTAT request). Fills out[0..ncpu); entries the daemon does
- * not report (or all of them, with no daemon) are left zeroed. Returns 0 on
- * success, else an errno.
- */
-extern int procfs_cpu_stat_all(struct procfs_cpu_stat *out, uint32_t ncpu);
-
-/*
- * Map one CPU's raw counters onto the Linux softirq vectors (TIMER/HRTIMER from
- * the timer interrupt, SCHED from reschedule IPIs; vectors with no XNU counter
- * stay 0). Pure - no I/O.
- */
-extern void procfs_cpu_softirq_map(const struct procfs_cpu_stat *st,
-                                   uint64_t counts[PROCFS_NR_SOFTIRQ]);
-
-/*
- * Fetch per-logical-CPU cluster types from the procfsd daemon (the device-tree
- * 'E'/'P', PROCFS_REQ_CPUCLUSTERS): the authoritative source for which cores are
- * efficiency vs performance, used for the per-core /proc/cpuinfo part number.
- * Fills out[0..ncpu); unreported entries (or all, with no daemon) are '?'.
- * Returns 0 on success, else an errno.
- */
-extern int procfs_cpu_clusters(char *out, uint32_t ncpu);
 
 #if defined(__x86_64__)
 #include <i386/cpuid.h>
@@ -105,10 +48,10 @@ extern int procfs_cpu_clusters(char *out, uint32_t ncpu);
  * Forward-ported cpuid_info(): fills an i386_cpu_info_t from the cpuid
  * instruction (do_cpuid) plus a couple of public sysctls, in place of the
  * kernel's private cpuid_info() (not linkable by a third-party kext). Used
- * through the cpuid_info() macro by cpu.c and procfs_linux.c's x86 /proc/cpuinfo.
+ * through the cpuid_info() macro below.
  */
-extern i386_cpu_info_t *procfs_cpuid_info(void);
-#define cpuid_info() procfs_cpuid_info()
+extern i386_cpu_info_t *cpuft_cpuid_info(void);
+#define cpuid_info() cpuft_cpuid_info()
 
 /*
  * x86-only: power-management line (CPUID 0x80000007) and CPU bug classes
@@ -189,4 +132,4 @@ extern arm_cpu_info_t *cpuid_info(void);
 
 #endif /* __arm64__ || __aarch64__ */
 
-#endif /* cpu_h */
+#endif /* cpuft_h */

@@ -68,7 +68,7 @@
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <libkprocfs/kern.h>
-#include <libkprocfs/cpu.h>
+#include <cpuft.h>
 
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_iokit.h>
@@ -317,7 +317,7 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
         /*
          * Fetch the CPU flags.
          */
-        cpuflags        = get_cpu_flags();
+        cpuflags        = get_cpu_flags(procfs_linux_mode);
 
         /*
          * On AMD, the 0x80000001 flags come from the AMD getters (correct Linux
@@ -450,7 +450,7 @@ procfs_docpuinfo(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 #elif defined(__arm64__) || defined(__aarch64__)
 
     const char *bogomips     = arm64_bogomips();
-    const char *features     = get_cpu_flags();
+    const char *features     = get_cpu_flags(procfs_linux_mode);
     const char *implementer  = arm64_cpu_implementer();
     const char *architecture = arm64_cpu_architecture();
     const char *variant      = arm64_cpu_variant();
@@ -995,7 +995,7 @@ static uint32_t procfs_online_cpus(void);   /* defined with the /proc/irq nodes 
 /*
  * /proc/softirqs - Linux's per-CPU softirq counts, one line per softirq type.
  * Softirqs are a Linux-specific bottom-half mechanism; XNU has no softirq layer,
- * but libkprocfs/cpu.c surfaces the equivalent per-CPU event counters (timer
+ * but procfs_ctl.c surfaces the equivalent per-CPU event counters (timer
  * interrupts, reschedule IPIs) from the procfsd daemon's
  * host_processor_info(PROCESSOR_CPU_STAT) and maps them onto the softirq vectors
  * (procfs_cpu_softirq_counts). So TIMER/HRTIMER and SCHED carry real numbers;
@@ -2894,7 +2894,7 @@ procfs_dointerrupts(__unused pfsnode_t *pnp, uio_t uio, __unused vfs_context_t c
 
     /*
      * Append the architecture summary lines with real per-CPU counts - the
-     * softirq/interrupt concept from libkprocfs/cpu.c. The daemon supplies the
+     * softirq/interrupt concept from procfs_ctl.c. The daemon supplies the
      * per-device IRQ topology (counts 0, no per-line data on macOS); the kext
      * adds LOC (local timer interrupts) and RES (rescheduling IPIs), which XNU
      * does count per CPU. When there is no daemon the topology is empty, so a

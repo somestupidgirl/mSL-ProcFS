@@ -188,6 +188,53 @@ struct procfs_cpu_stat {
 };
 
 /*
+ * Linux softirq vectors, in /proc/softirqs order.
+ */
+enum procfs_softirq {
+    PROCFS_SOFTIRQ_HI = 0,
+    PROCFS_SOFTIRQ_TIMER,
+    PROCFS_SOFTIRQ_NET_TX,
+    PROCFS_SOFTIRQ_NET_RX,
+    PROCFS_SOFTIRQ_BLOCK,
+    PROCFS_SOFTIRQ_IRQ_POLL,
+    PROCFS_SOFTIRQ_TASKLET,
+    PROCFS_SOFTIRQ_SCHED,
+    PROCFS_SOFTIRQ_HRTIMER,
+    PROCFS_SOFTIRQ_RCU,
+    PROCFS_NR_SOFTIRQ
+};
+
+/*
+ * Softirq vector names, indexed by enum procfs_softirq (for /proc/softirqs).
+ */
+extern const char *const procfs_softirq_names[PROCFS_NR_SOFTIRQ];
+
+/*
+ * Fetch per-CPU interrupt counters for all online CPUs from the procfsd daemon
+ * (one PROCFS_REQ_CPUSTAT request). Fills out[0..ncpu); entries the daemon does
+ * not report (or all of them, with no daemon) are left zeroed. Returns 0 on
+ * success, else an errno.
+ */
+extern int procfs_cpu_stat_all(struct procfs_cpu_stat *out, uint32_t ncpu);
+
+/*
+ * Map one CPU's raw counters onto the Linux softirq vectors (TIMER/HRTIMER from
+ * the timer interrupt, SCHED from reschedule IPIs; vectors with no XNU counter
+ * stay 0). Pure - no I/O.
+ */
+extern void procfs_cpu_softirq_map(const struct procfs_cpu_stat *st,
+                                   uint64_t counts[PROCFS_NR_SOFTIRQ]);
+
+/*
+ * Fetch per-logical-CPU cluster types from the procfsd daemon (the device-tree
+ * 'E'/'P', PROCFS_REQ_CPUCLUSTERS): the authoritative source for which cores are
+ * efficiency vs performance, used for the per-core /proc/cpuinfo part number.
+ * Fills out[0..ncpu); unreported entries (or all, with no daemon) are '?'.
+ * Returns 0 on success, else an errno.
+ */
+extern int procfs_cpu_clusters(char *out, uint32_t ncpu);
+
+/*
  * Per-CPU tick counters for PROCFS_REQ_CPULOAD. The daemon returns one per
  * online CPU, from host_processor_info()'s PROCESSOR_CPU_LOAD_INFO flavor -
  * already in USER_HZ jiffies. These back /proc/stat's cpu/cpuN lines.

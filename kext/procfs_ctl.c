@@ -279,6 +279,99 @@ procfs_ctl_request_blob(uint32_t type, struct sbuf *sb)
     return error;
 }
 
+/*
+ * ============================================================
+ * Per-CPU interrupt / softirq accounting (all architectures)
+ *
+ * The XNU-side analog of Linux softirqs. XNU has no softirq layer, but every
+ * processor keeps per-CPU event counters - hardware IRQs, IPIs and timer
+ * interrupts - that host_processor_info(PROCESSOR_CPU_STAT) exposes. That flavor
+ * reads zero in-kernel for a kext, so the counters are fetched from the procfsd
+ * daemon (userspace host_processor_info) over this control bridge; the kext then
+ * maps them onto the softirq vectors. So /proc/interrupts and /proc/softirqs
+ * report real per-CPU numbers when the daemon is connected, zero otherwise.
+ *
+ * This used to live in the CPU library (libcpuft); it was moved here so the
+ * library carries no dependency on the daemon control bridge.
+ * ============================================================
+ */
+
+const char *const procfs_softirq_names[PROCFS_NR_SOFTIRQ] = {
+    "HI", "TIMER", "NET_TX", "NET_RX", "BLOCK",
+    "IRQ_POLL", "TASKLET", "SCHED", "HRTIMER", "RCU",
+};
+
+int
+procfs_cpu_stat_all(struct procfs_cpu_stat *out, uint32_t ncpu)
+{
+    for (uint32_t i = 0; i < ncpu; i++) {
+        out[i].hwirq = out[i].ipi = out[i].timer = 0;
+    }
+
+    /*
+     * One request returns every CPU's counters; bounce through a buffer sized to
+     * the bridge payload, then copy in what the caller asked for.
+     */
+    struct procfs_cpu_stat buf[PROCFS_CTL_MAXPAYLOAD / sizeof(struct procfs_cpu_stat)];
+    uint32_t got = 0;
+    int error = procfs_ctl_request(PROCFS_REQ_CPUSTAT, 0, 0,
+                                   buf, sizeof(buf), &got);
+    if (error != 0) {
+        /* No daemon / bridge error -> counters stay 0 */
+        return error;
+    }
+
+    uint32_t have = got / (uint32_t)sizeof(struct procfs_cpu_stat);
+    uint32_t n = (have < ncpu) ? have : ncpu;
+    for (uint32_t i = 0; i < n; i++) {
+        out[i] = buf[i];
+    }
+
+    return 0;
+}
+
+void
+procfs_cpu_softirq_map(const struct procfs_cpu_stat *st,
+                       uint64_t counts[PROCFS_NR_SOFTIRQ])
+{
+    for (int i = 0; i < PROCFS_NR_SOFTIRQ; i++) {
+        counts[i] = 0;
+    }
+    /*
+     * Map the XNU per-CPU event counters onto the Linux softirq vectors. On
+     * Linux the TIMER softirq is driven from the timer interrupt and the
+     * high-resolution-timer softirq shares that path; the SCHED softirq runs the
+     * scheduler bottom-half, whose cross-CPU work is carried by reschedule IPIs.
+     * The remaining vectors (network, block, tasklet, RCU, ...) have no per-CPU
+     * XNU counter and stay 0.
+     */
+    counts[PROCFS_SOFTIRQ_TIMER]   = st->timer;
+    counts[PROCFS_SOFTIRQ_HRTIMER] = st->timer;
+    counts[PROCFS_SOFTIRQ_SCHED]   = st->ipi;
+}
+
+int
+procfs_cpu_clusters(char *out, uint32_t ncpu)
+{
+    for (uint32_t i = 0; i < ncpu; i++) {
+        out[i] = '?';
+    }
+    char buf[256];
+    uint32_t got = 0;
+    int error = procfs_ctl_request(PROCFS_REQ_CPUCLUSTERS, 0, 0,
+                                   buf, sizeof(buf), &got);
+    if (error != 0) {
+        /* No daemon -> all '?' (caller falls back) */
+        return error;
+    }
+    uint32_t n = (got < ncpu) ? got : ncpu;
+    for (uint32_t i = 0; i < n; i++) {
+        out[i] = buf[i];
+    }
+
+    return 0;
+}
+
 kern_return_t
 procfs_ctl_register(void)
 {

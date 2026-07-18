@@ -103,6 +103,7 @@ CFLAGS+= -target $(TARGET_TRIPLE) \
          -fno-stack-protector \
          -I../lib/libbsdmalloc/include \
          -I../lib/libsbuf/include \
+         -I../lib/libcpuft/include \
          -I../lib \
          -I../include \
          $(XNU_INCLUDES) \
@@ -150,9 +151,10 @@ LIBS+= -L$(KERNEL_LIBDIR) \
        -L../lib/libkext \
        -L../lib/libkprocfs \
        -L../lib/libsbuf \
+       -L../lib/libcpuft \
        -L../lib/libreadfile
 
-LIBS+= -lkmod -lkext -lkprocfs -lsbuf
+LIBS+= -lkmod -lkext -lkprocfs -lsbuf -lcpuft
 
 KLFLAGS+= -xml -c -undef-symbols
 

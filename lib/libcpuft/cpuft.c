@@ -1,26 +1,28 @@
 /*
- * Copyright (c) 2014 squiffypwn. All rights reserved.
- * Copyright (c) 2022-2026 Sunneva N. Mariu
+ * cpuft.c - CPU feature/identification helpers (libcpuft).
  *
- * cpuinfo.c
+ * CPU kext library containing various odds and ends for CPU-related things,
+ * with AMD support in mind on x86 and Linux /proc/cpuinfo-compatible output.
  *
- * CPU kext library containing various odds and ends
- * for various CPU-related things and with AMD support
- * in mind.
+ * This file combines code under two licenses; see the LICENSE file in this
+ * directory for the full terms:
  *
- * Certain functions have been pulled from the AMD
- * patches for XNU authored by Shaneee, AlGrey and
- * others. Specifically the following functions:
+ *   - APSL 2.0: portions derived from Apple's XNU kernel and from Shaneee's
+ *     Mojave_AMD_XNU, an AMD-compatibility fork of XNU
+ *     (https://github.com/Shaneee/Mojave_AMD_XNU). Both upstreams are
+ *     distributed under the Apple Public Source License, Version 2.0, so these
+ *     portions remain under APSL 2.0. Functions adapted from the AMD-for-XNU
+ *     patches (authored by Shaneee, AlGrey and others) include is_amd_cpu(),
+ *     is_intel_cpu(), extract_bitfield() and get_bitfield_width(); the x86
+ *     cpuft_cpuid_info() is a forward-port of XNU's private cpuid_info()
+ *     (osfmk/i386/cpuid.c).
+ *         Copyright (c) 2000-2012 Apple Inc. All rights reserved.
  *
- *      is_amd_cpu()
- *      is_intel_cpu()
- *      extract_bitfield()
- *      get_bitfield_width()
- *
- * ARM64 support added by Sunneva Jonsdottir (2024).
- * ARM64 CPU identification uses sysctlbyname() in place
- * of CPUID, and produces output compatible with the
- * Linux /proc/cpuinfo format for ARM64.
+ *   - MIT: the remaining original code, including the ARM64 CPU identification
+ *     (added by Sunneva Jonsdottir, 2024, using sysctlbyname() in place of
+ *     CPUID to produce Linux ARM64 /proc/cpuinfo output) and the library glue.
+ *         Copyright (c) 2014 squiffypwn
+ *         Copyright (c) 2022-2026 Sunneva N. Mariu
  */
 
 #include <stddef.h>
@@ -38,7 +40,7 @@
 #include <sys/systm.h>
 #include <sys/types.h>
 
-#include "cpu.h"
+#include <cpuft.h>
 
 /*
  * ============================================================
@@ -113,12 +115,12 @@ is_intel_cpu(void)
  * instruction directly (do_cpuid), plus public sysctls for the core count and
  * L2 cache size. This replaces the kernel's private cpuid_info() (declared in
  * <i386/cpuid.h> but not exported for third-party kext linkage), keeping all the
- * existing feature-bit decoding in this file and procfs_linux.c working. The
+ * existing feature-bit decoding in this file and its consumers working. The
  * result is cached in a persistent static so set_microcode_version() can write
  * cpuid_microcode_version into it.
  */
 i386_cpu_info_t *
-procfs_cpuid_info(void)
+cpuft_cpuid_info(void)
 {
     static i386_cpu_info_t info;
     static boolean_t       inited = FALSE;
@@ -458,8 +460,9 @@ feature_flags[] = {
 };
 
 char *
-get_cpu_flags(void)
+get_cpu_flags(int linux_hwcap_order)
 {
+    (void)linux_hwcap_order;    /* only the arm64 build orders flags by HWCAP */
     /*
      * Static buffer (mirrors the arm64 getters): a real char array so sizeof()
      * is the byte capacity, initialised before use, and valid after return -
@@ -1242,7 +1245,7 @@ arm64_sysctl_int(const char *name)
  * compatibility with tooling that parses /proc/cpuinfo.
  */
 char *
-get_cpu_flags(void)
+get_cpu_flags(int linux_hwcap_order)
 {
     /*
      * Static buffer — safe in kext context since this is
@@ -1331,7 +1334,6 @@ get_cpu_flags(void)
      * compatibility is on, the Features line is emitted in this order so it
      * matches a real /proc/cpuinfo; otherwise the map's grouped order is kept.
      */
-    extern int procfs_linux_mode;
     static const char *const hwcap_order[] = {
         "fp", "asimd", "evtstrm", "aes", "pmull", "sha1", "sha2", "crc32",
         "atomics", "fphp", "asimdhp", "cpuid", "asimdrdm", "jscvt", "fcma",
@@ -1386,7 +1388,7 @@ get_cpu_flags(void)
         n++;
     }
 
-    if (procfs_linux_mode) {
+    if (linux_hwcap_order) {
         /*
          * Stable insertion sort into HWCAP order.
          */
@@ -1519,7 +1521,7 @@ arm64_cpu_variant(void)
  * arm64_cpu_part_ecore() - efficiency-core part number.
  *
  * Derived from hw.cpufamily; the caller picks one per logical CPU from the
- * device-tree cluster type (procfs_cpu_clusters).
+ * device-tree cluster type.
  */
 static uint32_t
 arm64_family(void)
@@ -1617,97 +1619,3 @@ arm64_bogomips(void)
 
 #endif /* __arm64__ */
 
-/*
- * ============================================================
- * Per-CPU interrupt / softirq accounting (all architectures)
- *
- * The XNU-side analog of Linux softirqs. XNU has no softirq layer, but every
- * processor keeps per-CPU event counters - hardware IRQs, IPIs and timer
- * interrupts - that host_processor_info(PROCESSOR_CPU_STAT) exposes. That flavor
- * reads zero in-kernel for a kext, so the counters are fetched from the procfsd
- * daemon (userspace host_processor_info) over the control bridge; the kext then
- * maps them onto the softirq vectors. So /proc/interrupts and /proc/softirqs
- * report real per-CPU numbers when the daemon is connected, zero otherwise.
- * ============================================================
- */
-
-/* Implemented in kext/procfs_ctl.c; resolved when libkprocfs is linked into the
- * kext. Declared here to avoid pulling the whole kext procfs.h into the lib. */
-extern int procfs_ctl_request(uint32_t type, int pid, uint64_t arg,
-                              void *out, uint32_t outcap, uint32_t *outlen);
-
-const char *const procfs_softirq_names[PROCFS_NR_SOFTIRQ] = {
-    "HI", "TIMER", "NET_TX", "NET_RX", "BLOCK",
-    "IRQ_POLL", "TASKLET", "SCHED", "HRTIMER", "RCU",
-};
-
-int
-procfs_cpu_stat_all(struct procfs_cpu_stat *out, uint32_t ncpu)
-{
-    for (uint32_t i = 0; i < ncpu; i++) {
-        out[i].hwirq = out[i].ipi = out[i].timer = 0;
-    }
-
-    /*
-     * One request returns every CPU's counters; bounce through a buffer sized to
-     * the bridge payload, then copy in what the caller asked for.
-     */
-    struct procfs_cpu_stat buf[PROCFS_CTL_MAXPAYLOAD / sizeof(struct procfs_cpu_stat)];
-    uint32_t got = 0;
-    int error = procfs_ctl_request(PROCFS_REQ_CPUSTAT, 0, 0,
-                                   buf, sizeof(buf), &got);
-    if (error != 0) {
-        /* No daemon / bridge error -> counters stay 0 */
-        return error;
-    }
-
-    uint32_t have = got / (uint32_t)sizeof(struct procfs_cpu_stat);
-    uint32_t n = (have < ncpu) ? have : ncpu;
-    for (uint32_t i = 0; i < n; i++) {
-        out[i] = buf[i];
-    }
-
-    return 0;
-}
-
-void
-procfs_cpu_softirq_map(const struct procfs_cpu_stat *st,
-                       uint64_t counts[PROCFS_NR_SOFTIRQ])
-{
-    for (int i = 0; i < PROCFS_NR_SOFTIRQ; i++) {
-        counts[i] = 0;
-    }
-    /*
-     * Map the XNU per-CPU event counters onto the Linux softirq vectors. On
-     * Linux the TIMER softirq is driven from the timer interrupt and the
-     * high-resolution-timer softirq shares that path; the SCHED softirq runs the
-     * scheduler bottom-half, whose cross-CPU work is carried by reschedule IPIs.
-     * The remaining vectors (network, block, tasklet, RCU, ...) have no per-CPU
-     * XNU counter and stay 0.
-     */
-    counts[PROCFS_SOFTIRQ_TIMER]   = st->timer;
-    counts[PROCFS_SOFTIRQ_HRTIMER] = st->timer;
-    counts[PROCFS_SOFTIRQ_SCHED]   = st->ipi;
-}
-
-int
-procfs_cpu_clusters(char *out, uint32_t ncpu)
-{
-    for (uint32_t i = 0; i < ncpu; i++) {
-        out[i] = '?';
-    }
-    char buf[256];
-    uint32_t got = 0;
-    int error = procfs_ctl_request(PROCFS_REQ_CPUCLUSTERS, 0, 0,
-                                   buf, sizeof(buf), &got);
-    if (error != 0) {
-        /* No daemon -> all '?' (caller falls back) */
-        return error;
-    }
-    uint32_t n = (got < ncpu) ? got : ncpu;
-    for (uint32_t i = 0; i < n; i++) {
-        out[i] = buf[i];
-    }
-
-    return 0;
-}
