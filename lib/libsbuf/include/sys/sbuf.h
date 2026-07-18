@@ -54,7 +54,6 @@ struct sbuf {
 };
 
 __BEGIN_DECLS
-#ifdef KERNEL_PRIVATE
 struct sbuf     *sbuf_new(struct sbuf *, char *, int, int);
 void             sbuf_clear(struct sbuf *);
 int              sbuf_setpos(struct sbuf *, int);
@@ -72,8 +71,6 @@ char            *sbuf_data(struct sbuf *);
 int              sbuf_len(struct sbuf *);
 int              sbuf_done(struct sbuf *);
 void             sbuf_delete(struct sbuf *);
-#endif
-
 __END_DECLS
 
 #endif
