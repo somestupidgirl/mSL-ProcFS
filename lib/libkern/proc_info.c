@@ -35,41 +35,16 @@
  * re-implemented in terms of public ones. See README.md.
  */
 
-#include <ptrauth.h>
 
-#include <kern/locks.h>
-#include <kern/kern_types.h>
 
-#include <libkern/OSMalloc.h>
-#include <libkern/OSAtomic.h>
 
-#include <mach/mach_types.h>
 
-#include <os/log.h>
-#include <os/refcnt.h>
 
-#include <sys/fcntl.h>
-#include <sys/guarded.h>
-#include <sys/file.h>
 #include <sys/file_internal.h>
-#include <sys/filedesc.h>
 #include <sys/kauth.h>
 #include <sys/mount_internal.h>
-#include <sys/param.h>
-#include <sys/kpi_socket.h>
-#include <sys/proc.h>
 #include <sys/proc_info.h>
-#include <sys/proc_internal.h>
-#include <sys/queue.h>
-#include <sys/resource.h>
-#include <sys/socket.h>
-#include <sys/sysctl.h>
-#include <sys/syslimits.h>
-#include <sys/types.h>
-#include <sys/user.h>
 #include <sys/vnode.h>
-#include <sys/vnode_internal.h>
-#include <sys/sbuf.h>
 
 
 /*
@@ -81,7 +56,6 @@
 #ifndef IMPORTANCE_INHERITANCE
 #define IMPORTANCE_INHERITANCE 1
 #endif
-#include <sys/lockf.h>
 
 
 #include <kern.h>
