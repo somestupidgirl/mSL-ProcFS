@@ -14,3 +14,6 @@
 [submodule "lib/libbsdmalloc"]
 	path = lib/libbsdmalloc
 	url = https://github.com/somestupidgirl/libbsdmalloc.git
+[submodule "lib/libcpuft"]
+	path = lib/libcpuft
+	url = https://github.com/somestupidgirl/libcpuft
