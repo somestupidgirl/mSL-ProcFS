@@ -3265,6 +3265,67 @@ blob_slice(const char *blob, size_t len, size_t off,
 }
 
 /*
+ * Serve a PROCFS_REQ_THREADLIST request: the thread ids of a process.
+ *
+ * The kext can enumerate these itself by walking the BSD p_uthlist, but that
+ * depends on the p_uthlist offset within struct proc and on the size of the
+ * opaque struct thread, both of which drift across kernel point-releases. Doing
+ * it from userspace is version-robust.
+ *
+ * The ids must be mach thread ids, because that is what the kext names
+ * /proc/<pid>/task/<tid> entries by and what PROCFS_REQ_THREADINFO
+ * (PROC_PIDTHREADID64INFO) takes. proc_pidinfo(PROC_PIDLISTTHREADS) is NOT
+ * usable here: it returns opaque thread handles, which PROC_PIDTHREADID64INFO
+ * rejects. So walk the task's threads and ask each for its THREAD_IDENTIFIER_INFO.
+ *
+ * Like the other task_for_pid users here, this reports EPERM for SIP/AMFI and
+ * hardened targets; the kext falls back to its in-kernel walk for those.
+ */
+static void
+procfsd_handle_threadlist(const struct procfs_ctl_req *req, struct procfs_ctl_resp *resp,
+    void *payload)
+{
+    task_t task = TASK_NULL;
+    if (task_for_pid(mach_task_self(), req->pid, &task) != KERN_SUCCESS) {
+        resp->error = EPERM;
+        return;
+    }
+
+    thread_act_array_t     threads = NULL;
+    mach_msg_type_number_t tcount  = 0;
+    if (task_threads(task, &threads, &tcount) != KERN_SUCCESS || tcount == 0) {
+        resp->error = ESRCH;
+        mach_port_deallocate(mach_task_self(), task);
+        return;
+    }
+
+    uint64_t *ids = (uint64_t *)payload;
+    const uint32_t maxids = PROCFS_CTL_MAXPAYLOAD / (uint32_t)sizeof(uint64_t);
+    uint32_t n = 0;
+
+    for (mach_msg_type_number_t i = 0; i < tcount && n < maxids; i++) {
+        thread_identifier_info_data_t ii;
+        mach_msg_type_number_t c = THREAD_IDENTIFIER_INFO_COUNT;
+        if (thread_info(threads[i], THREAD_IDENTIFIER_INFO,
+                (thread_info_t)&ii, &c) == KERN_SUCCESS) {
+            ids[n++] = ii.thread_id;
+        }
+    }
+
+    if (n > 0) {
+        resp->len = n * (uint32_t)sizeof(uint64_t);
+    } else {
+        resp->error = ESRCH;
+    }
+
+    for (mach_msg_type_number_t i = 0; i < tcount; i++) {
+        mach_port_deallocate(mach_task_self(), threads[i]);
+    }
+    vm_deallocate(mach_task_self(), (vm_address_t)threads, tcount * sizeof(thread_act_t));
+    mach_port_deallocate(mach_task_self(), task);
+}
+
+/*
  * Serve a PROCFS_REQ_REGS / PROCFS_REQ_FPREGS request. thread_get_state is
  * stripped from the arm64 kernelcache, so the kext cannot read register state;
  * we do it from userspace - get the target's task port, then read its
@@ -3745,6 +3806,9 @@ main(__unused int argc, __unused char **argv)
             }
             break;
         }
+        case PROCFS_REQ_THREADLIST:
+            procfsd_handle_threadlist(req, resp, payload);
+            break;
         case PROCFS_REQ_FDINFO: {
             struct vnode_fdinfowithpath vi;
             int r = proc_pidfdinfo(req->pid, (int)req->arg, PROC_PIDFDVNODEPATHINFO,

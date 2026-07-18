@@ -173,6 +173,20 @@ enum {
     PROCFS_REQ_NETSNMP    = 51, /* arg = byte offset; Linux /proc/net/snmp
                                  * (Ip/Icmp/Tcp/Udp MIB) from
                                  * net.inet.{ip,icmp,tcp,udp}.stats. */
+    PROCFS_REQ_THREADLIST = 52, /* payload: uint64_t[] mach thread ids of the
+                                 * process, from task_threads() +
+                                 * THREAD_IDENTIFIER_INFO. Preferred over the
+                                 * in-kernel p_uthlist walk, whose struct proc
+                                 * offset and struct thread size drift across
+                                 * kernel point-releases. These are the ids
+                                 * PROCFS_REQ_THREADINFO takes and that name the
+                                 * task/<tid> entries; proc_pidinfo(
+                                 * PROC_PIDLISTTHREADS) is NOT usable, as it
+                                 * returns opaque handles that
+                                 * PROC_PIDTHREADID64INFO rejects. Needs
+                                 * task_for_pid, so EPERM for SIP/AMFI and
+                                 * hardened targets - the kext then falls back
+                                 * to its in-kernel walk. */
 };
 
 /*
