@@ -67,9 +67,6 @@
 #include <sys/sbuf.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
-
-#include <bsdcompat/sys/malloc.h>
-
 #include <libkprocfs/kern.h>
 #include <libkprocfs/cpu.h>
 

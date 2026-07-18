@@ -26,8 +26,6 @@
 #include <sys/proc.h>
 #include <sys/proc_internal.h>
 #include <sys/uio.h>
-
-#include <bsdcompat/sys/malloc.h>
 #include <fs/procfs/procfs.h>
 
 int

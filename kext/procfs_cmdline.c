@@ -32,9 +32,6 @@
 #include <sys/proc_internal.h>
 #include <sys/types.h>
 #include <sys/uio.h>
-
-#include <bsdcompat/sys/malloc.h>
-
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_ctl.h>
 

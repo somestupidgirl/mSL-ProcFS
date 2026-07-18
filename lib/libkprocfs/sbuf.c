@@ -34,7 +34,6 @@
  * source. (Original: #include <kern/kalloc.h>)
  */
 #include <sys/malloc.h>
-#include <bsdcompat/sys/malloc.h>
 
 #ifndef Z_WAITOK
 #define Z_WAITOK 0x0001

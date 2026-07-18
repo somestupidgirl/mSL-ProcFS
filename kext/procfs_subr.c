@@ -24,9 +24,6 @@
 #include <sys/proc_info.h>
 #include <sys/ucred.h>
 #include <sys/vnode.h>
-
-#include <bsdcompat/sys/malloc.h>
-
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_ctl.h>
 

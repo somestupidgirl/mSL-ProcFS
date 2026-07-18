@@ -101,6 +101,7 @@ CFLAGS+= -target $(TARGET_TRIPLE) \
          -mkernel \
          -fno-stack-check \
          -fno-stack-protector \
+         -I../lib/libbsdmalloc/include \
          -I../lib \
          -I../include \
          $(XNU_INCLUDES) \
