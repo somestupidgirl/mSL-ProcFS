@@ -442,8 +442,15 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
     *thread_ids = NULL;
     *thread_count = 0;
 
+    /*
+     * The result of this function is returned straight out of VNOP_READDIR, so
+     * it must be an errno - a Mach KERN_* code would surface to userspace as a
+     * nonsensical message (KERN_NOT_SUPPORTED is 46, i.e. EPFNOSUPPORT,
+     * "Protocol family not supported"). Success is 0 either way, which is what
+     * the callers test.
+     */
     if (p == PROC_NULL) {
-        return KERN_NOT_SUPPORTED;
+        return EINVAL;
     }
 
     /*
@@ -461,12 +468,15 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
      * bridge reply lands in a full-size bounce buffer first and is then copied
      * into an allocation of precisely the returned length.
      */
+    int derror = ENOTSUP;   /* why the daemon could not answer, if it could not */
+
     const uint32_t dcap = PROCFS_CTL_MAXPAYLOAD;
     uint64_t *bounce = (uint64_t *)OSMalloc(dcap, procfs_osmalloc_tag);
     if (bounce != NULL) {
         uint32_t got = 0;
-        if (procfs_ctl_request(PROCFS_REQ_THREADLIST, proc_pid(p), 0,
-                bounce, dcap, &got) == 0 && got >= sizeof(uint64_t)) {
+        derror = procfs_ctl_request(PROCFS_REQ_THREADLIST, proc_pid(p), 0,
+                bounce, dcap, &got);
+        if (derror == 0 && got >= sizeof(uint64_t)) {
             uint32_t n   = got / (uint32_t)sizeof(uint64_t);
             uint32_t sz  = n * (uint32_t)sizeof(uint64_t);
             uint64_t *ids_d = (uint64_t *)OSMalloc(sz, procfs_osmalloc_tag);
@@ -475,8 +485,10 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
                 OSFree(bounce, dcap, procfs_osmalloc_tag);
                 *thread_ids   = ids_d;
                 *thread_count = (int)n;
-                return KERN_SUCCESS;
+                return 0;
             }
+            OSFree(bounce, dcap, procfs_osmalloc_tag);
+            return ENOMEM;
         }
         /*
          * No daemon, it reported nothing, or the copy failed -> fall back to
@@ -487,7 +499,14 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
 
     procfs_thread_size_init();
     if (!g_thread_size_known) {
-        return KERN_NOT_SUPPORTED;
+        /*
+         * Neither path is available. If the daemon refused because
+         * task_for_pid was denied - the target is a SIP/AMFI or hardened
+         * binary - report that as EPERM, the same answer maps and regs give
+         * for the identical cause. Anything else (no daemon at all) is
+         * genuinely "unsupported".
+         */
+        return (derror == EPERM) ? EPERM : ENOTSUP;
     }
 
     /*
@@ -504,12 +523,12 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
     }
 
     if (count == 0) {
-        return KERN_SUCCESS;
+        return 0;
     }
 
     uint64_t *ids = (uint64_t *)OSMalloc((uint32_t)(count * sizeof(uint64_t)), procfs_osmalloc_tag);
     if (ids == NULL) {
-        return KERN_RESOURCE_SHORTAGE;
+        return ENOMEM;
     }
 
     /*
@@ -532,7 +551,7 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
     *thread_ids = ids;
     *thread_count = n;
 
-    return KERN_SUCCESS;
+    return 0;
 }
 
 /*
