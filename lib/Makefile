@@ -1,6 +1,11 @@
 #
 # All-in-one Makefile
 #
+# libreadfile is intentionally not built: nothing in procfs uses read_file()
+# yet. The submodule is kept in lib/ for future use; add it back here (and
+# link -lreadfile with -I../lib/libreadfile/include in kext/Makefile) when a
+# consumer appears.
+#
 
 MAKE=make
 
@@ -12,7 +17,6 @@ debug:
 	$(MAKE) -C libkext
 	$(MAKE) -C libcpuft
 	$(MAKE) -C libkern
-	$(MAKE) -C libreadfile
 
 release: TARGET=release
 release: debug
@@ -23,6 +27,5 @@ clean:
 	$(MAKE) -C libkext clean
 	$(MAKE) -C libcpuft clean
 	$(MAKE) -C libkern clean
-	$(MAKE) -C libreadfile clean
 
 .PHONY: all debug release clean

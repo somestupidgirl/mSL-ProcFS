@@ -153,8 +153,7 @@ LIBS+= -L$(KERNEL_LIBDIR) \
        -L../lib/libkern \
        -L../lib/libsbuf \
        -L../lib/libcpuft \
-       -L../lib/libbsdmalloc \
-       -L../lib/libreadfile
+       -L../lib/libbsdmalloc
 
 LIBS+= -lkmod -lkext -lkern -lsbuf -lcpuft -lbsdmalloc
 
