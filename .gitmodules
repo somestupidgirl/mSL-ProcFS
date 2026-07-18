@@ -17,3 +17,6 @@
 [submodule "lib/libcpuft"]
 	path = lib/libcpuft
 	url = https://github.com/somestupidgirl/libcpuft
+[submodule "lib/libkext"]
+	path = lib/libkext
+	url = https://github.com/somestupidgirl/libkext.git
