@@ -192,8 +192,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        addAction(menu, mounted ? "⏏ Unmount \(kMountPoint)" : "⏏ Mount \(kMountPoint)",
-                  #selector(toggleMount))
+        // Eject sits in the state column rather than the title, so it lines up
+        // with the checkmark on Linux Compatibility below.
+        let mountItem = addAction(menu, mounted ? "Unmount \(kMountPoint)"
+                                                : "Mount \(kMountPoint)",
+                                  #selector(toggleMount))
+        if mounted { setStateSymbol(mountItem, "eject.fill") }
 
         let linuxItem = addAction(menu, "Linux Compatibility", #selector(toggleLinux))
         linuxItem.state = linux ? .on : .off
@@ -225,11 +229,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         addAction(menu, daemon ? "Running" : "Not Running", #selector(toggleDaemon))
 
-        menu.addItem(.separator())
+        // Open at Login gets a section of its own. The separators are added
+        // inside the availability check so macOS 12, which does not get the
+        // item, does not end up with two adjacent separators either.
         if #available(macOS 13.0, *) {
+            menu.addItem(.separator())
             let loginItem = addAction(menu, "Open at Login", #selector(toggleLoginItem))
             loginItem.state = loginEnabled ? .on : .off
         }
+
+        menu.addItem(.separator())
+        let aboutItem = addAction(menu, "About ProcFS", #selector(showAbout))
+        setStateSymbol(aboutItem, "info.circle")
         addAction(menu, "Quit", #selector(NSApplication.terminate(_:)), target: NSApp)
     }
 
@@ -250,7 +261,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
+    /// Show an SF Symbol in an item's *state* column - the narrow slot to the
+    /// left of the title where AppKit draws the checkmark on a toggle. Setting
+    /// onStateImage replaces that checkmark glyph, and turning the state on is
+    /// what makes it draw; the item is otherwise a plain action.
+    ///
+    /// This is why the symbol lines up with the checkmarks: it is literally in
+    /// the same column. Putting it in `item.image` instead would place it in the
+    /// separate image column, indenting the title away from its neighbours.
+    private func setStateSymbol(_ item: NSMenuItem, _ symbol: String) {
+        guard let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        else { return }
+        let sized = image.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)) ?? image
+        sized.isTemplate = true     // tint with the menu, including when highlighted
+        item.onStateImage = sized
+        item.state = .on
+    }
+
     // MARK: actions
+
+    // Standard About panel, populated from Info.plist (name, version, icon and
+    // NSHumanReadableCopyright). A menu-bar app is not the active application,
+    // so activate first or the panel opens behind whatever is in front.
+    @objc private func showAbout() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(options: [:])
+    }
 
     // Open the ProcFS preference pane in System Settings.
     @objc private func openPreferences() {
