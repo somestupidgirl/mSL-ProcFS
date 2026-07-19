@@ -238,10 +238,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             loginItem.state = loginEnabled ? .on : .off
         }
 
+        // Both symbols go in the image column. macOS gives terminate: an exit
+        // symbol there on its own, so Quit's is set explicitly too - relying on
+        // the automatic one would leave its size and position outside our
+        // control, and the two rows have to match.
         menu.addItem(.separator())
         let aboutItem = addAction(menu, "About ProcFS", #selector(showAbout))
-        setStateSymbol(aboutItem, "info.circle")
-        addAction(menu, "Quit", #selector(NSApplication.terminate(_:)), target: NSApp)
+        setImageSymbol(aboutItem, "info.circle")
+        let quitItem = addAction(menu, "Quit", #selector(NSApplication.terminate(_:)),
+                                 target: NSApp)
+        setImageSymbol(quitItem, "power")
     }
 
     // MARK: menu builders
@@ -261,22 +267,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    /// Show an SF Symbol in an item's *state* column - the narrow slot to the
-    /// left of the title where AppKit draws the checkmark on a toggle. Setting
-    /// onStateImage replaces that checkmark glyph, and turning the state on is
-    /// what makes it draw; the item is otherwise a plain action.
-    ///
-    /// This is why the symbol lines up with the checkmarks: it is literally in
-    /// the same column. Putting it in `item.image` instead would place it in the
-    /// separate image column, indenting the title away from its neighbours.
-    private func setStateSymbol(_ item: NSMenuItem, _ symbol: String) {
+    /// Load an SF Symbol sized and tinted for a menu row.
+    private func menuSymbol(_ symbol: String, pointSize: CGFloat) -> NSImage? {
         guard let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        else { return }
+        else { return nil }
         let sized = image.withSymbolConfiguration(
-            NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)) ?? image
+            NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)) ?? image
         sized.isTemplate = true     // tint with the menu, including when highlighted
-        item.onStateImage = sized
+        return sized
+    }
+
+    /// Put a symbol in an item's *state* column - the narrow slot where AppKit
+    /// draws the checkmark on a toggle. Use this to line a symbol up with the
+    /// checkmarks; onStateImage replaces the checkmark glyph, and switching the
+    /// state on is what makes it draw.
+    private func setStateSymbol(_ item: NSMenuItem, _ symbol: String) {
+        guard let image = menuSymbol(symbol, pointSize: 12) else { return }
+        item.onStateImage = image
         item.state = .on
+    }
+
+    /// Put a symbol in an item's *image* column, which sits between the state
+    /// column and the title.
+    ///
+    /// Recent macOS fills this column in by itself for standard actions -
+    /// terminate: acquires an exit symbol with no help from us. An item whose
+    /// symbol went in the state column would therefore sit in a different
+    /// column from its neighbour and be visibly out of line, so items grouped
+    /// with such an action set their symbol here and match.
+    private func setImageSymbol(_ item: NSMenuItem, _ symbol: String) {
+        item.image = menuSymbol(symbol, pointSize: 14)
     }
 
     // MARK: actions
