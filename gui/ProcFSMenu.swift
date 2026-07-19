@@ -106,6 +106,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let url = Bundle.main.url(forResource: name, withExtension: "png"),
               let image = NSImage(contentsOf: url) else { return nil }
         image.size = NSSize(width: 18, height: 18)      // menu-bar sized
+        // Draw as a template: the status bar then tints the art from its alpha
+        // channel to suit the current menu bar and the highlighted state. Without
+        // this the art is drawn as-is, so light-coloured art vanishes on a light
+        // menu bar.
+        image.isTemplate = true
         return image
     }
 
