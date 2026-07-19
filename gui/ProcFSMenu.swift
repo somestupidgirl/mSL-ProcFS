@@ -3,9 +3,9 @@
 //
 // ProcFSMenu.swift
 //
-// A menu-bar (status-bar) app for procfs. Its menu shows live status - whether
+// A menu-bar (status-bar) app for ProcFS. Its menu shows live status - whether
 // /proc is mounted, whether the procfsd daemon is running, and whether Linux
-// presentation mode is on - and offers one-click toggles for each. The mutating
+// Compatibility Mode is on - and offers one-click toggles for each. The mutating
 // actions need root, so they run through a single macOS administrator-auth
 // prompt (NSAppleScript "with administrator privileges"); status is read
 // unprivileged.
@@ -138,9 +138,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let daemon  = daemonRunning()
         let linux   = linuxModeOn()
 
-        addDisabled(menu, "Mount: " + (mounted ? "mounted at \(kMountPoint)" : "not mounted"))
+        addDisabled(menu, "Mount: " + (mounted ? "Mounted at \(kMountPoint)" : "Not Mounted"))
         addDisabled(menu, "Daemon: " + (daemon ? "running" : "stopped"))
-        addDisabled(menu, "Linux mode: " + (linux ? "on" : "off"))
+        addDisabled(menu, "Linux Mode: " + (linux ? "On" : "Off"))
         if linux {
             let vi = linuxVersionIndex()
             let vlabel = (vi >= 1 && vi <= kLinuxVersions.count)
@@ -149,13 +149,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        addAction(menu, mounted ? "Unmount \(kMountPoint)" : "Mount \(kMountPoint)",
+        addAction(menu, mounted ? "⏏ Unmount \(kMountPoint)" : "⏏ Mount \(kMountPoint)",
                   #selector(toggleMount))
 
-        let linuxItem = addAction(menu, "Linux compatibility", #selector(toggleLinux))
+        let linuxItem = addAction(menu, "Linux Compatibility", #selector(toggleLinux))
         linuxItem.state = linux ? .on : .off
 
-        // The version-spoof dropdown is only offered while Linux compatibility is on.
+        // The version-spoof dropdown is only offered while Linux Compatibility is on.
         if linux {
             let verItem = NSMenuItem(title: "Spoof Linux Kernel Version",
                                      action: nil, keyEquivalent: "")
@@ -180,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(verItem)
         }
 
-        addAction(menu, daemon ? "Stop daemon" : "Start daemon", #selector(toggleDaemon))
+        addAction(menu, daemon ? "Running" : "Not Running", #selector(toggleDaemon))
 
         menu.addItem(.separator())
         if #available(macOS 13.0, *) {
@@ -233,7 +233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // Set the spoofed Linux kernel version (tag: 0 = None, 1..N = preset). Applied
-    // live and persisted like Linux mode, so procfsd restores it across reboots.
+    // live and persisted like Linux Mode, so procfsd restores it across reboots.
     @objc private func setLinuxVersion(_ sender: NSMenuItem) {
         let idx = sender.tag
         _ = runPrivileged("/usr/sbin/sysctl -w procfs.linux_version=\(idx) && "
