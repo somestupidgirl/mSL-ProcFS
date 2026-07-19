@@ -34,9 +34,8 @@ CFLAGS?=    -target $(TARGET_TRIPLE)            \
 # (libbsdmalloc) must precede the kernel headers so its <sys/malloc.h> is found
 # ahead of them (it then #include_next's the real one).
 ifeq ($(findstring arm64,$(TARGET_TRIPLE)),arm64)
-CFLAGS+=    -Iinclude                            \
-            -I../libbsdmalloc/include            \
-            -I../libsbuf/include                \
+CFLAGS+=    -Iinclude                           \
+            -I../libbsdmalloc/include           \
             -I../../include/xnu/bsd             \
             -I../../include/xnu/libkern         \
             -I../../include/xnu/osfmk           \
@@ -44,9 +43,8 @@ CFLAGS+=    -Iinclude                            \
             -isystem $(KERNEL_HEADERS)/arm64    \
             -isystem $(KERNEL_HEADERS)/arm
 else
-CFLAGS+=    -Iinclude                            \
-            -I../libbsdmalloc/include            \
-            -I../libsbuf/include                \
+CFLAGS+=    -Iinclude                           \
+            -I../libbsdmalloc/include           \
             -I../../include/xnu/bsd             \
             -I../../include/xnu/libkern         \
             -I../../include/xnu/osfmk           \

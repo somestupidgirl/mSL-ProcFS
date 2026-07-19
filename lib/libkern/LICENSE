@@ -3,11 +3,7 @@ distributed under the Apple Public Source License, Version 2.0. Every source
 file here corresponds to the XNU file it was taken from and carries that file's
 original Apple copyright and APSL header:
 
-    bsd_init.c      <- xnu/bsd/kern/bsd_init.c      (c) 2000-2021 Apple Inc.
-    param.c         <- xnu/bsd/conf/param.c         (c) 2000-2019 Apple Inc.
-    kern_proc.c     <- xnu/bsd/kern/kern_proc.c     (c) 2000-2020 Apple Inc.
-    kern_descrip.c  <- xnu/bsd/kern/kern_descrip.c  (c) 2000-2016 Apple Inc.
-    proc_info.c     <- xnu/bsd/kern/proc_info.c     (c) 2005-2021 Apple Inc.
+    kern.c          <- xnu/bsd/kern/proc_info.c     (c) 2005-2021 Apple Inc.
     include/kern.h  <- the corresponding XNU internal headers
 
 The Modifications to that Original Code - retaining only the routines a

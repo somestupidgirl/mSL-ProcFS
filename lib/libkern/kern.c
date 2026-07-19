@@ -35,17 +35,10 @@
  * re-implemented in terms of public ones. See README.md.
  */
 
-
-
-
-
-
 #include <sys/file_internal.h>
 #include <sys/kauth.h>
 #include <sys/mount_internal.h>
 #include <sys/proc_info.h>
-#include <sys/vnode.h>
-
 
 /*
  * The running arm64 kernel builds struct lockf with IMPORTANCE_INHERITANCE, so
@@ -57,8 +50,8 @@
 #define IMPORTANCE_INHERITANCE 1
 #endif
 
-
 #include <kern.h>
+
 /*
  * =========== From bsd/kern/proc_info.c ===========
  */
@@ -154,135 +147,13 @@ proc_pidshortbsdinfo(proc_t p, struct proc_bsdshortinfo * pbsd_shortp, __unused 
     return 0;
 }
 
-/*
- * copy stat64 structure into vinfo_stat structure.
- */
-static void
-munge_vinfo_stat(struct stat64 *sbp, struct vinfo_stat *vsbp)
-{
-    bzero(vsbp, sizeof(struct vinfo_stat));
-
-    vsbp->vst_dev = sbp->st_dev;
-    vsbp->vst_mode = sbp->st_mode;
-    vsbp->vst_nlink = sbp->st_nlink;
-    vsbp->vst_ino = sbp->st_ino;
-    vsbp->vst_uid = sbp->st_uid;
-    vsbp->vst_gid = sbp->st_gid;
-    vsbp->vst_atime = sbp->st_atimespec.tv_sec;
-    vsbp->vst_atimensec = sbp->st_atimespec.tv_nsec;
-    vsbp->vst_mtime = sbp->st_mtimespec.tv_sec;
-    vsbp->vst_mtimensec = sbp->st_mtimespec.tv_nsec;
-    vsbp->vst_ctime = sbp->st_ctimespec.tv_sec;
-    vsbp->vst_ctimensec = sbp->st_ctimespec.tv_nsec;
-    vsbp->vst_birthtime = sbp->st_birthtimespec.tv_sec;
-    vsbp->vst_birthtimensec = sbp->st_birthtimespec.tv_nsec;
-    vsbp->vst_size = sbp->st_size;
-    vsbp->vst_blocks = sbp->st_blocks;
-    vsbp->vst_blksize = sbp->st_blksize;
-    vsbp->vst_flags = sbp->st_flags;
-    vsbp->vst_gen = sbp->st_gen;
-    vsbp->vst_rdev = sbp->st_rdev;
-    vsbp->vst_qspare[0] = sbp->st_qspare[0];
-    vsbp->vst_qspare[1] = sbp->st_qspare[1];
-}
-
-int
-fill_vnodeinfo(vnode_t vp, struct vnode_info *vinfo, __unused boolean_t check_fsgetpath)
-{
-    /*
-     * vn_stat() (for vi_stat) and the dead_mountp global (for vi_fsid) are
-     * com.apple.kpi.private/unresolved on arm64, so those fields are left zero;
-     * fd fileinfo consumers rely on vi_type, which the public vnode_vtype() KPI
-     * supplies. (vnode_getattr()/vfs_statfs() could fill the rest as a later
-     * public-KPI enhancement.)
-     */
-    struct stat64 sb;
-    bzero(&sb, sizeof(sb));
-    munge_vinfo_stat(&sb, &vinfo->vi_stat);     /* deterministically zeroed */
-
-    vinfo->vi_fsid.val[0] = 0;
-    vinfo->vi_fsid.val[1] = 0;
-    vinfo->vi_type = vnode_vtype(vp);
-
-    return 0;
-}
-
-
-/*
- * Returns the fdp pointer for the specified
- * process.
- */
-static inline volatile struct filedesc *
-proc_fdp(proc_t p)
-{
-    return (volatile struct filedesc *)&p->p_fd;
-}
-
-int
-fill_fileinfo(struct fileproc * fp, proc_t p, int fd, struct proc_fileinfo * fi)
-{
-    uint32_t openflags = 0;
-    uint32_t status = 0;
-    off_t offset = 0;
-    int32_t type = 0;
-    uint32_t guardflags = 0;
-
-    if (fp != FILEPROC_NULL) {
-        openflags = fp->fp_glob->fg_flag;
-        offset = fp->fp_glob->fg_offset;
-        type = FILEGLOB_DTYPE(fp->fp_glob);
-
-        if (os_ref_get_count_raw(&fp->fp_glob->fg_count) > 1) {
-            status |= PROC_FP_SHARED;
-        }
-
-        if (p != PROC_NULL) {
-            // The caller must hold proc_fdlock(p) (which keeps fp alive); read
-            // the per-fd flags directly. This routine no longer takes the lock
-            // itself so it can be called from a section that already holds it.
-            if (fp->fp_flags & FP_CLOEXEC) {
-                status |= PROC_FP_CLEXEC;
-            }
-            if (fp->fp_flags & FP_CLOFORK) {
-                status |= PROC_FP_CLFORK;
-            }
-        }
-
-        if (fp->fp_guard_attrs != 0) {
-            status |= PROC_FP_GUARDED;
-            if (fp->fp_guard_attrs & GUARD_CLOSE) {
-                guardflags |= PROC_FI_GUARD_CLOSE;
-            }
-            if (fp->fp_guard_attrs & GUARD_DUP) {
-                guardflags |= PROC_FI_GUARD_DUP;
-            }
-            if (fp->fp_guard_attrs & GUARD_SOCKET_IPC) {
-                guardflags |= PROC_FI_GUARD_SOCKET_IPC;
-            }
-            if (fp->fp_guard_attrs & GUARD_FILEPORT) {
-                guardflags |= PROC_FI_GUARD_FILEPORT;
-            }
-        }
-
-    }
-    bzero(fi, sizeof(struct proc_fileinfo));
-    fi->fi_openflags = openflags;
-    fi->fi_status = status;
-    fi->fi_offset = offset;
-    fi->fi_type = type;
-    fi->fi_guardflags = guardflags;
-
-    return (0);
-}
-
 #pragma mark -
 #pragma mark Forward-ported fd-table KPIs
 
 /*
  * proc_fdlock()/proc_fdunlock() are private (in no third-party-linkable KPI),
  * so they are re-implemented here as the thin file-descriptor table mutex
- * wrappers they are in XNU. fill_fileinfo() above and the routines below rely
- * on them.
+ * wrappers they are in XNU. proc_fdlist() below relies on them.
  */
 void
 proc_fdlock(struct proc *p)
@@ -367,96 +238,3 @@ proc_fdlist(proc_t p, struct proc_fdinfo *buf, size_t *count)
     *count = n;
     return 0;
 }
-
-/*
- * fd_vnode_info() - replaces the private fp_getfvp() for procfs's needs
- * without taking a fileproc iocount (the os_ref retain/release path bottoms out
- * in os_ref_*_internal, which a third-party kext cannot link). Under
- * proc_fdlock() - which keeps the fileproc alive - it validates that fd is a
- * vnode-backed descriptor of process p, captures the vnode and its vnode id,
- * and fills the proc_fileinfo. The caller then takes a vnode iocount with
- * vnode_getwithvid(*vidp); the id guards against the vnode being reclaimed
- * after the lock is dropped, so no fileproc reference is required. Returns
- * EBADF for an invalid or non-vnode descriptor.
- */
-int
-fd_vnode_info(proc_t p, int fd, struct vnode **vpp, uint32_t *vidp, struct proc_fileinfo *fi)
-{
-    struct filedesc *fdp = &p->p_fd;
-    struct fileproc *fp;
-    vnode_t vp;
-
-    if (!fd_layout_ok(fdp)) {
-        return EBADF;
-    }
-
-    proc_fdlock(p);
-    if (fd < 0 || fd >= fdp->fd_nfiles ||
-        (fp = fdp->fd_ofiles[fd]) == NULL || fp->fp_glob == NULL ||
-        (fdp->fd_ofileflags[fd] & UF_RESERVED)) {
-        proc_fdunlock(p);
-        return EBADF;
-    }
-    if (FILEGLOB_DTYPE(fp->fp_glob) != DTYPE_VNODE) {
-        proc_fdunlock(p);
-        return EBADF;
-    }
-    vp = (vnode_t)fg_get_data_volatile(fp->fp_glob);
-    if (vp == NULLVP) {
-        proc_fdunlock(p);
-        return EBADF;
-    }
-    *vpp = vp;
-    *vidp = vnode_vid(vp);
-    fill_fileinfo(fp, p, fd, fi);   /* we hold proc_fdlock */
-    proc_fdunlock(p);
-    return 0;
-}
-
-/*
- * fd_socket() - socket counterpart of fd_vnode_info(). Sockets
- * have no vnode-id equivalent to guard against reuse, so under proc_fdlock
- * (which keeps the fileproc, hence the socket, alive) it takes a socket
- * reference with sock_retain() that the caller must drop with sock_release().
- * It also fills the proc_fileinfo. Returns EBADF for an invalid or non-socket
- * descriptor.
- *
- * sock_retain() acquires the socket lock while proc_fdlock is held; this nests
- * in the natural order (descriptor layer above socket layer) and cannot
- * deadlock, since the socket layer never reaches back up to proc_fdlock.
- */
-int
-fd_socket(proc_t p, int fd, socket_t *sop, struct proc_fileinfo *fi)
-{
-    struct filedesc *fdp = &p->p_fd;
-    struct fileproc *fp;
-    socket_t so;
-
-    if (!fd_layout_ok(fdp)) {
-        return EBADF;
-    }
-
-    proc_fdlock(p);
-    if (fd < 0 || fd >= fdp->fd_nfiles ||
-        (fp = fdp->fd_ofiles[fd]) == NULL || fp->fp_glob == NULL ||
-        (fdp->fd_ofileflags[fd] & UF_RESERVED)) {
-        proc_fdunlock(p);
-        return EBADF;
-    }
-    if (FILEGLOB_DTYPE(fp->fp_glob) != DTYPE_SOCKET) {
-        proc_fdunlock(p);
-        return EBADF;
-    }
-    so = (socket_t)fg_get_data_volatile(fp->fp_glob);
-    if (so == NULL) {
-        proc_fdunlock(p);
-        return EBADF;
-    }
-    sock_retain(so);
-    fill_fileinfo(fp, p, fd, fi);   /* we hold proc_fdlock */
-    proc_fdunlock(p);
-
-    *sop = so;
-    return 0;
-}
-

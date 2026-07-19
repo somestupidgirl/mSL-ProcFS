@@ -19,20 +19,24 @@ obliges of consumers.
 
 ## Layout
 
-Each source file is named after the XNU file it was forward-ported from and
-carries that file's Apple copyright and APSL 2.0 header:
+Each source file carries the Apple copyright and APSL 2.0 header of the XNU
+file it was forward-ported from:
 
 | File | Ported from | Provides |
 |---|---|---|
-| `kern_descrip.c` | `xnu/bsd/kern/kern_descrip.c` | `fg_get_data_volatile()` |
-| `proc_info.c` | `xnu/bsd/kern/proc_info.c` | `proc_pidshortbsdinfo()`, `fill_fileinfo()`, `fill_vnodeinfo()`, `proc_fdlock()`/`proc_fdunlock()`/`proc_fdlist()`, `fd_vnode_info()`, `fd_socket()` |
+| `kern.c` | `xnu/bsd/kern/proc_info.c` | `proc_pidshortbsdinfo()`, `proc_fdlock()`/`proc_fdunlock()`/`proc_fdlist()` |
 | `include/kern.h` | the corresponding XNU internal headers | the public interface |
 
-Where a routine has no direct XNU equivalent because the original is
-unlinkable, it is named for what it replaces — for example `fd_vnode_info()`
-stands in for the private `fp_getfvp()`, capturing the vnode and its vnode id
-under `proc_fdlock()` so the caller can take an iocount with
-`vnode_getwithvid()` instead of a `fileproc` reference.
+`proc_fdlist()` mirrors XNU's private `proc_fdlist_internal()`: with a NULL
+buffer it reports an upper bound on the descriptor count, otherwise it fills
+the caller's array. `fd_layout_ok()` sanity-checks the `struct filedesc` layout
+before any lock is taken, so a `CONFIG_*` mismatch degrades to "no descriptors"
+rather than panicking on an invalid mutex.
+
+The library is deliberately small and shrinking. Routines whose data is now
+served by the procfsd daemon over the control bridge have been removed rather
+than left as unused fallbacks — the daemon reaches the same information through
+public userspace APIs, which do not depend on kernel struct layouts.
 
 ## Usage
 
@@ -72,7 +76,7 @@ kernel-private macros (`-DKERNEL -DPRIVATE -DKERNEL_PRIVATE
 -DXNU_KERNEL_PRIVATE -DBSD_KERNEL_PRIVATE ...`) must also be set on the command
 line, early enough to be visible to the first header of every translation unit.
 
-**2. Validate the layout before trusting it.** `proc_info.c` sanity-checks
+**2. Validate the layout before trusting it.** `kern.c` sanity-checks
 `struct filedesc` via `fd_layout_ok()` before taking any lock, so a layout
 mismatch degrades to "no descriptors" instead of panicking on a bogus mutex.
 Any routine added here that dereferences a private structure should be guarded

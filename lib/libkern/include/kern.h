@@ -47,9 +47,6 @@
  */
 extern int proc_pidshortbsdinfo(proc_t p, struct proc_bsdshortinfo * pbsd_shortp, int zombie);
 
-extern int fill_fileinfo(struct fileproc * fp, proc_t p, int fd, struct proc_fileinfo * fi);
-extern int fill_vnodeinfo(vnode_t vp, struct vnode_info *vinfo, boolean_t check_fsgetpath);
-
 /*
  * proc_fdlock()/proc_fdunlock()/proc_fdlist() - re-implementations of the
  * private descriptor-table routines. proc_fdlist() mirrors XNU's
@@ -59,34 +56,5 @@ extern int fill_vnodeinfo(vnode_t vp, struct vnode_info *vinfo, boolean_t check_
 extern void proc_fdlock(struct proc *p);
 extern void proc_fdunlock(struct proc *p);
 extern int  proc_fdlist(proc_t p, struct proc_fdinfo *buf, size_t *count);
-
-/*
- * Validates a vnode-backed descriptor of a target process and returns its
- * vnode, vnode id, and proc_fileinfo, all captured under proc_fdlock. The
- * caller takes a vnode iocount via vnode_getwithvid(*vid). Replaces the private
- * fp_getfvp() without needing a fileproc iocount (whose os_ref retain/release
- * path is unlinkable from a third-party kext). Returns EBADF for an invalid or
- * non-vnode descriptor.
- */
-extern int fd_vnode_info(proc_t p, int fd, struct vnode **vpp, uint32_t *vidp, struct proc_fileinfo *fi);
-
-/*
- * Socket counterpart of fd_vnode_info(): validates a socket descriptor of a
- * target process and returns the socket with a sock_retain() reference the
- * caller must release with sock_release(), plus the proc_fileinfo. Returns
- * EBADF for an invalid or non-socket descriptor.
- */
-extern int fd_socket(proc_t p, int fd, socket_t *sop, struct proc_fileinfo *fi);
-
-/*
- * =========== From bsd/kern/kern_descrip.c ===========
- */
-
-/*
- * Re-implementation of the private fg_get_data_volatile(). fg_data is a
- * manually PAC-signed pointer, so it must be authenticated exactly as XNU does
- * before the result is dereferenced.
- */
-extern void *fg_get_data_volatile(struct fileglob *fg);
 
 #endif /* _libkern_kern_h */
