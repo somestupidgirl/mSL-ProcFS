@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>ProcFS</string>
+	<string>mSL/ProcFS</string>
 	<key>CFBundleDisplayName</key>
-	<string>ProcFS</string>
+	<string>mSL/ProcFS</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.beako.filesystems.procfs.gui</string>
 	<key>CFBundleExecutable</key>

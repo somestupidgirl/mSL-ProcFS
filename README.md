@@ -1,12 +1,24 @@
-# ProcFS
+# mSL/ProcFS
 [![C/C++ CI](https://github.com/somestupidgirl/procfs_kext/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/somestupidgirl/procfs_kext/actions/workflows/c-cpp.yml) 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey)](#build)
 [![GitHub stars](https://img.shields.io/github/stars/somestupidgirl/procfs_kext.svg?style=social&label=Star&maxAge=2592000)](https://GitHub.com/somestupidgirl/procfs_kext/stargazers/)
 
-ProcFS is a kernel-extension implementation of the `/proc` file system for macOS, exposing
-running processes and threads as a filesystem with BSD- and Linux-compatible
+mSL/ProcFS is a kernel-extension implementation of the `/proc` file system for macOS,
+exposing running processes and threads as a filesystem with BSD- and Linux-compatible
 per-process information.
+
+## Part of mSL/XNU
+
+ProcFS is one module of **mSL/XNU** (*macOS Subsystem for Linux / X is Now UNIX*), a
+modular project whose goal is seamless execution of Linux ELF binaries on macOS. The
+other pieces are a native implementation of the Filesystem Hierarchy Standard, the
+remaining native pseudo-filesystems (devfs and sysfs alongside this procfs), a syscall
+translation layer (the Noah ABI), an updated `imgact_linux` (binfmt_misc), and a
+Hypervisor.framework-backed execution path.
+
+Each module stands on its own — ProcFS is useful without the rest — but they are
+designed to compose, which is why this one is named and packaged as mSL/ProcFS.
 
 ## What is ProcFS?
 *procfs* lets you view the processes running on a UNIX system as nodes in the file system, where each process is represented by a single directory named from its process id. Typically, the file system is mounted at `/proc`, so the directory for process 1 would be called `/proc/1`. Beneath a process’ directory are further directories and files that give more information about the process, such as its process id, its active threads, the files that it has open, and so on. *procfs* first appeared in an early version of AT&T’s UNIX and was later implemented in various forms in System V, BSD, Solaris and Linux. You can find a history of the implementation of *procfs* at https://en.wikipedia.org/wiki/Procfs.

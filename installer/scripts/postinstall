@@ -29,11 +29,11 @@ launchctl enable "system/$DAEMON" 2>/dev/null || true
 touch "$ARM_FLAG"
 
 # Launch the menu-bar app so its icon appears immediately (the payload put it in
-# /Applications). postinstall runs as root, so hop into the logged-in user's GUI
+# /Applications/mSL). postinstall runs as root, so hop into the logged-in user's GUI
 # session to open it as them. Best-effort: if nobody is logged in (remote or
 # automated install) we skip it - the app then starts at the user's next login
 # if they have enabled "Open at Login". Never fail the install over this.
-APP="/Applications/ProcFS.app"
+APP="/Applications/mSL/ProcFS.app"
 
 # The installer package is itself typically downloaded from the internet, so its
 # payload (including ProcFS.app) inherits com.apple.quarantine - which makes

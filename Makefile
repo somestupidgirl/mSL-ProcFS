@@ -30,6 +30,9 @@ FS_DIR         := /Library/Filesystems
 SBIN_DIR       := /usr/local/sbin
 DAEMON_DIR     := /Library/LaunchDaemons
 APP_DIR        := /Applications
+# ProcFS is one module of mSL/XNU, so its app is grouped under an mSL folder
+# rather than sitting loose in /Applications alongside unrelated apps.
+MSL_APP_DIR    := $(APP_DIR)/mSL
 PREFPANE_DIR   := /Library/PreferencePanes
 SYNTHETIC_CONF := /etc/synthetic.conf
 
@@ -181,12 +184,12 @@ pkg: all
 	rm -rf $(OUT)/pkgroot $(OUT)/pkgres
 	install -d $(OUT)/pkgroot/Library/Extensions $(OUT)/pkgroot/Library/Filesystems \
 	           $(OUT)/pkgroot/usr/local/sbin $(OUT)/pkgroot/Library/LaunchDaemons \
-	           $(OUT)/pkgroot/Applications $(OUT)/pkgroot/Library/PreferencePanes
+	           $(OUT)/pkgroot/Applications/mSL $(OUT)/pkgroot/Library/PreferencePanes
 	cp -R $(OUT)/procfs.kext          $(OUT)/pkgroot/Library/Extensions/
 	cp -R $(OUT)/procfs.fs            $(OUT)/pkgroot/Library/Filesystems/
 	cp    $(OUT)/procfsd $(OUT)/pkgroot/usr/local/sbin/
 	cp    $(OUT)/$(DAEMON_PLIST)      $(OUT)/pkgroot/Library/LaunchDaemons/
-	cp -R $(OUT)/ProcFS.app           $(OUT)/pkgroot/Applications/
+	cp -R $(OUT)/ProcFS.app           $(OUT)/pkgroot/Applications/mSL/
 	cp -R $(OUT)/ProcFS.prefPane      $(OUT)/pkgroot/Library/PreferencePanes/
 	@# codesign/pkgbuild reject Finder-info and similar xattrs.
 	xattr -cr $(OUT)/pkgroot
@@ -318,13 +321,14 @@ install-tools:
 # of the kext and auto-mount of /proc stay DISARMED until the operator creates
 # $(ARM_FLAG), so a kext panic during development cannot boot-loop the machine.
 install-gui:
-	rm -rf $(APP_DIR)/ProcFS.app
-	cp -R $(OUT)/ProcFS.app $(APP_DIR)/ProcFS.app
-	chown -R root:wheel $(APP_DIR)/ProcFS.app
-	chmod -R 755 $(APP_DIR)/ProcFS.app
+	install -d -m 755 -o root -g wheel $(MSL_APP_DIR)
+	rm -rf $(MSL_APP_DIR)/ProcFS.app
+	cp -R $(OUT)/ProcFS.app $(MSL_APP_DIR)/ProcFS.app
+	chown -R root:wheel $(MSL_APP_DIR)/ProcFS.app
+	chmod -R 755 $(MSL_APP_DIR)/ProcFS.app
 	@# Strip com.apple.quarantine so Gatekeeper doesn't flag the app as
 	@# "damaged"/"unverified" when the payload arrives via an internet download.
-	xattr -dr com.apple.quarantine $(APP_DIR)/ProcFS.app 2>/dev/null || true
+	xattr -dr com.apple.quarantine $(MSL_APP_DIR)/ProcFS.app 2>/dev/null || true
 	rm -rf $(PREFPANE_DIR)/ProcFS.prefPane
 	cp -R $(OUT)/ProcFS.prefPane $(PREFPANE_DIR)/ProcFS.prefPane
 	chown -R root:wheel $(PREFPANE_DIR)/ProcFS.prefPane
@@ -334,7 +338,7 @@ install-gui:
 	-@u=$$(stat -f '%Su' /dev/console 2>/dev/null); \
 	  uid=$$(id -u "$$u" 2>/dev/null); \
 	  if [ -n "$$uid" ] && [ "$$u" != "root" ] && [ "$$u" != "loginwindow" ]; then \
-	      launchctl asuser "$$uid" sudo -u "$$u" open "$(APP_DIR)/ProcFS.app" >/dev/null 2>&1 || true; \
+	      launchctl asuser "$$uid" sudo -u "$$u" open "$(MSL_APP_DIR)/ProcFS.app" >/dev/null 2>&1 || true; \
 	  fi
 
 install-plists:
@@ -376,7 +380,9 @@ uninstall: require-root
 	@echo "==> Removing installed files"
 	rm -rf $(EXT_DIR)/procfs.kext
 	rm -rf $(FS_DIR)/procfs.fs
-	rm -rf $(APP_DIR)/ProcFS.app
+	rm -rf $(MSL_APP_DIR)/ProcFS.app
+	@# Take the mSL folder with it when nothing else is left in it.
+	-rmdir $(MSL_APP_DIR) 2>/dev/null || true
 	rm -rf $(PREFPANE_DIR)/ProcFS.prefPane
 	rm -f  $(SBIN_DIR)/procfsd $(SBIN_DIR)/procfs_ksyms
 	rm -f  $(ARM_FLAG) $(KSYMS_FILE) $(LINUX_CONF) $(LINUX_VER_CONF)

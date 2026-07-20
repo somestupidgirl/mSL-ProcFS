@@ -73,6 +73,20 @@ private func linuxVersionIndex() -> Int {
         .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
 }
 
+// The pieces an install puts on disk. Reported as "System: Installed" only when
+// every one is present, so a partial or interrupted install is visible rather
+// than showing up later as an unexplained failure.
+private let kInstalledPaths = [
+    "/Library/Extensions/procfs.kext",
+    "/Library/Filesystems/procfs.fs",
+    "/usr/local/sbin/procfsd",
+    kDaemonPlist,
+]
+
+private func systemInstalled() -> Bool {
+    return kInstalledPaths.allSatisfy { FileManager.default.fileExists(atPath: $0) }
+}
+
 // MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -169,33 +183,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // Preferences (opens the System Settings pane) - at the very top.
-        addAction(menu, "Preferences…", #selector(openPreferences))
-        menu.addItem(.separator())
-
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        addDisabled(menu, "ProcFS \(version)")
+        addDisabled(menu, "mSL/ProcFS \(version)")
         menu.addItem(.separator())
 
         let mounted = isMounted()
         let daemon  = daemonRunning()
         let linux   = linuxModeOn()
 
-        addDisabled(menu, "Mount: " + (mounted ? "Mounted at \(kMountPoint)" : "Not Mounted"))
-        addDisabled(menu, "Daemon: " + (daemon ? "running" : "stopped"))
+        // Status block: what the system looks like right now, read-only.
+        addDisabled(menu, "System: " + (systemInstalled() ? "Installed" : "Not Installed"))
+        addDisabled(menu, "Daemon: " + (daemon ? "Running" : "Not Running"))
+        addDisabled(menu, "Mount Status: " + (mounted ? "Mounted at \(kMountPoint)"
+                                                      : "Not Mounted"))
         addDisabled(menu, "Linux Mode: " + (linux ? "On" : "Off"))
-        if linux {
-            let vi = linuxVersionIndex()
-            let vlabel = (vi >= 1 && vi <= kLinuxVersions.count)
-                ? "Linux \(kLinuxVersions[vi - 1])" : "Darwin (native)"
-            addDisabled(menu, "Kernel version: " + vlabel)
-        }
+        let vi = linuxVersionIndex()
+        addDisabled(menu, "Kernel: " + ((vi >= 1 && vi <= kLinuxVersions.count)
+            ? "Linux \(kLinuxVersions[vi - 1])" : "Darwin (Native)"))
         menu.addItem(.separator())
+
+        addAction(menu, "Preferences…", #selector(openPreferences))
+        menu.addItem(.separator())
+
+        // Actions. The daemon row leads with a coloured dot for its current
+        // state and is labelled with what clicking it will do.
+        let daemonItem = addAction(menu, daemon ? "Stop Daemon" : "Start Daemon",
+                                   #selector(toggleDaemon))
+        setStateDot(daemonItem, running: daemon)
 
         // Eject sits in the state column rather than the title, so it lines up
         // with the checkmark on Linux Compatibility below.
-        let mountItem = addAction(menu, mounted ? "Unmount \(kMountPoint)"
-                                                : "Mount \(kMountPoint)",
+        let mountItem = addAction(menu, mounted ? "Unmount ProcFS" : "Mount ProcFS",
                                   #selector(toggleMount))
         if mounted { setStateSymbol(mountItem, "eject.fill") }
 
@@ -227,8 +245,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(verItem)
         }
 
-        addAction(menu, daemon ? "Running" : "Not Running", #selector(toggleDaemon))
-
         // Open at Login gets a section of its own. The separators are added
         // inside the availability check so macOS 12, which does not get the
         // item, does not end up with two adjacent separators either.
@@ -243,10 +259,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // the automatic one would leave its size and position outside our
         // control, and the two rows have to match.
         menu.addItem(.separator())
-        let aboutItem = addAction(menu, "About ProcFS", #selector(showAbout))
+        let aboutItem = addAction(menu, "About mSL/ProcFS", #selector(showAbout),
+                                  key: "?")
+        // "?" is typed with shift, and AppKit would otherwise render the
+        // equivalent as the shifted key it is reached by. Naming the modifier
+        // explicitly keeps it displayed as the conventional Command-?.
+        aboutItem.keyEquivalentModifierMask = .command
         setImageSymbol(aboutItem, "info.circle")
         let quitItem = addAction(menu, "Quit", #selector(NSApplication.terminate(_:)),
-                                 target: NSApp)
+                                 target: NSApp, key: "q")
         setImageSymbol(quitItem, "power")
     }
 
@@ -260,11 +281,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @discardableResult
     private func addAction(_ menu: NSMenu, _ title: String, _ sel: Selector,
-                           target: AnyObject? = nil) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+                           target: AnyObject? = nil, key: String = "") -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: sel, keyEquivalent: key)
         item.target = target ?? self
         menu.addItem(item)
         return item
+    }
+
+    /// Put a running/stopped status dot in an item's *state* column, so it lines
+    /// up with the eject glyph and the checkmarks rather than sitting in the
+    /// title text.
+    ///
+    /// The state column takes an image, so the dot is drawn as one: an SF Symbol
+    /// circle tinted green or red. It is deliberately not a template image -
+    /// a template would be recoloured to match the menu and lose the colour that
+    /// carries the meaning.
+    private func setStateDot(_ item: NSMenuItem, running: Bool) {
+        let conf = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        guard let base = NSImage(systemSymbolName: "circle.fill",
+                                 accessibilityDescription: running ? "running" : "stopped"),
+              let image = base.withSymbolConfiguration(conf) else { return }
+
+        let tinted = NSImage(size: image.size, flipped: false) { rect in
+            (running ? NSColor.systemGreen : NSColor.systemRed).set()
+            rect.fill(using: .sourceAtop)
+            image.draw(in: rect, from: .zero, operation: .destinationOver, fraction: 1.0)
+            return true
+        }
+        item.onStateImage = tinted
+        item.state = .on
     }
 
     /// Load an SF Symbol sized and tinted for a menu row.

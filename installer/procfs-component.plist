@@ -5,7 +5,7 @@
   pkgbuild auto-marks .app/.prefPane bundles as relocatable, which makes the
   installer redirect the payload to any existing copy of the bundle it finds by
   identifier (e.g. a build tree's out/ProcFS.app) instead of the path in the
-  package - so /Applications/ProcFS.app is never created. Force these bundles
+  package - so /Applications/mSL/ProcFS.app is never created. Force these bundles
   non-relocatable so they always install to their specified locations.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -15,7 +15,7 @@
 		<key>BundleIsRelocatable</key><false/>
 		<key>BundleIsVersionChecked</key><true/>
 		<key>BundleOverwriteAction</key><string>upgrade</string>
-		<key>RootRelativeBundlePath</key><string>Applications/ProcFS.app</string>
+		<key>RootRelativeBundlePath</key><string>Applications/mSL/ProcFS.app</string>
 	</dict>
 	<dict>
 		<key>BundleIsRelocatable</key><false/>

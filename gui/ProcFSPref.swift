@@ -18,7 +18,7 @@ private let kDaemonLabel    = "com.beako.procfsd"
 private let kDaemonPlist    = "/Library/LaunchDaemons/com.beako.procfsd.plist"
 private let kLinuxConf      = "/var/db/procfs.linux"
 private let kLinuxVerConf   = "/var/db/procfs.linux_version"
-private let kMenuApp        = "/Applications/ProcFS.app"
+private let kMenuApp        = "/Applications/mSL/ProcFS.app"
 private let kLoginLabel     = "com.beako.procfs.gui"
 private let kLoginAgent     = (NSHomeDirectory() as NSString)
     .appendingPathComponent("Library/LaunchAgents/com.beako.procfs.gui.plist")
@@ -66,6 +66,11 @@ private func daemonRunning() -> Bool {
         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 }
 
+private func isMounted() -> Bool {
+    // mount(8) prints e.g. "procfs on /proc (procfs, local, ...)".
+    shell("/sbin/mount", []).contains(" on \(kMountPoint) (procfs")
+}
+
 private func linuxModeOn() -> Bool {
     shell("/usr/sbin/sysctl", ["-n", "procfs.linux"])
         .trimmingCharacters(in: .whitespacesAndNewlines) == "1"
@@ -86,10 +91,18 @@ private func startupEnabled() -> Bool {
 final class ProcFSPref: NSPreferencePane {
 
     private var startupSwitch: NSSwitch!
+    private var mountButton: NSButton!
     private var daemonButton: NSButton!
     private var linuxSwitch: NSSwitch!
     private var versionPopup: NSPopUpButton!
     private var updateSwitch: NSSwitch!
+
+    // Status lines shown under the row titles; refresh() rewrites their text.
+    private let mountDetail   = NSTextField(labelWithString: "")
+    private let daemonDetail  = NSTextField(labelWithString: "")
+    private let linuxDetail   = NSTextField(labelWithString: "")
+    private let versionDetail = NSTextField(labelWithString: "")
+    private let daemonDot     = NSTextField(labelWithString: "")
 
     private var bundleVersion: String {
         Bundle(for: type(of: self)).infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
@@ -161,7 +174,7 @@ final class ProcFSPref: NSPreferencePane {
         icon.layer?.cornerRadius = 10
         icon.layer?.masksToBounds = true
 
-        let title = NSTextField(labelWithString: "ProcFS")
+        let title = NSTextField(labelWithString: "mSL/ProcFS")
         title.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
 
         let desc = NSTextField(wrappingLabelWithString: kDescription)
@@ -195,6 +208,9 @@ final class ProcFSPref: NSPreferencePane {
         startupSwitch = NSSwitch()
         startupSwitch.target = self; startupSwitch.action = #selector(toggleStartup(_:))
 
+        mountButton = NSButton(title: "Mount", target: self, action: #selector(toggleMount(_:)))
+        mountButton.bezelStyle = .rounded
+
         daemonButton = NSButton(title: "Start", target: self, action: #selector(toggleDaemon(_:)))
         daemonButton.bezelStyle = .rounded
 
@@ -213,11 +229,23 @@ final class ProcFSPref: NSPreferencePane {
         let checkButton = NSButton(title: "Check Now", target: self, action: #selector(checkNow(_:)))
         checkButton.bezelStyle = .rounded
 
+        // The eject glyph next to the Mount control, matching the menu bar.
+        let ejectIcon = NSImageView()
+        ejectIcon.image = NSImage(systemSymbolName: "eject.fill",
+                                  accessibilityDescription: nil)
+        ejectIcon.contentTintColor = .secondaryLabelColor
+
+        // A dot for the daemon, as in the mSL/XNU pane and the menu bar.
+        daemonDot.font = NSFont.systemFont(ofSize: 11)
+
         let rows = NSStackView(views: [
             row("Run on System Startup", startupSwitch),
-            row("Daemon", daemonButton),
-            row("Linux Compatibility Mode", linuxSwitch),
-            row("Spoof Linux Kernel Version", versionPopup),
+            row("Mount", detail: mountDetail, accessory: ejectIcon, control: mountButton),
+            row("Daemon", detail: daemonDetail, accessory: daemonDot, control: daemonButton),
+            row("Linux Compatibility Mode", detail: linuxDetail,
+                accessory: nil, control: linuxSwitch),
+            row("Spoof Linux Kernel Version", detail: versionDetail,
+                accessory: nil, control: versionPopup),
             row("Check for Updates on Startup", updateSwitch),
             row("Check for Updates", checkButton),
         ])
@@ -232,7 +260,7 @@ final class ProcFSPref: NSPreferencePane {
     }
 
     private func makeFooter() -> NSView {
-        let link = NSButton(title: "ProcFS v\(bundleVersion): \(ProcFSUpdater.repoURL)",
+        let link = NSButton(title: "mSL/ProcFS v\(bundleVersion): \(ProcFSUpdater.repoURL)",
                             target: self, action: #selector(openRepo(_:)))
         link.isBordered = false
         link.contentTintColor = .linkColor
@@ -264,6 +292,36 @@ final class ProcFSPref: NSPreferencePane {
         return stack
     }
 
+    /// A row whose title carries the current status beneath it, in the smaller
+    /// secondary style the mSL/XNU pane uses. `detail` is retained by the caller
+    /// so refresh() can update the text in place.
+    private func row(_ label: String, detail: NSTextField,
+                     accessory: NSView?, control: NSView) -> NSView {
+        let text = NSTextField(labelWithString: label)
+        text.font = NSFont.systemFont(ofSize: 13)
+        detail.font = NSFont.systemFont(ofSize: 11)
+        detail.textColor = .secondaryLabelColor
+        detail.lineBreakMode = .byTruncatingTail
+
+        let stacked = NSStackView(views: [text, detail])
+        stacked.orientation = .vertical
+        stacked.alignment = .leading
+        stacked.spacing = 1
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        var views: [NSView] = [stacked, spacer]
+        if let accessory = accessory { views.append(accessory) }
+        views.append(control)
+
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 10
+        return stack
+    }
+
     private func sectionLabel(_ s: String) -> NSView {
         // A System-Settings-style group header: small, semibold, secondary, with a
         // little left inset so it lines up inside the card's rounded edge.
@@ -280,15 +338,28 @@ final class ProcFSPref: NSPreferencePane {
 
     private func refresh() {
         startupSwitch.state = startupEnabled() ? .on : .off
+
+        let mounted = isMounted()
+        mountButton.title = mounted ? "Unmount" : "Mount"
+        mountDetail.stringValue = mounted ? "Mounted at \(kMountPoint)" : "Not Mounted"
+
         let running = daemonRunning()
         daemonButton.title = running ? "Stop" : "Start"
+        daemonDetail.stringValue = running ? "Running" : "Not Running"
+        daemonDot.stringValue = running ? "🟢" : "🔴"
+
         let linux = linuxModeOn()
         linuxSwitch.state = linux ? .on : .off
+        linuxDetail.stringValue = linux ? "On" : "Off"
+
         // popup: 1..N -> release rows (index-1); 0 -> the trailing "None" item.
         let vi = linuxVersionIndex()
         versionPopup.selectItem(at: (vi >= 1 && vi <= kLinuxVersions.count)
                                     ? vi - 1 : versionPopup.numberOfItems - 1)
         versionPopup.isEnabled = linux
+        versionDetail.stringValue = (vi >= 1 && vi <= kLinuxVersions.count)
+            ? "Linux \(kLinuxVersions[vi - 1])" : "None (Darwin)"
+
         updateSwitch.state = ProcFSUpdater.checkOnStartup ? .on : .off
     }
 
@@ -315,6 +386,15 @@ final class ProcFSPref: NSPreferencePane {
         } else {
             _ = shell("/bin/launchctl", ["bootout", "gui/\(getuid())/\(kLoginLabel)"])
             try? FileManager.default.removeItem(atPath: kLoginAgent)
+        }
+        refresh()
+    }
+
+    @objc private func toggleMount(_ sender: NSButton) {
+        if isMounted() {
+            runPrivileged("/sbin/umount \(kMountPoint)")
+        } else {
+            runPrivileged("/sbin/mount -t procfs procfs \(kMountPoint)")
         }
         refresh()
     }
