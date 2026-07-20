@@ -104,7 +104,6 @@ CFLAGS+= -target $(TARGET_TRIPLE) \
          -I../lib/libbsdmalloc/include \
          -I../lib/libsbuf/include \
          -I../lib/libcpuft/include \
-         -I../lib/libkern/include \
          -I../lib/libkext/include \
          -I../include \
          $(XNU_INCLUDES) \
@@ -150,12 +149,11 @@ LDFLAGS+= -target $(TARGET_TRIPLE) \
 
 LIBS+= -L$(KERNEL_LIBDIR) \
        -L../lib/libkext \
-       -L../lib/libkern \
        -L../lib/libsbuf \
        -L../lib/libcpuft \
        -L../lib/libbsdmalloc
 
-LIBS+= -lkmod -lkext -lkern -lsbuf -lcpuft -lbsdmalloc
+LIBS+= -lkmod -lkext -lsbuf -lcpuft -lbsdmalloc
 
 KLFLAGS+= -xml -c -undef-symbols
 

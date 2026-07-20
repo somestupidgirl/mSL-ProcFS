@@ -381,7 +381,7 @@ procfs_vnop_lookup(struct vnop_lookup_args *ap)
                 if (id != -1) {
                     /*
                      * Check whether it is a valid file descriptor by looking it
-                     * up in the process's fd list (proc_fdlist locks internally).
+                     * up in the process's fd list.
                      */
                     target_proc = proc_find(dir_pnp->node_id.nodeid_pid);
                     if (target_proc != PROC_NULL) { // target_proc is released at loop end.

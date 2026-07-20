@@ -26,7 +26,6 @@
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_ctl.h>
 
-#include <kern.h>
 
 /*
  * Reads the data for the "pid" node. The data is the
@@ -163,23 +162,26 @@ procfs_dostatus(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
      */
     int error = 0;
 
-    proc_t p = proc_find(pnp->node_id.nodeid_pid);
-    if (p != PROC_NULL) {
-        struct proc_bsdshortinfo info; /* Mac OS X >= 10.7 has proc_bsdshortinfo */
+    /*
+     * The BSD-centric process info comes from the procfsd daemon
+     * (proc_pidinfo PROC_PIDT_SHORTBSDINFO). Assembling it in-kernel meant
+     * reading struct proc's fields directly, whose offsets drift across kernel
+     * point-releases; the daemon reaches the same data through a public call
+     * that needs no task port, so it answers for every process.
+     */
+    struct proc_bsdshortinfo info;
+    uint32_t got = 0;
 
-        /*
-         * Get the BSD-centric process info and copy it out.
-         */
-        error = proc_pidshortbsdinfo(p, &info, 0);
-        if (error == 0) {
-            error = procfs_copy_data((const char *)&info, sizeof(info), uio);
-        } else {
-            error = ESRCH;
-        }
-        proc_rele(p);
+    error = procfs_ctl_request(PROCFS_REQ_SHORTBSDINFO, pnp->node_id.nodeid_pid, 0,
+                               &info, sizeof(info), &got);
+    if (error != 0) {
+        return error;
+    }
+    if (got != sizeof(info)) {
+        return ESRCH;
     }
 
-    return error;
+    return procfs_copy_data((const char *)&info, sizeof(info), uio);
 }
 
 /*

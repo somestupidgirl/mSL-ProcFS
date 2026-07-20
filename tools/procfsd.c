@@ -3809,6 +3809,21 @@ main(__unused int argc, __unused char **argv)
         case PROCFS_REQ_THREADLIST:
             procfsd_handle_threadlist(req, resp, payload);
             break;
+        case PROCFS_REQ_SHORTBSDINFO: {
+            /* BSD-centric process info for /proc/<pid>/status. The kext used to
+             * assemble this by reading struct proc's fields directly; here it is
+             * one public call that needs no task port, so it answers for every
+             * process. */
+            struct proc_bsdshortinfo si;
+            int r = proc_pidinfo(req->pid, PROC_PIDT_SHORTBSDINFO, 0, &si, sizeof(si));
+            if (r == (int)sizeof(si)) {
+                memcpy(payload, &si, sizeof(si));
+                resp->len = sizeof(si);
+            } else {
+                resp->error = (r < 0) ? errno : ESRCH;
+            }
+            break;
+        }
         case PROCFS_REQ_FDINFO: {
             struct vnode_fdinfowithpath vi;
             int r = proc_pidfdinfo(req->pid, (int)req->arg, PROC_PIDFDVNODEPATHINFO,

@@ -497,61 +497,15 @@ procfs_get_thread_ids_for_task(proc_t p, uint64_t **thread_ids, int *thread_coun
         OSFree(bounce, dcap, procfs_osmalloc_tag);
     }
 
-    procfs_thread_size_init();
-    if (!g_thread_size_known) {
-        /*
-         * Neither path is available. If the daemon refused because
-         * task_for_pid was denied - the target is a SIP/AMFI or hardened
-         * binary - report that as EPERM, the same answer maps and regs give
-         * for the identical cause. Anything else (no daemon at all) is
-         * genuinely "unsupported".
-         */
-        return (derror == EPERM) ? EPERM : ENOTSUP;
-    }
-
     /*
-     * First pass: count the uthreads.
+     * No daemon, or it declined. There is no in-kernel fallback: walking
+     * p_uthlist means reading struct proc's layout and the size of the opaque
+     * struct thread, which drift across kernel point-releases - on
+     * xnu-12377.121.10 that walk already returned nothing. EPERM is reported
+     * as such, since that means task_for_pid was denied for a SIP/AMFI or
+     * hardened target, the same answer maps and regs give.
      */
-    int count = 0;
-    uthread_t uth = TAILQ_FIRST(&p->p_uthlist);
-    while (uth != NULL && count < PROCFS_MAX_THREADS) {
-        if (!procfs_kptr_ok((uintptr_t)uth)) {
-            break;
-        }
-        count++;
-        uth = TAILQ_NEXT(uth, uu_list);
-    }
-
-    if (count == 0) {
-        return 0;
-    }
-
-    uint64_t *ids = (uint64_t *)OSMalloc((uint32_t)(count * sizeof(uint64_t)), procfs_osmalloc_tag);
-    if (ids == NULL) {
-        return ENOMEM;
-    }
-
-    /*
-     * Second pass: collect the thread ids (uthread -> thread -> thread_id).
-     */
-    int n = 0;
-    uth = TAILQ_FIRST(&p->p_uthlist);
-    while (uth != NULL && n < count) {
-        uintptr_t u = (uintptr_t)uth;
-        if (!procfs_kptr_ok(u)) {
-            break;
-        }
-        thread_t thread = (thread_t)(u - g_thread_struct_size);
-        if (procfs_kptr_ok((uintptr_t)thread)) {
-            ids[n++] = thread_tid(thread);
-        }
-        uth = TAILQ_NEXT(uth, uu_list);
-    }
-
-    *thread_ids = ids;
-    *thread_count = n;
-
-    return 0;
+    return (derror == EPERM) ? EPERM : ENOTSUP;
 }
 
 /*
@@ -651,7 +605,7 @@ procfs_get_task_thread_count(proc_t p)
 }
 
 /*
- * Returns the open file descriptors of a process using proc_fdlist(), the
+ * Returns the open file descriptors of a process from the procfsd daemon, the
  * exported KPI that locks the fd table internally (the proc_fdlock primitives
  * are not available to kexts on this kernel). On success *fdlist points to a
  * malloc'd array of *count proc_fdinfo entries that the caller must release
@@ -669,52 +623,30 @@ procfs_get_fd_list(proc_t p, struct proc_fdinfo **fdlist, size_t *count)
     }
 
     /*
-     * Prefer the procfsd daemon (proc_pidinfo PROC_PIDLISTFDS): the in-kernel
-     * fd-table walk depends on struct filedesc offsets that drift across kernel
-     * point-releases. One payload holds up to PROCFS_CTL_MAXPAYLOAD/8 fds; a
-     * process with more has its list truncated (rare for interactive use).
+     * The list comes from the procfsd daemon (proc_pidinfo PROC_PIDLISTFDS).
+     * Walking the fd table in-kernel means reading struct filedesc through
+     * struct proc's p_fd, whose offsets drift across kernel point-releases, so
+     * that path is gone: with no daemon there is no listing. That is not a
+     * practical loss, since procfsd is what mounts /proc in the first place.
+     *
+     * One payload holds up to PROCFS_CTL_MAXPAYLOAD/8 fds; a process with more
+     * has its list truncated (rare for interactive use).
      */
     struct proc_fdinfo *dbuf = malloc(PROCFS_CTL_MAXPAYLOAD, M_TEMP, M_WAITOK);
-    if (dbuf != NULL) {
-        uint32_t got = 0;
-        if (procfs_ctl_request(PROCFS_REQ_FDLIST, proc_pid(p), 0,
-                dbuf, PROCFS_CTL_MAXPAYLOAD, &got) == 0) {
-            *fdlist = dbuf;
-            *count  = got / sizeof(struct proc_fdinfo);
-            return 0;
-        }
-        /*
-         * No daemon -> fall back to the in-kernel walk
-         */
-        free(dbuf, M_TEMP);
-    }
-
-    /*
-     * The first call (NULL buffer) returns an upper bound on the fd count.
-     */
-    size_t capacity = 0;
-    int error = proc_fdlist(p, NULL, &capacity);
-    if (error != 0 || capacity == 0) {
-        return error;
-    }
-
-    struct proc_fdinfo *buf = malloc(capacity * sizeof(struct proc_fdinfo), M_TEMP, M_WAITOK);
-    if (buf == NULL) {
+    if (dbuf == NULL) {
         return ENOMEM;
     }
 
-    /*
-     * The second call fills the buffer and reports the actual number written.
-     */
-    size_t actual = capacity;
-    error = proc_fdlist(p, buf, &actual);
+    uint32_t got = 0;
+    int error = procfs_ctl_request(PROCFS_REQ_FDLIST, proc_pid(p), 0,
+                                   dbuf, PROCFS_CTL_MAXPAYLOAD, &got);
     if (error != 0) {
-        free(buf, M_TEMP);
+        free(dbuf, M_TEMP);
         return error;
     }
 
-    *fdlist = buf;
-    *count = actual;
+    *fdlist = dbuf;
+    *count  = got / sizeof(struct proc_fdinfo);
 
     return 0;
 }

@@ -243,10 +243,10 @@ check: tests
 # every component (kext, filesystem, daemon, LaunchDaemon plist, app, prefpane).
 #
 # The clean build recompiles the kext libraries. Their compiler is pinned to
-# Apple's cc in the lib Makefiles (libkern needs XNU-specific clang
-# builtins behind kalloc_type that a non-Apple clang lacks), so CC is handled
-# there; but the static-archive step defaults to PATH ar, which is GNU ar when
-# Homebrew's binutils shadow it - so pin AR to Apple's for a robust clean build.
+# Apple's cc in the lib Makefiles (libsbuf needs XNU-specific clang builtins
+# behind kalloc_type that a non-Apple clang lacks), so CC is handled there; but
+# the static-archive step defaults to PATH ar, which is GNU ar when Homebrew's
+# binutils shadow it - so pin AR to Apple's for a robust clean build.
 distcheck:
 	@echo "==> Clean distribution build"
 	$(MAKE) clean

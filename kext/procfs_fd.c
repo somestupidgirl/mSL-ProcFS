@@ -26,7 +26,6 @@
 #include <fs/procfs/procfs.h>
 #include <fs/procfs/procfs_ctl.h>
 
-#include <kern.h>
 
 /*
  * Reads the data associated with a file descriptor node: a

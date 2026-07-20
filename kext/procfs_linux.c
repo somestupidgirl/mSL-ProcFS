@@ -67,7 +67,6 @@
 #include <sys/sbuf.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
-#include <kern.h>
 #include <cpuft.h>
 
 #include <fs/procfs/procfs.h>

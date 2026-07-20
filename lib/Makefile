@@ -16,7 +16,6 @@ debug:
 	$(MAKE) -C libsbuf
 	$(MAKE) -C libkext
 	$(MAKE) -C libcpuft
-	$(MAKE) -C libkern
 
 release: TARGET=release
 release: debug
@@ -26,6 +25,5 @@ clean:
 	$(MAKE) -C libsbuf clean
 	$(MAKE) -C libkext clean
 	$(MAKE) -C libcpuft clean
-	$(MAKE) -C libkern clean
 
 .PHONY: all debug release clean

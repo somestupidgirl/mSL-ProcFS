@@ -184,9 +184,15 @@ enum {
                                  * PROC_PIDLISTTHREADS) is NOT usable, as it
                                  * returns opaque handles that
                                  * PROC_PIDTHREADID64INFO rejects. Needs
-                                 * task_for_pid, so EPERM for SIP/AMFI and
-                                 * hardened targets - the kext then falls back
-                                 * to its in-kernel walk. */
+                                 * task_for_pid, so SIP/AMFI and hardened
+                                 * targets report EPERM and their thread list
+                                 * is empty. */
+    PROCFS_REQ_SHORTBSDINFO = 53, /* payload: struct proc_bsdshortinfo, from
+                                 * proc_pidinfo(PROC_PIDT_SHORTBSDINFO).
+                                 * Replaces reading struct proc's fields in the
+                                 * kext. Needs no task_for_pid, so unlike the
+                                 * maps/regs requests it answers for every
+                                 * process, pid 1 included. */
 };
 
 /*
