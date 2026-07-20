@@ -28,7 +28,6 @@ replaced or omitted:
 |-------|--------------|-------|
 | **Filesystem Hierarchy Standard** | The Linux filesystem layout, natively | [mSL/FHS](https://github.com/somestupidgirl/mSL-FHS) |
 | **Syscall translation** | Linux system calls onto Darwin's, over `Hypervisor.framework` | based on [Noah](https://github.com/ktemkin/noah) |
-| **Image activator** | Recognises and loads ELF binaries — Linux's `binfmt_misc` | based on [imgact_linux](https://github.com/gheorghe-crihan/imgact_linux) or similar |
 | **procfs** | `/proc`, as a real filesystem |  **this repository**  |
 | **sysfs** | `/sys`, likewise | not yet started |
 | **devfs** | `/dev` — already part of macOS | XNU |
