@@ -11,8 +11,8 @@
 import AppKit
 
 enum ProcFSUpdater {
-    static let repo    = "somestupidgirl/procfs_kext"
-    static let repoURL = "https://github.com/somestupidgirl/procfs_kext"
+    static let repo    = "somestupidgirl/mSL-ProcFS"
+    static let repoURL = "https://github.com/somestupidgirl/mSL-ProcFS"
 
     // Preferences shared between the menu-bar app and the preference pane.
     static let prefsSuite      = "com.beako.filesystems.procfs"

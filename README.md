@@ -1,8 +1,8 @@
 # mSL/ProcFS
-[![C/C++ CI](https://github.com/somestupidgirl/procfs_kext/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/somestupidgirl/procfs_kext/actions/workflows/c-cpp.yml) 
+[![C/C++ CI](https://github.com/somestupidgirl/mSL-ProcFS/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/somestupidgirl/mSL-ProcFS/actions/workflows/c-cpp.yml) 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey)](#build)
-[![GitHub stars](https://img.shields.io/github/stars/somestupidgirl/procfs_kext.svg?style=social&label=Star&maxAge=2592000)](https://GitHub.com/somestupidgirl/procfs_kext/stargazers/)
+[![GitHub stars](https://img.shields.io/github/stars/somestupidgirl/mSL-ProcFS.svg?style=social&label=Star&maxAge=2592000)](https://GitHub.com/somestupidgirl/mSL-ProcFS/stargazers/)
 
 mSL/ProcFS is a kernel-extension implementation of the `/proc` file system for macOS,
 exposing running processes and threads as a filesystem with BSD- and Linux-compatible
@@ -716,7 +716,7 @@ Settings). It shows the ProcFS icon, name and description, followed by a
   - **Check for Updates** — a button that checks GitHub Releases now
 
 and a footer with the repository link and copyright. Update checking queries
-`https://api.github.com/repos/somestupidgirl/procfs_kext/releases/latest`,
+`https://api.github.com/repos/somestupidgirl/mSL-ProcFS/releases/latest`,
 compares the tag with the running version, and (if newer) offers to open the
 releases page. The privileged actions use the same administrator-auth prompt as
 the menu-bar app. The pane's principal binary is a loadable Mach-O bundle
