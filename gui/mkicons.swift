@@ -143,12 +143,10 @@ let appIcon = render(size: 1024) { r in
 write(appIcon, "appicon.png")
 
 // ------------------------------------------------------------- menu bar art --
-// Drawn edge to edge (no tile): the status bar supplies its own spacing. Two
-// variants are kept because the app picks the file itself rather than relying
-// on template tinting.
-for (name, color) in [("icon_dark.png", NSColor.black), ("icon_light.png", NSColor.white)] {
-    let rep = render(size: 92) { r in
-        drawTree(in: r.insetBy(dx: r.width * 0.10, dy: r.height * 0.10), color: color)
-    }
-    write(rep, name)
-}
+// Drawn edge to edge (no tile): the status bar supplies its own spacing. One
+// file only - the app marks it as a template image, so macOS tints it from its
+// alpha channel to match the menu bar. The fill colour is therefore irrelevant
+// and black is the convention.
+write(render(size: 92) { r in
+    drawTree(in: r.insetBy(dx: r.width * 0.10, dy: r.height * 0.10), color: .black)
+}, "icon_menu.png")

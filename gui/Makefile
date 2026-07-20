@@ -39,10 +39,10 @@ $(ICNS): appicon.png
 	iconutil -c icns $(ICONSET) -o $@
 	rm -rf $(ICONSET)
 
-$(BUNDLE): ProcFSMenu.swift main.swift Updater.swift Info.plist.in ../VERSION icon_light.png icon_dark.png $(ICNS)
+$(BUNDLE): ProcFSMenu.swift main.swift Updater.swift Info.plist.in ../VERSION icon_menu.png $(ICNS)
 	mkdir -p $(MACOS) $(CONTENTS)/Resources
 	swiftc $(SWIFTFLAGS) -o $(BIN) ProcFSMenu.swift main.swift Updater.swift
-	cp icon_light.png icon_dark.png $(ICNS) $(CONTENTS)/Resources/
+	cp icon_menu.png $(ICNS) $(CONTENTS)/Resources/
 	sed -e 's/__KEXTVERSION__/$(KEXTVERSION)/g' Info.plist.in > $(CONTENTS)/Info.plist
 	@# Strip Finder info / quarantine xattrs; codesign rejects "resource fork,
 	@# Finder information, or similar detritus" (the icon PNGs carry them).

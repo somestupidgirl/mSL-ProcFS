@@ -91,26 +91,11 @@ private func systemInstalled() -> Bool {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
-    private var iconLight: NSImage?     // light-coloured art, shown on a dark menu bar
-    private var iconDark: NSImage?      // dark-coloured art, shown on a light menu bar
-    private var appearanceObserver: NSKeyValueObservation?
-    private var menuOpen = false
 
     func applicationDidFinishLaunching(_ note: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
-        iconLight = loadIcon("icon_light")
-        iconDark  = loadIcon("icon_dark")
         setIcon()
-
-        // Re-pick the art whenever the menu bar changes appearance: the General
-        // settings light/dark switch, Auto at sunset, or a wallpaper change that
-        // flips the translucent bar. Observing the button's effectiveAppearance
-        // catches all of them, where watching AppleInterfaceStyle would miss the
-        // last one.
-        appearanceObserver = statusItem.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
-            self?.setIcon()
-        }
 
         let menu = NSMenu()
         menu.delegate = self
@@ -127,56 +112,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func loadIcon(_ name: String) -> NSImage? {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "png"),
-              let image = NSImage(contentsOf: url) else { return nil }
-        image.size = NSSize(width: 18, height: 18)      // menu-bar sized
-        // Deliberately NOT a template image: a template is tinted from its alpha
-        // channel, so the two colour variants would render identically and the
-        // swap below would have no effect. The cost is that the highlighted
-        // state (while the menu is open) no longer inverts automatically, which
-        // menuWillOpen/menuDidClose compensate for.
-        image.isTemplate = false
-        return image
-    }
-
-    /// True when the menu bar is drawing dark, so the light-coloured art should
-    /// be used. The status item's own button is asked rather than NSApp, because
-    /// it is the view actually sitting in the menu bar.
-    private var menuBarIsDark: Bool {
-        guard let button = statusItem?.button else { return true }
-        return button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-    }
-
-    // Pick the art that contrasts with the current menu bar: light art on a dark
-    // bar, dark art on a light one. Falls back to whichever variant loaded, then
-    // to a text title.
+    /// The status-item icon: the project's own glyph, as a template image.
+    ///
+    /// A template is tinted by macOS with the menu bar's own colour, so one file
+    /// is correct in the light and dark appearances and while the item is
+    /// highlighted - no pair of light and dark artwork to keep in step, and no
+    /// appearance observing to catch the theme switch, the sunset change or a
+    /// wallpaper that flips the translucent bar. Falls back to a text title if
+    /// the resource is missing.
     private func setIcon() {
         guard let button = statusItem?.button else { return }
-        // While the menu is open the button paints a dark highlight behind the
-        // icon regardless of theme, so the light art is the readable one.
-        let wantLight = menuOpen || menuBarIsDark
-        let preferred = wantLight ? iconLight : iconDark
-        if let image = preferred ?? iconLight ?? iconDark {
+
+        let image = Bundle.main.url(forResource: "icon_menu", withExtension: "png")
+            .flatMap { NSImage(contentsOf: $0) }
+
+        if let image {
+            image.isTemplate = true
+            image.size = NSSize(width: 18, height: 18)      // menu-bar sized
             button.image = image
             button.title = ""
         } else {
             button.image = nil
             button.title = "proc"
         }
-    }
-
-    // While the menu is open the button paints a dark highlight behind the icon
-    // in either theme. A template image would invert itself; ordinary art has to
-    // be swapped by hand.
-    func menuWillOpen(_ menu: NSMenu) {
-        menuOpen = true
-        setIcon()
-    }
-
-    func menuDidClose(_ menu: NSMenu) {
-        menuOpen = false
-        setIcon()
     }
 
     // Rebuild the menu each time it opens so the status is always current.
