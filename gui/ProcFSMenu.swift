@@ -293,23 +293,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// title text.
     ///
     /// The state column takes an image, so the dot is drawn as one: an SF Symbol
-    /// circle tinted green or red. It is deliberately not a template image -
-    /// a template would be recoloured to match the menu and lose the colour that
-    /// carries the meaning.
+    /// circle tinted green or red, then flattened to a plain bitmap so the menu
+    /// draws the colour rather than recolouring it to match the row.
     private func setStateDot(_ item: NSMenuItem, running: Bool) {
+        // A palette configuration colours the symbol, and clearing isTemplate
+        // stops it being redrawn from its alpha channel - but neither is enough
+        // on its own. The result is still backed by an NSSymbolImageRep, and a
+        // symbol rep is re-rendered from the menu's content tint when it is
+        // drawn, which discards the palette and leaves a plain white dot.
+        // Drawing it once into an NSBitmapImageRep leaves ordinary pixels with
+        // no symbol rendering left to go through, so the colour survives.
+        // The point size matches the eject glyph beside it, so the solid circle
+        // does not sit heavier than the other rows' symbols.
         let conf = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+            .applying(NSImage.SymbolConfiguration(
+                paletteColors: [running ? .systemGreen : .systemRed]))
         guard let base = NSImage(systemSymbolName: "circle.fill",
                                  accessibilityDescription: running ? "running" : "stopped"),
-              let image = base.withSymbolConfiguration(conf) else { return }
-
-        let tinted = NSImage(size: image.size, flipped: false) { rect in
-            (running ? NSColor.systemGreen : NSColor.systemRed).set()
-            rect.fill(using: .sourceAtop)
-            image.draw(in: rect, from: .zero, operation: .destinationOver, fraction: 1.0)
-            return true
-        }
-        item.onStateImage = tinted
+              let symbol = base.withSymbolConfiguration(conf),
+              let dot = flattened(symbol) else { return }
+        item.onStateImage = dot
         item.state = .on
+    }
+
+    /// Draw an image into a plain bitmap, discarding any symbol representation.
+    private func flattened(_ image: NSImage) -> NSImage? {
+        let size = image.size
+        guard size.width > 0, size.height > 0,
+              let rep = NSBitmapImageRep(
+                  bitmapDataPlanes: nil,
+                  pixelsWide: Int(size.width.rounded()),
+                  pixelsHigh: Int(size.height.rounded()),
+                  bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                  isPlanar: false, colorSpaceName: .deviceRGB,
+                  bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+
+        let out = NSImage(size: size)
+        out.addRepresentation(rep)
+        out.isTemplate = false
+        return out
     }
 
     /// Load an SF Symbol sized and tinted for a menu row.
