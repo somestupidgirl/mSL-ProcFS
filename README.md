@@ -8,17 +8,36 @@ mSL/ProcFS is a kernel-extension implementation of the `/proc` file system for m
 exposing running processes and threads as a filesystem with BSD- and Linux-compatible
 per-process information.
 
-## Part of mSL/XNU
+**macOS Subsystem for Linux / ProcFS** — a native kernel-extension implementation of the
+`/proc` file system for macOS, exposing running processes and threads as a filesystem
+with BSD- and Linux-compatible per-process information.
 
-ProcFS is one module of **mSL/XNU** (*macOS Subsystem for Linux / X is Now UNIX*), a
-modular project whose goal is seamless execution of Linux ELF binaries on macOS. The
-other pieces are a native implementation of the Filesystem Hierarchy Standard, the
-remaining native pseudo-filesystems (devfs and sysfs alongside this procfs), a syscall
-translation layer (the Noah ABI), an updated `imgact_linux` (binfmt_misc), and a
-Hypervisor.framework-backed execution path.
+One module of **mSL/XNU**, a modular macOS Subsystem for Linux.
 
-Each module stands on its own — ProcFS is useful without the rest — but they are
-designed to compose, which is why this one is named and packaged as mSL/ProcFS.
+## The larger project
+
+mSL/XNU — *macOS Subsystem for Linux / X is Now UNIX* — aims at **native, seamless
+execution of Linux ELF binaries on macOS**: not in a container and not in a virtual
+machine, but as ordinary processes on the running system.
+
+Reaching that needs several independent pieces, which is why the project is modular
+rather than one monolith. Each is useful on its own, and each can be installed,
+replaced or omitted:
+
+| Piece | What it does | Where |
+|-------|--------------|-------|
+| **Filesystem Hierarchy Standard** | The Linux filesystem layout, natively | [mSL/FHS](https://github.com/somestupidgirl/mSL-FHS) |
+| **Syscall translation** | Linux system calls onto Darwin's, over `Hypervisor.framework` | based on [Noah](https://github.com/ktemkin/noah) |
+| **Image activator** | Recognises and loads ELF binaries — Linux's `binfmt_misc` | based on [imgact_linux](https://github.com/gheorghe-crihan/imgact_linux) or similar |
+| **procfs** | `/proc`, as a real filesystem |  **this repository**  |
+| **sysfs** | `/sys`, likewise | not yet started |
+| **devfs** | `/dev` — already part of macOS | XNU |
+
+Targeting Apple Silicon natively makes [Asahi Linux](https://asahilinux.org/)
+the distribution of choice, since it is the one already built for this hardware.
+
+**This repository is the ProcFS piece**, and it is largely done. The
+rest of this document describes it.
 
 ## What is ProcFS?
 *procfs* lets you view the processes running on a UNIX system as nodes in the file system, where each process is represented by a single directory named from its process id. Typically, the file system is mounted at `/proc`, so the directory for process 1 would be called `/proc/1`. Beneath a process’ directory are further directories and files that give more information about the process, such as its process id, its active threads, the files that it has open, and so on. *procfs* first appeared in an early version of AT&T’s UNIX and was later implemented in various forms in System V, BSD, Solaris and Linux. You can find a history of the implementation of *procfs* at https://en.wikipedia.org/wiki/Procfs.
