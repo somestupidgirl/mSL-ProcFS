@@ -66,11 +66,17 @@
 /*
  * p_limit is an SMR-protected pointer; validate the raw pointer before deref.
  * pmap_find_phys + kernel_pmap are com.apple.kpi.unsupported (linkable).
+ *
+ * pmap_find_phys() is the whole test. An earlier version also required the
+ * pointer to be at or above 0xfffffe0000000000, copied from the uthread walk in
+ * procfs_subr.c - but that bound describes the zone uthreads come from, not
+ * every kernel allocation. A plimit is allocated elsewhere and sits below it, so
+ * the extra check rejected every valid pointer and the node always returned EIO.
+ * Asking the pmap whether the address is actually mapped is both sufficient and
+ * correct: it is what stops a stale or garbage pointer from faulting.
  */
 extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
 extern pmap_t kernel_pmap;
-
-#define PROCFS_KPTR_MIN ((uintptr_t)0xfffffe0000000000ULL)
 
 /*
  * Resource-limit string identifiers, indexed by RLIMIT_*. macOS defines nine
@@ -106,14 +112,14 @@ procfs_dolimit(pfsnode_t *pnp, uio_t uio, __unused vfs_context_t ctx)
 	/*
 	 * p_limit is SMR-protected and the safe accessor proc_limitget() is stripped
 	 * from the arm64 kernel, so read the pointer raw (smr_unsafe_load is a plain
-	 * macro) and pmap-validate it before dereferencing. Resource limits change
-	 * very rarely, so this racy snapshot is acceptable; a torn-down/garbage
-	 * pointer is rejected rather than faulted.
+	 * macro) and ask the pmap whether it is mapped before dereferencing (see the
+	 * note on pmap_find_phys above). Resource limits change very rarely, so this
+	 * racy snapshot is acceptable; a torn-down/garbage pointer is rejected rather
+	 * than faulted.
 	 */
 	struct plimit *limp = (struct plimit *)smr_unsafe_load(&p->p_limit);
-	if ((uintptr_t)limp < PROCFS_KPTR_MIN ||
+	if (limp == NULL ||
 	    pmap_find_phys(kernel_pmap, (addr64_t)(uintptr_t)limp) == 0) {
-
 		proc_rele(p);
 		return EIO;
 	}
