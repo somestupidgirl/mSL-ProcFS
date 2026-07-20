@@ -163,13 +163,13 @@ plists:
 	@mkdir -p $(OUT)
 	cp tools/$(DAEMON_PLIST) $(OUT)/
 
-# Menu-bar GUI app (ProcFS.app) and the System Settings pane (ProcFS.prefPane).
-# Their versions are stamped from the VERSION file.
+# Menu-bar GUI app (ProcFS.app), the System Settings pane (ProcFS.prefPane) and
+# the uninstaller (Uninstall-ProcFS.app). Versions are stamped from VERSION.
 gui:
 	@mkdir -p $(OUT)
 	$(MAKE) -C gui
-	rm -rf $(OUT)/ProcFS.app $(OUT)/ProcFS.prefPane
-	mv gui/ProcFS.app gui/ProcFS.prefPane $(OUT)/
+	rm -rf $(OUT)/ProcFS.app $(OUT)/ProcFS.prefPane $(OUT)/Uninstall-ProcFS.app
+	mv gui/ProcFS.app gui/ProcFS.prefPane gui/Uninstall-ProcFS.app $(OUT)/
 
 # ---------------------------------------------------------------------------
 # Distribution: a double-clickable installer (.pkg) and disk image (.dmg).
@@ -190,6 +190,7 @@ pkg: all
 	cp    $(OUT)/procfsd $(OUT)/pkgroot/usr/local/sbin/
 	cp    $(OUT)/$(DAEMON_PLIST)      $(OUT)/pkgroot/Library/LaunchDaemons/
 	cp -R $(OUT)/ProcFS.app           $(OUT)/pkgroot/Applications/mSL/
+	cp -R $(OUT)/Uninstall-ProcFS.app $(OUT)/pkgroot/Applications/mSL/
 	cp -R $(OUT)/ProcFS.prefPane      $(OUT)/pkgroot/Library/PreferencePanes/
 	@# codesign/pkgbuild reject Finder-info and similar xattrs.
 	xattr -cr $(OUT)/pkgroot
@@ -216,8 +217,10 @@ dmg: pkg
 	mkdir -p $(OUT)/dmg
 	cp $(PKG_OUT) $(OUT)/dmg/
 	cp installer/resources/DMG-README.txt $(OUT)/dmg/README.txt
+	@# The .command is only a front-end; uninstall.sh must travel with it.
 	cp installer/uninstall.command "$(OUT)/dmg/Uninstall ProcFS.command"
-	chmod +x "$(OUT)/dmg/Uninstall ProcFS.command"
+	cp installer/uninstall.sh      $(OUT)/dmg/uninstall.sh
+	chmod +x "$(OUT)/dmg/Uninstall ProcFS.command" $(OUT)/dmg/uninstall.sh
 	hdiutil create -volname "ProcFS $(VERSION)" -srcfolder $(OUT)/dmg \
 	               -ov -format UDZO $(DMG_OUT)
 	rm -rf $(OUT)/dmg
@@ -262,7 +265,8 @@ distcheck:
 	@rm -rf $(OUT)/distcheck; pkgutil --expand "$(PKG_OUT)" $(OUT)/distcheck 2>/dev/null || { echo "FAIL: cannot expand product archive"; exit 1; }
 	@bom=`find $(OUT)/distcheck -name Bom | head -1`; \
 	 test -n "$$bom" || { echo "FAIL: no component package (Bom) in archive"; exit 1; }; \
-	 for f in procfs.kext procfs.fs procfsd $(DAEMON_PLIST) ProcFS.app ProcFS.prefPane; do \
+	 for f in procfs.kext procfs.fs procfsd $(DAEMON_PLIST) ProcFS.app \
+	          Uninstall-ProcFS.app ProcFS.prefPane; do \
 	   lsbom "$$bom" 2>/dev/null | grep -q "$$f" || { echo "FAIL: payload missing $$f"; rm -rf $(OUT)/distcheck; exit 1; }; \
 	   echo "  ok  payload: $$f"; \
 	 done
@@ -329,6 +333,11 @@ install-gui:
 	@# Strip com.apple.quarantine so Gatekeeper doesn't flag the app as
 	@# "damaged"/"unverified" when the payload arrives via an internet download.
 	xattr -dr com.apple.quarantine $(MSL_APP_DIR)/ProcFS.app 2>/dev/null || true
+	rm -rf $(MSL_APP_DIR)/Uninstall-ProcFS.app
+	cp -R $(OUT)/Uninstall-ProcFS.app $(MSL_APP_DIR)/Uninstall-ProcFS.app
+	chown -R root:wheel $(MSL_APP_DIR)/Uninstall-ProcFS.app
+	chmod -R 755 $(MSL_APP_DIR)/Uninstall-ProcFS.app
+	xattr -dr com.apple.quarantine $(MSL_APP_DIR)/Uninstall-ProcFS.app 2>/dev/null || true
 	rm -rf $(PREFPANE_DIR)/ProcFS.prefPane
 	cp -R $(OUT)/ProcFS.prefPane $(PREFPANE_DIR)/ProcFS.prefPane
 	chown -R root:wheel $(PREFPANE_DIR)/ProcFS.prefPane
@@ -381,6 +390,7 @@ uninstall: require-root
 	rm -rf $(EXT_DIR)/procfs.kext
 	rm -rf $(FS_DIR)/procfs.fs
 	rm -rf $(MSL_APP_DIR)/ProcFS.app
+	rm -rf $(MSL_APP_DIR)/Uninstall-ProcFS.app
 	@# Take the mSL folder with it when nothing else is left in it.
 	-rmdir $(MSL_APP_DIR) 2>/dev/null || true
 	rm -rf $(PREFPANE_DIR)/ProcFS.prefPane

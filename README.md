@@ -708,8 +708,8 @@ the menu-bar app through the `com.beako.filesystems.procfs` preferences domain.
 
 ## How to build procfs
 `make` builds the kext, the `procfs.fs` mount bundle, the `procfsd` daemon, the
-LaunchDaemon plist, the `ProcFS.app` menu-bar app and the preference pane into
-`bin/`:
+LaunchDaemon plist, the `ProcFS.app` menu-bar app, the preference pane and the
+`Uninstall-ProcFS.app` uninstaller into `bin/`:
 
     make                    # native arch (arm64e on Apple Silicon)
     make ARCH=universal     # fat arm64e + x86_64
@@ -725,11 +725,17 @@ compiles, so `bin/` and the build tree stay owned by you and `make clean` never
 needs sudo). It installs, with `root:wheel`/`755`: the kext to
 `/Library/Extensions`, the `procfs.fs` bundle to `/Library/Filesystems`,
 `procfsd` to `/usr/local/sbin`, the LaunchDaemon plist to
-`/Library/LaunchDaemons`, and `ProcFS.app` to `/Applications`. It also adds
-`proc` to `/etc/synthetic.conf` (so `/proc` is created at boot), enables the
-LaunchDaemon, and launches `ProcFS.app` so its menu-bar icon appears. `sudo make
-uninstall` reverses all of this — unmounts, unloads the kext, and removes the
-installed files and daemon state.
+`/Library/LaunchDaemons`, and `ProcFS.app` and `Uninstall-ProcFS.app` to
+`/Applications/mSL`. It also adds `proc` to `/etc/synthetic.conf` (so `/proc` is
+created at boot), enables the LaunchDaemon, and launches `ProcFS.app` so its
+menu-bar icon appears.
+
+To remove ProcFS, either open **Uninstall mSL/ProcFS** from `/Applications/mSL`
+(it confirms, asks for an administrator password, and deletes itself along with
+everything else) or run `sudo make uninstall` from the source tree. Both unmount
+`/proc`, unload the kext, and remove the installed files and daemon state; the
+removal steps live in `installer/uninstall.sh`, which the uninstaller app carries
+as a bundled resource.
 
 Code signing is optional; the kext is ad-hoc signed by default. To sign with
 your own certificate instead, edit `Makefile.inc` and set the `SIGNCERT`

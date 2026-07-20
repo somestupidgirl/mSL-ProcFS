@@ -28,10 +28,14 @@ and offers one-click mount/unmount, Linux-compatibility, and daemon controls.
 
 UNINSTALL
 ---------
-Double-click "Uninstall ProcFS.command" in this disk image. It opens a Terminal
-window, asks for your administrator password, then unmounts /proc, unloads the
-kext, stops the daemon and removes every installed file. (If macOS blocks it as
-being from an unidentified developer, right-click it and choose "Open".) The
-now-empty /proc mount point disappears after the next reboot.
+Open "Uninstall mSL/ProcFS" from the mSL folder in your Applications folder. It
+asks for confirmation and an administrator password, then unmounts /proc,
+unloads the kext, stops the daemon and removes every installed file - including
+itself. The now-empty /proc mount point disappears after the next reboot.
+
+If ProcFS was never installed, "Uninstall ProcFS.command" in this disk image
+does the same thing from a Terminal window. It needs the uninstall.sh beside it,
+so copy both out together if you move them. (If macOS blocks either as being
+from an unidentified developer, right-click it and choose "Open".)
 
 The source tree's `sudo make uninstall` does the same thing.

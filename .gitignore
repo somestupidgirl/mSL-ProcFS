@@ -3,6 +3,9 @@ rnd/
 wip/
 gui/ProcFS.app/
 gui/ProcFS.prefPane/
+gui/Uninstall-ProcFS.app/
+gui/AppIcon.icns
+gui/AppIcon.iconset/
 tests/test_*
 tools/procfsd
 **/*.dSYM

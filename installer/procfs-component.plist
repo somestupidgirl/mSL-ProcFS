@@ -21,6 +21,12 @@
 		<key>BundleIsRelocatable</key><false/>
 		<key>BundleIsVersionChecked</key><true/>
 		<key>BundleOverwriteAction</key><string>upgrade</string>
+		<key>RootRelativeBundlePath</key><string>Applications/mSL/Uninstall-ProcFS.app</string>
+	</dict>
+	<dict>
+		<key>BundleIsRelocatable</key><false/>
+		<key>BundleIsVersionChecked</key><true/>
+		<key>BundleOverwriteAction</key><string>upgrade</string>
 		<key>RootRelativeBundlePath</key><string>Library/PreferencePanes/ProcFS.prefPane</string>
 	</dict>
 </array>
