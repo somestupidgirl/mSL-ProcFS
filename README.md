@@ -27,13 +27,10 @@ replaced or omitted:
 | Piece | What it does | Where |
 |-------|--------------|-------|
 | **Filesystem Hierarchy Standard** | The Linux filesystem layout, natively | [mSL/FHS](https://github.com/somestupidgirl/mSL-FHS) |
-| **Syscall translation** | Linux system calls onto Darwin's, over `Hypervisor.framework` | based on [Noah](https://github.com/ktemkin/noah) |
-| **procfs** | `/proc`, as a real filesystem |  **this repository**  |
-| **sysfs** | `/sys`, likewise | not yet started |
+| **Syscall translation** | Linux system calls onto Darwin's, over `Hypervisor.framework` | [mSL/NABI](https://github.com/somestupidgirl/mSL-NABI) |
+| **procfs** | `/proc`, as a real filesystem | **this repository** |
+| **sysfs** | `/sys`, likewise | [mSL/SysFS](https://github.com/somestupidgirl/mSL-SysFS) |
 | **devfs** | `/dev` — already part of macOS | XNU |
-
-Targeting Apple Silicon natively makes [Asahi Linux](https://asahilinux.org/)
-the distribution of choice, since it is the one already built for this hardware.
 
 **This repository is the ProcFS piece**, and it is largely done. The
 rest of this document describes it.
